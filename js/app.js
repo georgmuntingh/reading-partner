@@ -19,6 +19,7 @@ class ReadingPartnerApp {
         this._currentChapterIndex = 0;
         this._isInitialized = false;
         this._savedSpeed = undefined;
+        this._savedVoice = undefined;
 
         // DOM Elements
         this._elements = {};
@@ -135,6 +136,7 @@ class ReadingPartnerApp {
             askBtn: document.getElementById('ask-btn'),
             speedSlider: document.getElementById('speed-slider'),
             speedValue: document.getElementById('speed-value'),
+            voiceSelect: document.getElementById('voice-select'),
 
             // Status
             ttsStatus: document.getElementById('tts-status')
@@ -316,7 +318,8 @@ class ReadingPartnerApp {
                 back2Btn: this._elements.back2Btn,
                 askBtn: this._elements.askBtn,
                 speedSlider: this._elements.speedSlider,
-                speedValue: this._elements.speedValue
+                speedValue: this._elements.speedValue,
+                voiceSelect: this._elements.voiceSelect
             },
             {
                 onPlay: () => this._play(),
@@ -328,9 +331,23 @@ class ReadingPartnerApp {
                 onSpeedChange: (speed) => {
                     this._audioController.setSpeed(speed);
                     this._saveSettings(); // Auto-save speed setting
+                },
+                onVoiceChange: (voiceId) => {
+                    this._ttsEngine.setVoice(voiceId);
+                    this._saveSettings(); // Auto-save voice setting
                 }
             }
         );
+
+        // Populate available voices
+        const voices = this._ttsEngine.getAvailableVoices();
+        this._controls.setVoices(voices);
+
+        // Restore saved voice
+        if (this._savedVoice) {
+            this._controls.setVoice(this._savedVoice);
+            this._ttsEngine.setVoice(this._savedVoice);
+        }
 
         // Restore saved speed
         if (this._savedSpeed !== undefined) {
@@ -695,6 +712,12 @@ class ReadingPartnerApp {
                 // Will be set when controls are initialized
                 this._savedSpeed = speed;
             }
+
+            const voice = await storage.getSetting('voice');
+            if (voice !== null) {
+                // Will be set when controls are initialized
+                this._savedVoice = voice;
+            }
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -708,6 +731,9 @@ class ReadingPartnerApp {
             if (this._controls) {
                 const speed = this._controls.getSpeed();
                 await storage.saveSetting('playbackSpeed', speed);
+
+                const voice = this._controls.getVoice();
+                await storage.saveSetting('voice', voice);
             }
         } catch (error) {
             console.error('Failed to save settings:', error);
