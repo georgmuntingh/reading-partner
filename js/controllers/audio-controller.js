@@ -163,7 +163,7 @@ export class AudioController {
     pause() {
         this._stopRequested = true;
         this._status = 'paused';
-        ttsEngine.stopWebSpeech();
+        ttsEngine.stopAudio();
         this._notifyStateChange();
     }
 
@@ -183,7 +183,7 @@ export class AudioController {
         this._stopRequested = true;
         this._status = 'stopped';
         this._currentIndex = 0;
-        ttsEngine.stopWebSpeech();
+        ttsEngine.stopAudio();
         this._notifyStateChange();
     }
 
@@ -193,7 +193,7 @@ export class AudioController {
     skipForward() {
         const wasPlaying = this._status === 'playing';
         this._stopRequested = true;
-        ttsEngine.stopWebSpeech();
+        ttsEngine.stopAudio();
 
         if (this._currentIndex < this._sentences.length - 1) {
             this._currentIndex++;
@@ -212,7 +212,7 @@ export class AudioController {
     skipBackward(count = 1) {
         const wasPlaying = this._status === 'playing';
         this._stopRequested = true;
-        ttsEngine.stopWebSpeech();
+        ttsEngine.stopAudio();
 
         this._currentIndex = Math.max(0, this._currentIndex - count);
         this._onSentenceChange?.(this._currentIndex);
@@ -229,7 +229,7 @@ export class AudioController {
     goToSentence(index) {
         const wasPlaying = this._status === 'playing';
         this._stopRequested = true;
-        ttsEngine.stopWebSpeech();
+        ttsEngine.stopAudio();
 
         this._currentIndex = Math.max(0, Math.min(index, this._sentences.length - 1));
         this._onSentenceChange?.(this._currentIndex);
@@ -244,7 +244,14 @@ export class AudioController {
      * @param {number} speed - 0.5 to 2.0
      */
     setSpeed(speed) {
-        this._speed = Math.max(0.5, Math.min(2.0, speed));
+        const newSpeed = Math.max(0.5, Math.min(2.0, speed));
+        if (newSpeed !== this._speed) {
+            this._speed = newSpeed;
+            // Update TTS engine speed for future generations
+            ttsEngine.setSpeed(newSpeed);
+            // Clear buffers so they'll be regenerated at new speed
+            this._clearBuffers();
+        }
     }
 
     /**
