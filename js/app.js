@@ -44,11 +44,14 @@ class ReadingPartnerApp {
         try {
             const usingKokoro = await ttsEngine.initialize();
             if (usingKokoro) {
-                this._showTTSStatus('TTS ready (Kokoro)');
+                const device = ttsEngine.getDevice();
+                const dtype = ttsEngine.getDtype();
+                this._showTTSStatus(`TTS ready (${device}, ${dtype})`);
+                console.log(`TTS Engine: Kokoro with ${device} backend, ${dtype} precision`);
             } else {
                 this._showTTSStatus('TTS ready (Browser)');
             }
-            setTimeout(() => this._hideTTSStatus(), 2000);
+            setTimeout(() => this._hideTTSStatus(), 3000);
         } catch (error) {
             console.error('TTS initialization failed:', error);
             this._showTTSStatus('TTS initialization failed');
@@ -56,6 +59,7 @@ class ReadingPartnerApp {
 
         this._isInitialized = true;
         console.log('Reading Partner initialized');
+        console.log('Tip: Run readingPartner.runBenchmark() to test TTS performance');
     }
 
     /**
@@ -353,6 +357,62 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Run TTS benchmark
+     * @param {number} [numSentences=5] - Number of sentences to test
+     * @returns {Promise<Object>}
+     */
+    async runBenchmark(numSentences = 5) {
+        if (!this._currentBook) {
+            // Use test sentences if no book loaded
+            const testSentences = [
+                "The quick brown fox jumps over the lazy dog.",
+                "She sells seashells by the seashore.",
+                "How much wood would a woodchuck chuck if a woodchuck could chuck wood?",
+                "Peter Piper picked a peck of pickled peppers.",
+                "The rain in Spain stays mainly in the plain.",
+                "To be or not to be, that is the question.",
+                "All that glitters is not gold.",
+                "A journey of a thousand miles begins with a single step."
+            ];
+            console.log('No book loaded, using test sentences...');
+            return ttsEngine.runBenchmark(testSentences.slice(0, numSentences));
+        } else {
+            // Use sentences from current chapter
+            const chapter = this._currentBook.chapters[this._currentChapterIndex];
+            const sentences = chapter.sentences.slice(0, numSentences);
+            console.log(`Running benchmark on ${sentences.length} sentences from "${chapter.title}"...`);
+            return ttsEngine.runBenchmark(sentences);
+        }
+    }
+
+    /**
+     * Enable/disable continuous benchmarking
+     * @param {boolean} enabled
+     */
+    setBenchmarkMode(enabled) {
+        ttsEngine.setBenchmarkEnabled(enabled);
+        console.log(`Benchmark mode ${enabled ? 'enabled' : 'disabled'}`);
+        if (enabled) {
+            console.log('TTS timing will be logged for each sentence.');
+        }
+    }
+
+    /**
+     * Get TTS engine info
+     * @returns {Object}
+     */
+    getTTSInfo() {
+        return {
+            ready: ttsEngine.isReady(),
+            usingKokoro: ttsEngine.isUsingKokoro(),
+            device: ttsEngine.getDevice(),
+            dtype: ttsEngine.getDtype(),
+            averageRTF: ttsEngine.getAverageRTF(),
+            benchmarkResults: ttsEngine.getBenchmarkResults()
+        };
+    }
+
+    /**
      * Show a screen
      * @param {'upload'|'reader'} screen
      */
@@ -424,4 +484,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Expose for debugging
     window.readingPartner = app;
+    window.ttsEngine = ttsEngine; // Direct access to TTS engine
 });

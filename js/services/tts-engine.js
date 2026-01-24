@@ -1,12 +1,23 @@
 /**
  * TTS Engine Service
  * Handles text-to-speech using Kokoro (ONNX) with Web Speech API fallback
+ * Supports WebGPU for GPU acceleration
  */
 
 /**
  * @typedef {Object} TTSOptions
  * @property {string} [voice] - Voice ID
  * @property {number} [speed] - Playback speed (0.5-2.0)
+ */
+
+/**
+ * @typedef {Object} BenchmarkResult
+ * @property {string} text - Input text
+ * @property {number} textLength - Character count
+ * @property {number} synthesisTimeMs - Time to synthesize (ms)
+ * @property {number} audioDurationMs - Duration of generated audio (ms)
+ * @property {number} rtf - Real-time factor (synthesis time / audio duration)
+ * @property {string} device - Device used (webgpu/wasm)
  */
 
 /**
@@ -22,6 +33,13 @@ export class TTSEngine {
         this._currentVoice = 'af_bella'; // Default Kokoro voice
         this._audioContext = null;
         this._onProgress = null;
+        this._device = 'wasm'; // Current device: 'webgpu' or 'wasm'
+        this._dtype = 'fp32'; // Current dtype: 'fp32', 'fp16', 'q8', 'q4'
+        this._sampleRate = 24000;
+
+        // Benchmarking
+        this._benchmarkResults = [];
+        this._benchmarkEnabled = false;
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
@@ -36,10 +54,29 @@ export class TTSEngine {
     }
 
     /**
+     * Check if WebGPU is available
+     * @returns {Promise<boolean>}
+     */
+    async isWebGPUAvailable() {
+        if (!navigator.gpu) {
+            return false;
+        }
+        try {
+            const adapter = await navigator.gpu.requestAdapter();
+            return adapter !== null;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
      * Initialize the TTS engine
+     * @param {Object} [options]
+     * @param {string} [options.device] - 'webgpu', 'wasm', or 'auto'
+     * @param {string} [options.dtype] - 'fp32', 'fp16', 'q8', 'q4'
      * @returns {Promise<boolean>} True if Kokoro loaded, false if using fallback
      */
-    async initialize() {
+    async initialize(options = {}) {
         if (this._isReady) return this._useKokoro;
         if (this._isLoading) {
             // Wait for existing initialization
@@ -55,15 +92,33 @@ export class TTSEngine {
 
         this._isLoading = true;
 
+        // Determine device
+        let device = options.device || 'auto';
+        if (device === 'auto') {
+            const hasWebGPU = await this.isWebGPUAvailable();
+            device = hasWebGPU ? 'webgpu' : 'wasm';
+            console.log(`Auto-detected device: ${device} (WebGPU ${hasWebGPU ? 'available' : 'not available'})`);
+        }
+
+        // Determine dtype based on device
+        // WebGPU works well with fp32/fp16, WASM benefits from quantization
+        let dtype = options.dtype;
+        if (!dtype) {
+            dtype = device === 'webgpu' ? 'fp32' : 'q8';
+        }
+
+        this._device = device;
+        this._dtype = dtype;
+
         try {
-            this._reportProgress({ status: 'Loading TTS engine...' });
+            this._reportProgress({ status: `Loading TTS engine (${device})...` });
 
             // Try to load Kokoro
-            await this._initializeKokoro();
+            await this._initializeKokoro(device, dtype);
             this._useKokoro = true;
             this._isReady = true;
-            this._reportProgress({ status: 'TTS engine ready', progress: 100 });
-            console.log('Kokoro TTS initialized successfully');
+            this._reportProgress({ status: `TTS ready (${device}, ${dtype})`, progress: 100 });
+            console.log(`Kokoro TTS initialized: device=${device}, dtype=${dtype}`);
             return true;
 
         } catch (error) {
@@ -84,23 +139,24 @@ export class TTSEngine {
 
     /**
      * Initialize Kokoro TTS
+     * @param {string} device - 'webgpu' or 'wasm'
+     * @param {string} dtype - Model precision
      */
-    async _initializeKokoro() {
+    async _initializeKokoro(device, dtype) {
         // Dynamic import of Kokoro from ESM CDN
-        this._reportProgress({ status: 'Loading Kokoro model...', progress: 10 });
+        this._reportProgress({ status: 'Loading Kokoro library...', progress: 10 });
 
         // Import the KokoroTTS library
         const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.1.0/+esm');
 
-        this._reportProgress({ status: 'Initializing model...', progress: 30 });
+        this._reportProgress({ status: `Initializing model (${device}, ${dtype})...`, progress: 30 });
 
         // Create Kokoro instance - this will download the model
-        // Using the smaller/faster model for better mobile performance
         this._kokoro = await KokoroTTS.from_pretrained(
             'onnx-community/Kokoro-82M-v1.0-ONNX',
             {
-                dtype: 'q8',  // Quantized for smaller size and faster inference
-                device: 'wasm' // Use WebAssembly backend
+                dtype: dtype,
+                device: device
             }
         );
 
@@ -118,6 +174,42 @@ export class TTSEngine {
         if (this._onProgress) {
             this._onProgress(progress);
         }
+    }
+
+    /**
+     * Enable/disable benchmarking
+     * @param {boolean} enabled
+     */
+    setBenchmarkEnabled(enabled) {
+        this._benchmarkEnabled = enabled;
+        if (!enabled) {
+            this._benchmarkResults = [];
+        }
+    }
+
+    /**
+     * Get benchmark results
+     * @returns {BenchmarkResult[]}
+     */
+    getBenchmarkResults() {
+        return [...this._benchmarkResults];
+    }
+
+    /**
+     * Get average RTF from benchmarks
+     * @returns {number|null}
+     */
+    getAverageRTF() {
+        if (this._benchmarkResults.length === 0) return null;
+        const sum = this._benchmarkResults.reduce((acc, r) => acc + r.rtf, 0);
+        return sum / this._benchmarkResults.length;
+    }
+
+    /**
+     * Clear benchmark results
+     */
+    clearBenchmarks() {
+        this._benchmarkResults = [];
     }
 
     /**
@@ -151,13 +243,17 @@ export class TTSEngine {
     async _synthesizeKokoro(text, options) {
         const voice = options.voice || this._currentVoice;
 
+        const startTime = performance.now();
+
         // Generate audio using Kokoro
         const audio = await this._kokoro.generate(text, { voice });
+
+        const synthesisTime = performance.now() - startTime;
 
         // Convert to AudioBuffer
         // Kokoro returns audio data that we need to convert
         const audioData = audio.audio;
-        const sampleRate = audio.sampling_rate || 24000;
+        const sampleRate = audio.sampling_rate || this._sampleRate;
 
         // Create AudioBuffer
         const audioBuffer = this._audioContext.createBuffer(
@@ -168,6 +264,24 @@ export class TTSEngine {
 
         // Copy data to buffer
         audioBuffer.getChannelData(0).set(audioData);
+
+        // Calculate audio duration in ms
+        const audioDurationMs = (audioData.length / sampleRate) * 1000;
+
+        // Record benchmark if enabled
+        if (this._benchmarkEnabled) {
+            const rtf = synthesisTime / audioDurationMs;
+            const result = {
+                text: text.slice(0, 50) + (text.length > 50 ? '...' : ''),
+                textLength: text.length,
+                synthesisTimeMs: Math.round(synthesisTime),
+                audioDurationMs: Math.round(audioDurationMs),
+                rtf: Math.round(rtf * 1000) / 1000, // 3 decimal places
+                device: this._device
+            };
+            this._benchmarkResults.push(result);
+            console.log(`TTS Benchmark: ${result.synthesisTimeMs}ms for ${result.audioDurationMs}ms audio (RTF: ${result.rtf})`);
+        }
 
         return audioBuffer;
     }
@@ -198,6 +312,48 @@ export class TTSEngine {
         buffer._isWebSpeechFallback = true;
 
         return buffer;
+    }
+
+    /**
+     * Run a benchmark test
+     * @param {string[]} testSentences - Sentences to test
+     * @returns {Promise<{results: BenchmarkResult[], averageRTF: number, device: string, dtype: string}>}
+     */
+    async runBenchmark(testSentences) {
+        if (!this._isReady) {
+            await this.initialize();
+        }
+
+        if (!this._useKokoro) {
+            throw new Error('Benchmarking only available with Kokoro TTS');
+        }
+
+        const wasEnabled = this._benchmarkEnabled;
+        this._benchmarkEnabled = true;
+        const startIdx = this._benchmarkResults.length;
+
+        console.log(`Running benchmark on ${testSentences.length} sentences...`);
+
+        for (const sentence of testSentences) {
+            await this.synthesize(sentence);
+        }
+
+        const results = this._benchmarkResults.slice(startIdx);
+        const averageRTF = results.reduce((acc, r) => acc + r.rtf, 0) / results.length;
+
+        this._benchmarkEnabled = wasEnabled;
+
+        const summary = {
+            results,
+            averageRTF: Math.round(averageRTF * 1000) / 1000,
+            device: this._device,
+            dtype: this._dtype,
+            totalSynthesisTime: results.reduce((acc, r) => acc + r.synthesisTimeMs, 0),
+            totalAudioTime: results.reduce((acc, r) => acc + r.audioDurationMs, 0)
+        };
+
+        console.log('Benchmark Summary:', summary);
+        return summary;
     }
 
     /**
@@ -268,6 +424,22 @@ export class TTSEngine {
      */
     isUsingKokoro() {
         return this._useKokoro;
+    }
+
+    /**
+     * Get current device
+     * @returns {string}
+     */
+    getDevice() {
+        return this._device;
+    }
+
+    /**
+     * Get current dtype
+     * @returns {string}
+     */
+    getDtype() {
+        return this._dtype;
     }
 
     /**
