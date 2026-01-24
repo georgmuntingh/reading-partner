@@ -152,6 +152,58 @@
     color: var(--primary-color);
 }
 
+.controls-settings {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    padding: 0 var(--spacing-md);
+}
+
+.setting-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+}
+
+.setting-label {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    min-width: 45px;
+    text-align: right;
+}
+
+.voice-select {
+    flex: 1;
+    max-width: 200px;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    cursor: pointer;
+}
+
+.voice-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1);
+}
+
+.speed-value {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    min-width: 3ch;
+}
+
+#speed-slider {
+    flex: 1;
+    max-width: 150px;
+    accent-color: var(--primary-color);
+}
+
+/* Legacy support for old speed-row class */
 .speed-row {
     display: flex;
     align-items: center;
@@ -162,17 +214,6 @@
 .speed-label {
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
-}
-
-.speed-value {
-    font-size: var(--font-size-sm);
-    font-weight: 500;
-    min-width: 3ch;
-}
-
-#speed-slider {
-    width: 120px;
-    accent-color: var(--primary-color);
 }
 
 /* Scroll behavior when highlighting */

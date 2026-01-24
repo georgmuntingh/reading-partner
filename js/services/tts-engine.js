@@ -4,6 +4,8 @@
  * Supports WebGPU for GPU acceleration
  */
 
+import { splitLongSentence } from '../utils/sentence-splitter.js';
+
 /**
  * @typedef {Object} TTSOptions
  * @property {string} [voice] - Voice ID
@@ -338,6 +340,16 @@ export class TTSEngine {
     async _synthesizeKokoro(text, options) {
         const voice = options.voice || this._currentVoice;
 
+        // Split long sentences to prevent TTS errors
+        // Kokoro has issues with very long sentences (>500 chars)
+        const chunks = splitLongSentence(text, 500);
+
+        // If sentence was split, synthesize each chunk and concatenate
+        if (chunks.length > 1) {
+            console.log(`Splitting long sentence (${text.length} chars) into ${chunks.length} chunks`);
+            return await this._synthesizeChunks(chunks, voice);
+        }
+
         const startTime = performance.now();
 
         // Generate audio using Kokoro
@@ -379,6 +391,48 @@ export class TTSEngine {
         }
 
         return audioBuffer;
+    }
+
+    /**
+     * Synthesize multiple chunks and concatenate them
+     * @param {string[]} chunks - Text chunks to synthesize
+     * @param {string} voice - Voice ID
+     * @returns {Promise<AudioBuffer>}
+     */
+    async _synthesizeChunks(chunks, voice) {
+        // Synthesize each chunk
+        const audioBuffers = [];
+        let totalLength = 0;
+        let sampleRate = this._sampleRate;
+
+        for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            console.log(`  Chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 50)}..."`);
+
+            const audio = await this._kokoro.generate(chunk, { voice });
+            const audioData = audio.audio;
+            sampleRate = audio.sampling_rate || this._sampleRate;
+
+            const buffer = this._audioContext.createBuffer(1, audioData.length, sampleRate);
+            buffer.getChannelData(0).set(audioData);
+
+            audioBuffers.push(buffer);
+            totalLength += audioData.length;
+        }
+
+        // Concatenate all buffers
+        const concatenated = this._audioContext.createBuffer(1, totalLength, sampleRate);
+        const output = concatenated.getChannelData(0);
+
+        let offset = 0;
+        for (const buffer of audioBuffers) {
+            const data = buffer.getChannelData(0);
+            output.set(data, offset);
+            offset += data.length;
+        }
+
+        console.log(`Concatenated ${chunks.length} chunks into ${totalLength} samples`);
+        return concatenated;
     }
 
     /**
@@ -543,16 +597,40 @@ export class TTSEngine {
      */
     getAvailableVoices() {
         if (this._useKokoro) {
-            // Kokoro voices
+            // Kokoro voices - organized by accent and gender
             return [
+                // American Female
+                { id: 'af_alloy', name: 'Alloy (American Female)' },
+                { id: 'af_aoede', name: 'Aoede (American Female)' },
                 { id: 'af_bella', name: 'Bella (American Female)' },
+                { id: 'af_heart', name: 'Heart (American Female)' },
+                { id: 'af_jessica', name: 'Jessica (American Female)' },
+                { id: 'af_kore', name: 'Kore (American Female)' },
                 { id: 'af_nicole', name: 'Nicole (American Female)' },
+                { id: 'af_nova', name: 'Nova (American Female)' },
+                { id: 'af_river', name: 'River (American Female)' },
                 { id: 'af_sarah', name: 'Sarah (American Female)' },
                 { id: 'af_sky', name: 'Sky (American Female)' },
+
+                // American Male
                 { id: 'am_adam', name: 'Adam (American Male)' },
+                { id: 'am_echo', name: 'Echo (American Male)' },
+                { id: 'am_eric', name: 'Eric (American Male)' },
+                { id: 'am_fenrir', name: 'Fenrir (American Male)' },
+                { id: 'am_liam', name: 'Liam (American Male)' },
                 { id: 'am_michael', name: 'Michael (American Male)' },
+                { id: 'am_onyx', name: 'Onyx (American Male)' },
+                { id: 'am_puck', name: 'Puck (American Male)' },
+
+                // British Female
+                { id: 'bf_alice', name: 'Alice (British Female)' },
                 { id: 'bf_emma', name: 'Emma (British Female)' },
                 { id: 'bf_isabella', name: 'Isabella (British Female)' },
+                { id: 'bf_lily', name: 'Lily (British Female)' },
+
+                // British Male
+                { id: 'bm_daniel', name: 'Daniel (British Male)' },
+                { id: 'bm_fable', name: 'Fable (British Male)' },
                 { id: 'bm_george', name: 'George (British Male)' },
                 { id: 'bm_lewis', name: 'Lewis (British Male)' }
             ];

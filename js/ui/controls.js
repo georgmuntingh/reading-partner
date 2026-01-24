@@ -14,6 +14,7 @@ export class PlaybackControls {
      * @param {HTMLElement} options.askBtn
      * @param {HTMLInputElement} options.speedSlider
      * @param {HTMLElement} options.speedValue
+     * @param {HTMLSelectElement} options.voiceSelect
      * @param {Object} callbacks
      * @param {() => void} callbacks.onPlay
      * @param {() => void} callbacks.onPause
@@ -22,6 +23,7 @@ export class PlaybackControls {
      * @param {() => void} callbacks.onBack2
      * @param {() => void} callbacks.onAsk
      * @param {(speed: number) => void} callbacks.onSpeedChange
+     * @param {(voiceId: string) => void} callbacks.onVoiceChange
      */
     constructor(options, callbacks) {
         this._playBtn = options.playBtn;
@@ -33,6 +35,7 @@ export class PlaybackControls {
         this._askBtn = options.askBtn;
         this._speedSlider = options.speedSlider;
         this._speedValue = options.speedValue;
+        this._voiceSelect = options.voiceSelect;
 
         this._callbacks = callbacks;
         this._isPlaying = false;
@@ -77,6 +80,12 @@ export class PlaybackControls {
             const speed = parseFloat(this._speedSlider.value);
             this._updateSpeedDisplay(speed);
             this._callbacks.onSpeedChange?.(speed);
+        });
+
+        // Voice selector
+        this._voiceSelect.addEventListener('change', () => {
+            const voiceId = this._voiceSelect.value;
+            this._callbacks.onVoiceChange?.(voiceId);
         });
     }
 
@@ -157,6 +166,46 @@ export class PlaybackControls {
      */
     getSpeed() {
         return parseFloat(this._speedSlider.value);
+    }
+
+    /**
+     * Set available voices
+     * @param {{ id: string, name: string }[]} voices
+     */
+    setVoices(voices) {
+        const currentValue = this._voiceSelect.value;
+
+        // Clear existing options
+        this._voiceSelect.innerHTML = '';
+
+        // Add new options
+        voices.forEach(voice => {
+            const option = document.createElement('option');
+            option.value = voice.id;
+            option.textContent = voice.name;
+            this._voiceSelect.appendChild(option);
+        });
+
+        // Restore previous selection if it exists
+        if (voices.some(v => v.id === currentValue)) {
+            this._voiceSelect.value = currentValue;
+        }
+    }
+
+    /**
+     * Set voice
+     * @param {string} voiceId
+     */
+    setVoice(voiceId) {
+        this._voiceSelect.value = voiceId;
+    }
+
+    /**
+     * Get current voice
+     * @returns {string}
+     */
+    getVoice() {
+        return this._voiceSelect.value;
     }
 
     /**

@@ -14,6 +14,13 @@ export function splitIntoSentences(text, lang = 'en') {
         return [];
     }
 
+    // Fix common issues BEFORE normalization
+    // 1. Fix missing spaces after punctuation (e.g., "word.Another" -> "word. Another")
+    text = text.replace(/([.!?:;])([A-Z])/g, '$1 $2');
+
+    // 2. Fix missing spaces after colons followed by lowercase (e.g., "word:another" -> "word: another")
+    text = text.replace(/([a-z]):([a-z])/gi, '$1: $2');
+
     // Normalize whitespace
     text = text.replace(/\s+/g, ' ').trim();
 
@@ -49,7 +56,10 @@ function splitSentencesFallback(text) {
         'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'Sr', 'Jr',
         'vs', 'etc', 'e.g', 'i.e', 'Inc', 'Ltd', 'Corp',
         'St', 'Ave', 'Blvd', 'Rd', 'Mt', 'Ft',
-        'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+        'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+        // Single-letter abbreviations (A-Z)
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+        'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
     ];
 
     // Temporarily replace abbreviation periods
@@ -116,4 +126,62 @@ export function splitIntoParagraphsAndSentences(text) {
     }));
 
     return { paragraphs };
+}
+
+/**
+ * Split a long sentence into smaller chunks at natural break points
+ * Used for TTS when a sentence exceeds the model's maximum length
+ * @param {string} text - Sentence to split
+ * @param {number} maxLength - Maximum length per chunk (default: 500 characters)
+ * @returns {string[]} Array of text chunks
+ */
+export function splitLongSentence(text, maxLength = 500) {
+    if (!text || text.length <= maxLength) {
+        return [text];
+    }
+
+    const chunks = [];
+    let remaining = text;
+
+    while (remaining.length > maxLength) {
+        // Try to split at natural break points: comma, semicolon, dash, or space
+        let splitPoint = -1;
+
+        // Look for break points in the preferred range (around maxLength)
+        const searchEnd = Math.min(maxLength, remaining.length);
+        const searchStart = Math.floor(searchEnd * 0.7); // Start searching from 70% of maxLength
+
+        // Priority: semicolon, comma, dash, then space
+        const breakPoints = [
+            { char: ';', offset: 1 },
+            { char: ',', offset: 1 },
+            { char: ' - ', offset: 3 },
+            { char: ' — ', offset: 3 },
+            { char: ' ', offset: 1 }
+        ];
+
+        for (const { char, offset } of breakPoints) {
+            splitPoint = remaining.lastIndexOf(char, searchEnd);
+            if (splitPoint >= searchStart) {
+                splitPoint += offset;
+                break;
+            }
+        }
+
+        // If no break point found, force split at maxLength
+        if (splitPoint < searchStart) {
+            splitPoint = maxLength;
+        }
+
+        // Extract chunk and update remaining
+        chunks.push(remaining.substring(0, splitPoint).trim());
+        remaining = remaining.substring(splitPoint).trim();
+    }
+
+    // Add the last chunk
+    if (remaining.length > 0) {
+        chunks.push(remaining);
+    }
+
+    return chunks;
 }
