@@ -400,8 +400,11 @@ class ReadingPartnerApp {
             }
         }
 
-        // Update UI with loaded content
-        this._readerView.renderSentences(sentences, 0);
+        // Get the HTML content (may be null for older cached chapters)
+        const html = this._currentBook.chapters[chapterIndex].html || null;
+
+        // Update UI with loaded content - pass HTML for full rendering
+        this._readerView.renderSentences(sentences, 0, html);
         this._readerView.scrollToTop();
 
         // Update audio controller

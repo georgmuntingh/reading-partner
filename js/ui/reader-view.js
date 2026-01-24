@@ -1,7 +1,7 @@
 /**
  * Reader View UI Component
  * Handles text display and sentence highlighting
- * Uses windowed rendering - only renders sentences near current position
+ * Displays full EPUB HTML with embedded sentence spans for highlighting
  */
 
 import { scrollIntoViewWithOffset } from '../utils/helpers.js';
@@ -23,11 +23,7 @@ export class ReaderView {
         this._textContent = container.querySelector('#text-content') || container;
         this._sentences = [];
         this._currentIndex = -1;
-
-        // Windowed rendering
-        this._windowSize = 40; // Sentences before and after current
-        this._renderedRange = { start: -1, end: -1 };
-        this._sentenceElements = new Map(); // index -> element
+        this._html = null; // Full HTML content
 
         // Use event delegation for click handling
         this._setupEventDelegation();
@@ -67,17 +63,17 @@ export class ReaderView {
     }
 
     /**
-     * Set sentences for the chapter (does NOT render immediately)
+     * Set content for the chapter - supports both HTML and sentences-only mode
      * @param {string[]} sentences
      * @param {number} [currentIndex=0]
+     * @param {string|null} [html=null] - Full HTML content with sentence spans
      */
-    setSentences(sentences, currentIndex = 0) {
+    setSentences(sentences, currentIndex = 0, html = null) {
         console.time('ReaderView.setSentences');
 
         this._sentences = sentences;
         this._currentIndex = currentIndex;
-        this._renderedRange = { start: -1, end: -1 };
-        this._sentenceElements.clear();
+        this._html = html;
 
         // Clear existing content
         this._textContent.innerHTML = '';
@@ -88,10 +84,15 @@ export class ReaderView {
             return;
         }
 
-        console.log(`Chapter has ${sentences.length} sentences`);
+        console.log(`Chapter has ${sentences.length} sentences, HTML mode: ${!!html}`);
 
-        // Render initial window around current position
-        this._renderWindow(currentIndex);
+        if (html) {
+            // Render full HTML with embedded sentence spans
+            this._renderHtml(html, currentIndex);
+        } else {
+            // Fallback to sentences-only rendering
+            this._renderSentencesOnly(sentences, currentIndex);
+        }
 
         console.timeEnd('ReaderView.setSentences');
     }
@@ -100,46 +101,65 @@ export class ReaderView {
      * Render sentences - compatibility method
      * @param {string[]} sentences
      * @param {number} [currentIndex=0]
+     * @param {string|null} [html=null]
      */
-    renderSentences(sentences, currentIndex = 0) {
-        this.setSentences(sentences, currentIndex);
+    renderSentences(sentences, currentIndex = 0, html = null) {
+        this.setSentences(sentences, currentIndex, html);
     }
 
     /**
-     * Render a window of sentences around the given index
-     * @param {number} centerIndex
+     * Render full HTML content with embedded sentence spans
+     * @param {string} html
+     * @param {number} currentIndex
      */
-    _renderWindow(centerIndex) {
-        const start = Math.max(0, centerIndex - this._windowSize);
-        const end = Math.min(this._sentences.length, centerIndex + this._windowSize + 1);
+    _renderHtml(html, currentIndex) {
+        console.time('ReaderView._renderHtml');
 
-        // Check if we need to re-render
-        if (start === this._renderedRange.start && end === this._renderedRange.end) {
-            return; // Already rendered this range
+        // Set the HTML content
+        this._textContent.innerHTML = html;
+
+        // Find all sentence elements and update their state
+        const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
+        console.log(`Found ${sentenceElements.length} sentence elements in HTML`);
+
+        sentenceElements.forEach(el => {
+            const index = parseInt(el.dataset.index, 10);
+
+            // Mark as played if before current
+            if (index < currentIndex) {
+                el.classList.add('played');
+            } else if (index === currentIndex) {
+                el.classList.add('current');
+            }
+        });
+
+        // Scroll to current sentence if needed
+        if (currentIndex >= 0 && currentIndex < this._sentences.length) {
+            const currentEl = this._textContent.querySelector(`.sentence[data-index="${currentIndex}"]`);
+            if (currentEl) {
+                setTimeout(() => {
+                    scrollIntoViewWithOffset(currentEl, this._container, 150);
+                }, 100);
+            }
         }
 
-        console.time('ReaderView._renderWindow');
-        console.log(`Rendering window: sentences ${start}-${end} (${end - start} sentences)`);
+        console.timeEnd('ReaderView._renderHtml');
+    }
 
-        // Clear and re-render
-        this._textContent.innerHTML = '';
-        this._sentenceElements.clear();
+    /**
+     * Fallback: Render sentences only (no HTML)
+     * @param {string[]} sentences
+     * @param {number} currentIndex
+     */
+    _renderSentencesOnly(sentences, currentIndex) {
+        console.time('ReaderView._renderSentencesOnly');
 
-        // Add "earlier content" indicator if not at start
-        if (start > 0) {
-            const indicator = document.createElement('div');
-            indicator.className = 'content-indicator';
-            indicator.textContent = `↑ ${start} earlier sentences`;
-            this._textContent.appendChild(indicator);
-        }
-
-        // Render sentences
         const fragment = document.createDocumentFragment();
         let currentParagraph = document.createElement('p');
         currentParagraph.className = 'paragraph';
 
-        for (let i = start; i < end; i++) {
-            const sentence = this._sentences[i];
+        for (let i = 0; i < sentences.length; i++) {
+            const sentence = sentences[i];
 
             const span = document.createElement('span');
             span.className = 'sentence';
@@ -147,20 +167,19 @@ export class ReaderView {
             span.textContent = sentence + ' ';
 
             // Mark as played if before current
-            if (i < this._currentIndex) {
+            if (i < currentIndex) {
                 span.classList.add('played');
-            } else if (i === this._currentIndex) {
+            } else if (i === currentIndex) {
                 span.classList.add('current');
             }
 
-            this._sentenceElements.set(i, span);
             currentParagraph.appendChild(span);
 
             // Paragraph breaks every 5-6 sentences
             const endsWithBreak = /[.!?]["']?\s*$/.test(sentence);
-            const isParagraphBoundary = (i - start + 1) % 6 === 0;
+            const isParagraphBoundary = (i + 1) % 6 === 0;
 
-            if (endsWithBreak && isParagraphBoundary && i < end - 1) {
+            if (endsWithBreak && isParagraphBoundary && i < sentences.length - 1) {
                 fragment.appendChild(currentParagraph);
                 currentParagraph = document.createElement('p');
                 currentParagraph.className = 'paragraph';
@@ -173,17 +192,7 @@ export class ReaderView {
 
         this._textContent.appendChild(fragment);
 
-        // Add "more content" indicator if not at end
-        if (end < this._sentences.length) {
-            const indicator = document.createElement('div');
-            indicator.className = 'content-indicator';
-            indicator.textContent = `↓ ${this._sentences.length - end} more sentences`;
-            this._textContent.appendChild(indicator);
-        }
-
-        this._renderedRange = { start, end };
-
-        console.timeEnd('ReaderView._renderWindow');
+        console.timeEnd('ReaderView._renderSentencesOnly');
     }
 
     /**
@@ -192,17 +201,8 @@ export class ReaderView {
      * @param {boolean} [scroll=true] - Whether to scroll to sentence
      */
     highlightSentence(index, scroll = true) {
-        // Check if we need to re-render the window
-        const needsRerender =
-            index < this._renderedRange.start + 10 ||
-            index > this._renderedRange.end - 10;
-
-        if (needsRerender && index >= 0 && index < this._sentences.length) {
-            this._renderWindow(index);
-        }
-
         // Remove previous highlight
-        const prevElement = this._sentenceElements.get(this._currentIndex);
+        const prevElement = this._textContent.querySelector(`.sentence[data-index="${this._currentIndex}"]`);
         if (prevElement) {
             prevElement.classList.remove('current');
             prevElement.classList.add('played');
@@ -211,7 +211,7 @@ export class ReaderView {
         this._currentIndex = index;
 
         // Add new highlight
-        const element = this._sentenceElements.get(index);
+        const element = this._textContent.querySelector(`.sentence[data-index="${index}"]`);
         if (element) {
             element.classList.remove('played');
             element.classList.add('current');
@@ -226,9 +226,10 @@ export class ReaderView {
      * Clear all highlights
      */
     clearHighlights() {
-        for (const el of this._sentenceElements.values()) {
+        const sentenceElements = this._textContent.querySelectorAll('.sentence');
+        sentenceElements.forEach(el => {
             el.classList.remove('current', 'played');
-        }
+        });
         this._currentIndex = -1;
     }
 
@@ -237,11 +238,13 @@ export class ReaderView {
      * @param {number} fromIndex - Reset 'played' class from this index onwards
      */
     resetPlayedState(fromIndex) {
-        for (const [idx, el] of this._sentenceElements.entries()) {
+        const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
+        sentenceElements.forEach(el => {
+            const idx = parseInt(el.dataset.index, 10);
             if (idx >= fromIndex) {
                 el.classList.remove('played');
             }
-        }
+        });
     }
 
     /**

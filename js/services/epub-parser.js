@@ -13,6 +13,7 @@ import { hashString } from '../utils/helpers.js';
  * @property {string} title
  * @property {string} href
  * @property {string[]|null} sentences - null until loaded
+ * @property {string|null} html - processed HTML with sentence spans, null until loaded
  * @property {boolean} loaded
  */
 
@@ -139,6 +140,7 @@ export class EPUBParser {
                 title,
                 href: item.href,
                 sentences: null, // Not loaded yet
+                html: null, // Not loaded yet
                 loaded: false
             });
         }
@@ -180,23 +182,22 @@ export class EPUBParser {
                 console.log('Body textContent length:', doc.body.textContent?.length);
             }
 
-            // Extract text content
-            const textContent = this._extractText(doc);
-            console.log('Extracted text length:', textContent.length);
+            // Process HTML and wrap sentences
+            const { html, sentences } = await this._processHtmlWithSentences(doc, chapter.href);
+            console.log(`Processed HTML length: ${html.length}, sentences: ${sentences.length}`);
 
-            if (!textContent.trim()) {
+            if (sentences.length === 0) {
                 console.warn('Chapter has no text content');
                 chapter.sentences = [];
+                chapter.html = html || '<div class="epub-content"></div>';
                 chapter.loaded = true;
                 console.timeEnd(`EPUBParser.loadChapter[${chapterIndex}]`);
                 return [];
             }
 
-            // Split into sentences
-            const sentences = splitIntoSentences(textContent);
-
             // Cache the result
             chapter.sentences = sentences;
+            chapter.html = html;
             chapter.loaded = true;
 
             console.timeEnd(`EPUBParser.loadChapter[${chapterIndex}]`);
@@ -207,9 +208,298 @@ export class EPUBParser {
         } catch (error) {
             console.error(`Failed to load chapter ${chapterIndex}:`, error);
             chapter.sentences = [];
+            chapter.html = '<div class="epub-content"></div>';
             chapter.loaded = true;
             return [];
         }
+    }
+
+    /**
+     * Process HTML document and wrap sentences in spans
+     * @param {Document|Element|string} doc
+     * @param {string} chapterHref - href for resolving relative URLs
+     * @returns {Promise<{html: string, sentences: string[]}>}
+     */
+    async _processHtmlWithSentences(doc, chapterHref) {
+        // Get the body element
+        let body = this._getBodyElement(doc);
+        if (!body) {
+            return { html: '<div class="epub-content"></div>', sentences: [] };
+        }
+
+        // Clone to avoid modifying original
+        body = body.cloneNode(true);
+
+        // Remove elements that shouldn't be displayed
+        const removeSelectors = [
+            'script', 'style', 'nav', 'aside',
+            '[role="navigation"]', '[role="banner"]',
+            '.pagebreak', '.page-break'
+        ];
+        body.querySelectorAll(removeSelectors.join(',')).forEach(el => el.remove());
+
+        // Fix image sources to use blob URLs from epub.js (wait for all images to load)
+        await this._fixImageSources(body, chapterHref);
+
+        // Wrap sentences in spans
+        const sentences = [];
+        this._wrapSentencesInElement(body, sentences);
+
+        // Wrap in epub-content div
+        const wrapper = document.createElement('div');
+        wrapper.className = 'epub-content';
+        wrapper.innerHTML = body.innerHTML;
+
+        return { html: wrapper.outerHTML, sentences };
+    }
+
+    /**
+     * Get body element from various document types
+     * @param {Document|Element|string} doc
+     * @returns {Element|null}
+     */
+    _getBodyElement(doc) {
+        if (!doc) return null;
+
+        // If doc is a string (HTML), parse it
+        if (typeof doc === 'string') {
+            const parser = new DOMParser();
+            const parsed = parser.parseFromString(doc, 'text/html');
+            return parsed.body;
+        }
+        // If doc has a body property (Document)
+        if (doc.body) {
+            return doc.body;
+        }
+        // If doc is an Element itself
+        if (doc.nodeType === Node.ELEMENT_NODE) {
+            return doc;
+        }
+        // If doc has documentElement (XML document)
+        if (doc.documentElement) {
+            return doc.documentElement;
+        }
+        return null;
+    }
+
+    /**
+     * Fix image sources in HTML to use proper URLs
+     * @param {Element} element
+     * @param {string} chapterHref
+     * @returns {Promise<void>}
+     */
+    async _fixImageSources(element, chapterHref) {
+        const imagePromises = [];
+
+        // Handle regular img elements
+        const images = element.querySelectorAll('img');
+        images.forEach(img => {
+            const src = img.getAttribute('src');
+            if (src && !src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('http')) {
+                // Try to resolve relative URL using epub.js
+                try {
+                    const resolvedUrl = this._book.resolve(src, chapterHref);
+                    if (resolvedUrl) {
+                        // Load the image from epub archive
+                        const promise = this._book.archive.getBlob(resolvedUrl)
+                            .then(blob => {
+                                if (blob) {
+                                    img.src = URL.createObjectURL(blob);
+                                }
+                            })
+                            .catch(e => {
+                                console.warn('Failed to load image:', src, e);
+                            });
+                        imagePromises.push(promise);
+                    }
+                } catch (e) {
+                    console.warn('Failed to resolve image URL:', src, e);
+                }
+            }
+        });
+
+        // Also handle SVG images and image elements within SVG
+        const svgImages = element.querySelectorAll('image[href], image[xlink\\:href]');
+        svgImages.forEach(img => {
+            const href = img.getAttribute('href') || img.getAttribute('xlink:href');
+            if (href && !href.startsWith('data:') && !href.startsWith('blob:') && !href.startsWith('http')) {
+                try {
+                    const resolvedUrl = this._book.resolve(href, chapterHref);
+                    if (resolvedUrl) {
+                        const promise = this._book.archive.getBlob(resolvedUrl)
+                            .then(blob => {
+                                if (blob) {
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    img.setAttribute('href', blobUrl);
+                                    img.removeAttribute('xlink:href');
+                                }
+                            })
+                            .catch(e => {
+                                console.warn('Failed to load SVG image:', href, e);
+                            });
+                        imagePromises.push(promise);
+                    }
+                } catch (e) {
+                    console.warn('Failed to resolve SVG image URL:', href, e);
+                }
+            }
+        });
+
+        // Wait for all images to load
+        if (imagePromises.length > 0) {
+            console.log(`Loading ${imagePromises.length} images...`);
+            await Promise.all(imagePromises);
+            console.log('All images loaded');
+        }
+    }
+
+    /**
+     * Walk through element and wrap text content in sentence spans
+     * @param {Element} element
+     * @param {string[]} sentences - array to collect sentences
+     */
+    _wrapSentencesInElement(element, sentences) {
+        // Elements that should not have their text split
+        const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
+        // Inline elements where we should process children
+        const inlineTags = new Set(['A', 'SPAN', 'EM', 'STRONG', 'I', 'B', 'U', 'S', 'MARK', 'SUB', 'SUP', 'SMALL', 'BIG', 'CITE', 'Q', 'ABBR', 'TIME']);
+
+        const walker = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+            {
+                acceptNode: (node) => {
+                    // Skip if parent is a skip tag
+                    let parent = node.parentNode;
+                    while (parent && parent !== element) {
+                        if (skipTags.has(parent.tagName)) {
+                            return NodeFilter.FILTER_REJECT;
+                        }
+                        parent = parent.parentNode;
+                    }
+                    // Skip if empty or whitespace only
+                    if (!node.textContent?.trim()) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            }
+        );
+
+        // Collect all text nodes first (to avoid modifying while iterating)
+        const textNodes = [];
+        while (walker.nextNode()) {
+            textNodes.push(walker.currentNode);
+        }
+
+        // Process each text node
+        for (const textNode of textNodes) {
+            this._wrapTextNodeSentences(textNode, sentences);
+        }
+    }
+
+    /**
+     * Wrap sentences within a text node
+     * @param {Text} textNode
+     * @param {string[]} sentences - array to collect sentences
+     */
+    _wrapTextNodeSentences(textNode, sentences) {
+        const text = textNode.textContent;
+        if (!text?.trim()) return;
+
+        // Split text into sentences
+        const nodeSentences = splitIntoSentences(text);
+        if (nodeSentences.length === 0) return;
+
+        // Create a document fragment to hold the new nodes
+        const fragment = document.createDocumentFragment();
+
+        let remainingText = text;
+
+        for (const sentence of nodeSentences) {
+            const trimmedSentence = sentence.trim();
+            if (!trimmedSentence) continue;
+
+            // Find where this sentence starts in remaining text
+            const sentenceIndex = remainingText.indexOf(trimmedSentence);
+            if (sentenceIndex === -1) {
+                // Sentence not found - might be normalized differently, try to match
+                const normalizedRemaining = remainingText.replace(/\s+/g, ' ');
+                const normalizedSentence = trimmedSentence.replace(/\s+/g, ' ');
+                const normalizedIndex = normalizedRemaining.indexOf(normalizedSentence);
+
+                if (normalizedIndex === -1) {
+                    // Still not found, add as plain text
+                    continue;
+                }
+
+                // Found in normalized version, find approximate position in original
+                const beforeText = remainingText.substring(0, normalizedIndex);
+                if (beforeText) {
+                    fragment.appendChild(document.createTextNode(beforeText));
+                }
+
+                // Create sentence span
+                const span = document.createElement('span');
+                span.className = 'sentence';
+                span.dataset.index = sentences.length.toString();
+                span.textContent = trimmedSentence;
+                fragment.appendChild(span);
+
+                // Add space after sentence
+                fragment.appendChild(document.createTextNode(' '));
+
+                sentences.push(trimmedSentence);
+
+                remainingText = remainingText.substring(normalizedIndex + normalizedSentence.length);
+                continue;
+            }
+
+            // Add any text before the sentence
+            if (sentenceIndex > 0) {
+                const beforeText = remainingText.substring(0, sentenceIndex);
+                fragment.appendChild(document.createTextNode(beforeText));
+            }
+
+            // Create sentence span
+            const span = document.createElement('span');
+            span.className = 'sentence';
+            span.dataset.index = sentences.length.toString();
+            span.textContent = trimmedSentence;
+            fragment.appendChild(span);
+
+            // Add space after sentence if there was whitespace
+            const afterIndex = sentenceIndex + trimmedSentence.length;
+            if (afterIndex < remainingText.length && /\s/.test(remainingText[afterIndex])) {
+                fragment.appendChild(document.createTextNode(' '));
+            }
+
+            sentences.push(trimmedSentence);
+
+            // Update remaining text
+            remainingText = remainingText.substring(afterIndex).replace(/^\s+/, '');
+        }
+
+        // Add any remaining text
+        if (remainingText.trim()) {
+            fragment.appendChild(document.createTextNode(remainingText));
+        }
+
+        // Replace the text node with the fragment
+        textNode.parentNode.replaceChild(fragment, textNode);
+    }
+
+    /**
+     * Get chapter HTML (for compatibility)
+     * @param {BookState} book
+     * @param {number} chapterIndex
+     * @returns {string|null}
+     */
+    getChapterHtml(book, chapterIndex) {
+        if (chapterIndex < 0 || chapterIndex >= book.chapters.length) {
+            return null;
+        }
+        return book.chapters[chapterIndex].html || null;
     }
 
     /**

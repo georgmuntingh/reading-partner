@@ -49,7 +49,156 @@
     margin: 0 auto;
 }
 
-/* Sentence styling */
+/* EPUB Content Container */
+.epub-content {
+    max-width: 65ch;
+    margin: 0 auto;
+    line-height: 1.8;
+}
+
+/* EPUB native elements styling */
+.epub-content p {
+    margin-bottom: var(--spacing-md);
+    text-indent: 0;
+}
+
+.epub-content h1,
+.epub-content h2,
+.epub-content h3,
+.epub-content h4,
+.epub-content h5,
+.epub-content h6 {
+    margin-top: var(--spacing-xl);
+    margin-bottom: var(--spacing-md);
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.epub-content h1 { font-size: 1.8em; }
+.epub-content h2 { font-size: 1.5em; }
+.epub-content h3 { font-size: 1.3em; }
+.epub-content h4 { font-size: 1.1em; }
+.epub-content h5 { font-size: 1em; }
+.epub-content h6 { font-size: 0.9em; }
+
+.epub-content blockquote {
+    margin: var(--spacing-md) 0;
+    padding: var(--spacing-sm) var(--spacing-md);
+    border-left: 4px solid var(--border-color);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.epub-content ul,
+.epub-content ol {
+    margin: var(--spacing-md) 0;
+    padding-left: var(--spacing-xl);
+}
+
+.epub-content li {
+    margin-bottom: var(--spacing-xs);
+}
+
+.epub-content strong,
+.epub-content b {
+    font-weight: 600;
+}
+
+.epub-content em,
+.epub-content i {
+    font-style: italic;
+}
+
+/* EPUB Images */
+.epub-content img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: var(--spacing-lg) auto;
+    border-radius: var(--radius-md);
+}
+
+.epub-content figure {
+    margin: var(--spacing-lg) 0;
+    text-align: center;
+}
+
+.epub-content figcaption {
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+/* EPUB SVG handling */
+.epub-content svg {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: var(--spacing-md) auto;
+}
+
+/* EPUB tables */
+.epub-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: var(--spacing-md) 0;
+}
+
+.epub-content th,
+.epub-content td {
+    padding: var(--spacing-sm);
+    border: 1px solid var(--border-color);
+    text-align: left;
+}
+
+.epub-content th {
+    background-color: var(--surface-color);
+    font-weight: 600;
+}
+
+/* EPUB links */
+.epub-content a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.epub-content a:hover {
+    text-decoration: underline;
+}
+
+/* Code blocks in EPUB */
+.epub-content pre,
+.epub-content code {
+    font-family: monospace;
+    background-color: var(--surface-color);
+    border-radius: var(--radius-sm);
+}
+
+.epub-content code {
+    padding: 2px 4px;
+    font-size: 0.9em;
+}
+
+.epub-content pre {
+    padding: var(--spacing-sm);
+    overflow-x: auto;
+    margin: var(--spacing-md) 0;
+}
+
+.epub-content pre code {
+    padding: 0;
+    background: none;
+}
+
+/* Horizontal rule */
+.epub-content hr {
+    border: none;
+    border-top: 1px solid var(--border-color);
+    margin: var(--spacing-xl) 0;
+}
+
+/* Sentence styling - works inside EPUB content */
 .sentence {
     display: inline;
     padding: 2px 0;
@@ -71,7 +220,7 @@
     color: var(--text-secondary);
 }
 
-/* Paragraph spacing */
+/* Paragraph spacing - fallback for sentences-only mode */
 .paragraph {
     margin-bottom: var(--spacing-lg);
     line-height: 1.8;
