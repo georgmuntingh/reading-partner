@@ -183,7 +183,7 @@ export class EPUBParser {
             }
 
             // Process HTML and wrap sentences
-            const { html, sentences } = this._processHtmlWithSentences(doc, chapter.href);
+            const { html, sentences } = await this._processHtmlWithSentences(doc, chapter.href);
             console.log(`Processed HTML length: ${html.length}, sentences: ${sentences.length}`);
 
             if (sentences.length === 0) {
@@ -218,9 +218,9 @@ export class EPUBParser {
      * Process HTML document and wrap sentences in spans
      * @param {Document|Element|string} doc
      * @param {string} chapterHref - href for resolving relative URLs
-     * @returns {{html: string, sentences: string[]}}
+     * @returns {Promise<{html: string, sentences: string[]}>}
      */
-    _processHtmlWithSentences(doc, chapterHref) {
+    async _processHtmlWithSentences(doc, chapterHref) {
         // Get the body element
         let body = this._getBodyElement(doc);
         if (!body) {
@@ -238,8 +238,8 @@ export class EPUBParser {
         ];
         body.querySelectorAll(removeSelectors.join(',')).forEach(el => el.remove());
 
-        // Fix image sources to use blob URLs from epub.js
-        this._fixImageSources(body, chapterHref);
+        // Fix image sources to use blob URLs from epub.js (wait for all images to load)
+        await this._fixImageSources(body, chapterHref);
 
         // Wrap sentences in spans
         const sentences = [];
@@ -286,8 +286,12 @@ export class EPUBParser {
      * Fix image sources in HTML to use proper URLs
      * @param {Element} element
      * @param {string} chapterHref
+     * @returns {Promise<void>}
      */
-    _fixImageSources(element, chapterHref) {
+    async _fixImageSources(element, chapterHref) {
+        const imagePromises = [];
+
+        // Handle regular img elements
         const images = element.querySelectorAll('img');
         images.forEach(img => {
             const src = img.getAttribute('src');
@@ -297,13 +301,16 @@ export class EPUBParser {
                     const resolvedUrl = this._book.resolve(src, chapterHref);
                     if (resolvedUrl) {
                         // Load the image from epub archive
-                        this._book.archive.getBlob(resolvedUrl).then(blob => {
-                            if (blob) {
-                                img.src = URL.createObjectURL(blob);
-                            }
-                        }).catch(e => {
-                            console.warn('Failed to load image:', src, e);
-                        });
+                        const promise = this._book.archive.getBlob(resolvedUrl)
+                            .then(blob => {
+                                if (blob) {
+                                    img.src = URL.createObjectURL(blob);
+                                }
+                            })
+                            .catch(e => {
+                                console.warn('Failed to load image:', src, e);
+                            });
+                        imagePromises.push(promise);
                     }
                 } catch (e) {
                     console.warn('Failed to resolve image URL:', src, e);
@@ -319,21 +326,31 @@ export class EPUBParser {
                 try {
                     const resolvedUrl = this._book.resolve(href, chapterHref);
                     if (resolvedUrl) {
-                        this._book.archive.getBlob(resolvedUrl).then(blob => {
-                            if (blob) {
-                                const blobUrl = URL.createObjectURL(blob);
-                                img.setAttribute('href', blobUrl);
-                                img.removeAttribute('xlink:href');
-                            }
-                        }).catch(e => {
-                            console.warn('Failed to load SVG image:', href, e);
-                        });
+                        const promise = this._book.archive.getBlob(resolvedUrl)
+                            .then(blob => {
+                                if (blob) {
+                                    const blobUrl = URL.createObjectURL(blob);
+                                    img.setAttribute('href', blobUrl);
+                                    img.removeAttribute('xlink:href');
+                                }
+                            })
+                            .catch(e => {
+                                console.warn('Failed to load SVG image:', href, e);
+                            });
+                        imagePromises.push(promise);
                     }
                 } catch (e) {
                     console.warn('Failed to resolve SVG image URL:', href, e);
                 }
             }
         });
+
+        // Wait for all images to load
+        if (imagePromises.length > 0) {
+            console.log(`Loading ${imagePromises.length} images...`);
+            await Promise.all(imagePromises);
+            console.log('All images loaded');
+        }
     }
 
     /**
