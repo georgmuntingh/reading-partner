@@ -597,16 +597,40 @@ export class TTSEngine {
      */
     getAvailableVoices() {
         if (this._useKokoro) {
-            // Kokoro voices
+            // Kokoro voices - organized by accent and gender
             return [
+                // American Female
+                { id: 'af_alloy', name: 'Alloy (American Female)' },
+                { id: 'af_aoede', name: 'Aoede (American Female)' },
                 { id: 'af_bella', name: 'Bella (American Female)' },
+                { id: 'af_heart', name: 'Heart (American Female)' },
+                { id: 'af_jessica', name: 'Jessica (American Female)' },
+                { id: 'af_kore', name: 'Kore (American Female)' },
                 { id: 'af_nicole', name: 'Nicole (American Female)' },
+                { id: 'af_nova', name: 'Nova (American Female)' },
+                { id: 'af_river', name: 'River (American Female)' },
                 { id: 'af_sarah', name: 'Sarah (American Female)' },
                 { id: 'af_sky', name: 'Sky (American Female)' },
+
+                // American Male
                 { id: 'am_adam', name: 'Adam (American Male)' },
+                { id: 'am_echo', name: 'Echo (American Male)' },
+                { id: 'am_eric', name: 'Eric (American Male)' },
+                { id: 'am_fenrir', name: 'Fenrir (American Male)' },
+                { id: 'am_liam', name: 'Liam (American Male)' },
                 { id: 'am_michael', name: 'Michael (American Male)' },
+                { id: 'am_onyx', name: 'Onyx (American Male)' },
+                { id: 'am_puck', name: 'Puck (American Male)' },
+
+                // British Female
+                { id: 'bf_alice', name: 'Alice (British Female)' },
                 { id: 'bf_emma', name: 'Emma (British Female)' },
                 { id: 'bf_isabella', name: 'Isabella (British Female)' },
+                { id: 'bf_lily', name: 'Lily (British Female)' },
+
+                // British Male
+                { id: 'bm_daniel', name: 'Daniel (British Male)' },
+                { id: 'bm_fable', name: 'Fable (British Male)' },
                 { id: 'bm_george', name: 'George (British Male)' },
                 { id: 'bm_lewis', name: 'Lewis (British Male)' }
             ];

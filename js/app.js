@@ -333,20 +333,20 @@ class ReadingPartnerApp {
                     this._saveSettings(); // Auto-save speed setting
                 },
                 onVoiceChange: (voiceId) => {
-                    this._ttsEngine.setVoice(voiceId);
+                    ttsEngine.setVoice(voiceId);
                     this._saveSettings(); // Auto-save voice setting
                 }
             }
         );
 
         // Populate available voices
-        const voices = this._ttsEngine.getAvailableVoices();
+        const voices = ttsEngine.getAvailableVoices();
         this._controls.setVoices(voices);
 
         // Restore saved voice
         if (this._savedVoice) {
             this._controls.setVoice(this._savedVoice);
-            this._ttsEngine.setVoice(this._savedVoice);
+            ttsEngine.setVoice(this._savedVoice);
         }
 
         // Restore saved speed
