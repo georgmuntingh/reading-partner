@@ -41,6 +41,10 @@ export class TTSEngine {
         this._benchmarkResults = [];
         this._benchmarkEnabled = false;
 
+        // Synthesis queue - Kokoro can only handle one request at a time
+        this._synthesisQueue = [];
+        this._isSynthesizing = false;
+
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
     }
@@ -282,9 +286,46 @@ export class TTSEngine {
         }
 
         if (this._useKokoro) {
-            return this._synthesizeKokoro(text, options);
+            // Queue the request - Kokoro can only handle one at a time
+            return this._queueSynthesis(text, options);
         } else {
             return this._synthesizeWebSpeech(text, options);
+        }
+    }
+
+    /**
+     * Queue a synthesis request to prevent concurrent ONNX sessions
+     * @param {string} text
+     * @param {TTSOptions} options
+     * @returns {Promise<AudioBuffer>}
+     */
+    _queueSynthesis(text, options) {
+        return new Promise((resolve, reject) => {
+            this._synthesisQueue.push({ text, options, resolve, reject });
+            this._processQueue();
+        });
+    }
+
+    /**
+     * Process the synthesis queue sequentially
+     */
+    async _processQueue() {
+        if (this._isSynthesizing || this._synthesisQueue.length === 0) {
+            return;
+        }
+
+        this._isSynthesizing = true;
+        const { text, options, resolve, reject } = this._synthesisQueue.shift();
+
+        try {
+            const buffer = await this._synthesizeKokoro(text, options);
+            resolve(buffer);
+        } catch (error) {
+            reject(error);
+        } finally {
+            this._isSynthesizing = false;
+            // Process next item in queue
+            this._processQueue();
         }
     }
 
