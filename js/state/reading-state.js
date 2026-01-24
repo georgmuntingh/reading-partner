@@ -1,0 +1,371 @@
+/**
+ * Reading State Controller
+ * Central state management for reading position, bookmarks, and auto-save
+ */
+
+import { storage } from '../services/storage.js';
+import { epubParser } from '../services/epub-parser.js';
+
+export class ReadingStateController {
+    /**
+     * @param {Object} options
+     * @param {(chapterIndex: number, sentenceIndex: number) => void} options.onPositionChange
+     * @param {() => void} options.onBookmarksChange
+     */
+    constructor({ onPositionChange, onBookmarksChange } = {}) {
+        this._currentBook = null;
+        this._position = {
+            chapterIndex: 0,
+            sentenceIndex: 0
+        };
+        this._bookmarks = [];
+        this._saveTimeout = null;
+        this._onPositionChange = onPositionChange;
+        this._onBookmarksChange = onBookmarksChange;
+    }
+
+    /**
+     * Initialize the state controller
+     * @returns {Promise<void>}
+     */
+    async init() {
+        await storage.init();
+        console.log('Reading state controller initialized');
+    }
+
+    /**
+     * Load a book from file and save to storage
+     * @param {File} file
+     * @returns {Promise<Object>} book
+     */
+    async loadBook(file) {
+        const book = await epubParser.loadFromFile(file);
+
+        // Generate book ID from filename and timestamp
+        book.id = this._generateBookId(file.name);
+
+        // Save to storage
+        await storage.saveBook(book);
+
+        this._currentBook = book;
+
+        // Try to restore position
+        const savedPosition = await storage.getPosition(book.id);
+        if (savedPosition) {
+            this._position = {
+                chapterIndex: savedPosition.chapterIndex,
+                sentenceIndex: savedPosition.sentenceIndex
+            };
+            console.log('Restored position:', this._position);
+        } else {
+            this._position = { chapterIndex: 0, sentenceIndex: 0 };
+        }
+
+        // Load bookmarks
+        this._bookmarks = await storage.getBookmarks(book.id);
+
+        return book;
+    }
+
+    /**
+     * Open a book by ID from storage
+     * @param {string} bookId
+     * @returns {Promise<Object>} book
+     */
+    async openBook(bookId) {
+        const book = await storage.getBook(bookId);
+        if (!book) {
+            throw new Error('Book not found');
+        }
+
+        this._currentBook = book;
+
+        // Restore position
+        const savedPosition = await storage.getPosition(bookId);
+        if (savedPosition) {
+            this._position = {
+                chapterIndex: savedPosition.chapterIndex,
+                sentenceIndex: savedPosition.sentenceIndex
+            };
+        } else {
+            this._position = { chapterIndex: 0, sentenceIndex: 0 };
+        }
+
+        // Load bookmarks
+        this._bookmarks = await storage.getBookmarks(bookId);
+
+        // Update last opened
+        await storage.saveBook(book);
+
+        return book;
+    }
+
+    /**
+     * Get all books from storage
+     * @returns {Promise<Object[]>}
+     */
+    async getAllBooks() {
+        return await storage.getAllBooks();
+    }
+
+    /**
+     * Delete a book and its associated data
+     * @param {string} bookId
+     * @returns {Promise<void>}
+     */
+    async deleteBook(bookId) {
+        await storage.deleteBook(bookId);
+        await storage.deletePosition(bookId);
+
+        // Delete all bookmarks for this book
+        const bookmarks = await storage.getBookmarks(bookId);
+        for (const bookmark of bookmarks) {
+            await storage.deleteBookmark(bookmark.id);
+        }
+    }
+
+    /**
+     * Get current book
+     * @returns {Object|null}
+     */
+    getCurrentBook() {
+        return this._currentBook;
+    }
+
+    /**
+     * Get current position
+     * @returns {{ chapterIndex: number, sentenceIndex: number }}
+     */
+    getCurrentPosition() {
+        return { ...this._position };
+    }
+
+    /**
+     * Load chapter content
+     * @param {number} chapterIndex
+     * @returns {Promise<string[]>} sentences
+     */
+    async loadChapter(chapterIndex) {
+        if (!this._currentBook) {
+            throw new Error('No book loaded');
+        }
+
+        return await epubParser.loadChapter(this._currentBook, chapterIndex);
+    }
+
+    /**
+     * Go to a specific chapter
+     * @param {number} chapterIndex
+     * @param {number} [sentenceIndex=0]
+     */
+    goToChapter(chapterIndex, sentenceIndex = 0) {
+        if (!this._currentBook) return;
+
+        this._position.chapterIndex = chapterIndex;
+        this._position.sentenceIndex = sentenceIndex;
+
+        this._schedulePositionSave();
+        this._notifyPositionChange();
+    }
+
+    /**
+     * Go to a specific sentence in current chapter
+     * @param {number} sentenceIndex
+     */
+    goToSentence(sentenceIndex) {
+        this._position.sentenceIndex = sentenceIndex;
+        this._schedulePositionSave();
+        this._notifyPositionChange();
+    }
+
+    /**
+     * Update sentence position (called during playback)
+     * @param {number} sentenceIndex
+     */
+    updateSentencePosition(sentenceIndex) {
+        this._position.sentenceIndex = sentenceIndex;
+        this._schedulePositionSave();
+    }
+
+    /**
+     * Go to a bookmark
+     * @param {Object} bookmark
+     */
+    goToBookmark(bookmark) {
+        this._position.chapterIndex = bookmark.chapterIndex;
+        this._position.sentenceIndex = bookmark.sentenceIndex;
+
+        this._schedulePositionSave();
+        this._notifyPositionChange();
+    }
+
+    /**
+     * Add a bookmark at current position
+     * @param {string} [note='']
+     * @returns {Promise<Object>} bookmark
+     */
+    async addBookmark(note = '') {
+        if (!this._currentBook) {
+            throw new Error('No book loaded');
+        }
+
+        const bookmark = {
+            id: this._generateBookmarkId(),
+            bookId: this._currentBook.id,
+            chapterIndex: this._position.chapterIndex,
+            sentenceIndex: this._position.sentenceIndex,
+            note,
+            createdAt: Date.now()
+        };
+
+        await storage.addBookmark(bookmark);
+        this._bookmarks.push(bookmark);
+        this._bookmarks.sort((a, b) => {
+            if (a.chapterIndex !== b.chapterIndex) {
+                return a.chapterIndex - b.chapterIndex;
+            }
+            return a.sentenceIndex - b.sentenceIndex;
+        });
+
+        this._notifyBookmarksChange();
+        return bookmark;
+    }
+
+    /**
+     * Delete a bookmark
+     * @param {string} bookmarkId
+     * @returns {Promise<void>}
+     */
+    async deleteBookmark(bookmarkId) {
+        await storage.deleteBookmark(bookmarkId);
+        this._bookmarks = this._bookmarks.filter(b => b.id !== bookmarkId);
+        this._notifyBookmarksChange();
+    }
+
+    /**
+     * Get all bookmarks for current book
+     * @returns {Object[]}
+     */
+    getBookmarks() {
+        return [...this._bookmarks];
+    }
+
+    /**
+     * Get context sentences for Q&A (last N sentences)
+     * @param {number} [count=20]
+     * @returns {Promise<string[]>}
+     */
+    async getContextSentences(count = 20) {
+        if (!this._currentBook) {
+            return [];
+        }
+
+        const context = [];
+        let remaining = count;
+        let chapterIdx = this._position.chapterIndex;
+        let sentenceIdx = this._position.sentenceIndex;
+
+        while (remaining > 0 && chapterIdx >= 0) {
+            const sentences = await this.loadChapter(chapterIdx);
+            const startIdx = Math.max(0, sentenceIdx - remaining + 1);
+            const chunk = sentences.slice(startIdx, sentenceIdx + 1);
+
+            context.unshift(...chunk);
+            remaining -= chunk.length;
+
+            // Move to previous chapter
+            chapterIdx--;
+            if (chapterIdx >= 0) {
+                const prevSentences = await this.loadChapter(chapterIdx);
+                sentenceIdx = prevSentences.length - 1;
+            }
+        }
+
+        return context.slice(-count);
+    }
+
+    /**
+     * Schedule position save (debounced)
+     */
+    _schedulePositionSave() {
+        if (!this._currentBook) return;
+
+        if (this._saveTimeout) {
+            clearTimeout(this._saveTimeout);
+        }
+
+        this._saveTimeout = setTimeout(async () => {
+            try {
+                await storage.savePosition({
+                    bookId: this._currentBook.id,
+                    chapterIndex: this._position.chapterIndex,
+                    sentenceIndex: this._position.sentenceIndex
+                });
+                console.log('Position saved:', this._position);
+            } catch (error) {
+                console.error('Failed to save position:', error);
+            }
+        }, 2000); // Save 2 seconds after last position change
+    }
+
+    /**
+     * Save position immediately
+     * @returns {Promise<void>}
+     */
+    async savePositionNow() {
+        if (!this._currentBook) return;
+
+        if (this._saveTimeout) {
+            clearTimeout(this._saveTimeout);
+            this._saveTimeout = null;
+        }
+
+        await storage.savePosition({
+            bookId: this._currentBook.id,
+            chapterIndex: this._position.chapterIndex,
+            sentenceIndex: this._position.sentenceIndex
+        });
+    }
+
+    /**
+     * Notify position change
+     */
+    _notifyPositionChange() {
+        this._onPositionChange?.(this._position.chapterIndex, this._position.sentenceIndex);
+    }
+
+    /**
+     * Notify bookmarks change
+     */
+    _notifyBookmarksChange() {
+        this._onBookmarksChange?.();
+    }
+
+    /**
+     * Generate book ID from filename
+     * @param {string} filename
+     * @returns {string}
+     */
+    _generateBookId(filename) {
+        const timestamp = Date.now();
+        const random = Math.random().toString(36).substring(2, 9);
+        return `${filename.replace(/[^a-z0-9]/gi, '_')}_${timestamp}_${random}`;
+    }
+
+    /**
+     * Generate bookmark ID
+     * @returns {string}
+     */
+    _generateBookmarkId() {
+        return `bookmark_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
+    /**
+     * Cleanup
+     */
+    destroy() {
+        if (this._saveTimeout) {
+            clearTimeout(this._saveTimeout);
+        }
+    }
+}

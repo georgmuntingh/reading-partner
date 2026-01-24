@@ -5,9 +5,12 @@
 
 import { epubParser } from './services/epub-parser.js';
 import { ttsEngine } from './services/tts-engine.js';
+import { storage } from './services/storage.js';
 import { AudioController } from './controllers/audio-controller.js';
+import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
+import { NavigationPanel } from './ui/navigation.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -15,14 +18,17 @@ class ReadingPartnerApp {
         this._currentBook = null;
         this._currentChapterIndex = 0;
         this._isInitialized = false;
+        this._savedSpeed = undefined;
 
         // DOM Elements
         this._elements = {};
 
         // Components
+        this._readingState = null;
         this._readerView = null;
         this._controls = null;
         this._audioController = null;
+        this._navigation = null;
     }
 
     /**
@@ -32,6 +38,37 @@ class ReadingPartnerApp {
         this._cacheElements();
         this._setupUploadHandlers();
         this._setupKeyboardShortcuts();
+
+        // Initialize storage and reading state
+        this._readingState = new ReadingStateController({
+            onPositionChange: (chapterIndex, sentenceIndex) => {
+                this._onPositionChange(chapterIndex, sentenceIndex);
+            },
+            onBookmarksChange: () => {
+                this._onBookmarksChange();
+            }
+        });
+
+        try {
+            await this._readingState.init();
+        } catch (error) {
+            console.error('Storage initialization failed:', error);
+        }
+
+        // Initialize navigation panel
+        this._navigation = new NavigationPanel(
+            {
+                panel: document.getElementById('nav-panel'),
+                overlay: document.getElementById('nav-overlay'),
+                menuBtn: this._elements.menuBtn
+            },
+            {
+                onChapterSelect: (index) => this._navigateToChapter(index),
+                onBookmarkSelect: (bookmark) => this._navigateToBookmark(bookmark),
+                onBookmarkDelete: (id) => this._deleteBookmark(id),
+                onAddBookmark: () => this._addBookmark()
+            }
+        );
 
         // Show TTS loading status
         this._showTTSStatus('Initializing TTS engine...');
@@ -57,6 +94,9 @@ class ReadingPartnerApp {
             this._showTTSStatus('TTS initialization failed');
         }
 
+        // Load saved settings
+        await this._loadSettings();
+
         this._isInitialized = true;
         console.log('Reading Partner initialized');
         console.log('Tip: Run readingPartner.runBenchmark() to test TTS performance');
@@ -79,6 +119,7 @@ class ReadingPartnerApp {
             loadingText: document.getElementById('loading-text'),
 
             // Reader
+            menuBtn: document.getElementById('menu-btn'),
             bookTitle: document.getElementById('book-title'),
             chapterTitle: document.getElementById('chapter-title'),
             readerContent: document.getElementById('reader-content'),
@@ -190,8 +231,8 @@ class ReadingPartnerApp {
             loadingIndicator.classList.remove('hidden');
             loadingText.textContent = 'Parsing EPUB...';
 
-            // Parse EPUB
-            this._currentBook = await epubParser.loadFromFile(file);
+            // Parse EPUB and save to storage
+            this._currentBook = await this._readingState.loadBook(file);
 
             if (!this._currentBook.chapters.length) {
                 throw new Error('No readable content found in this EPUB');
@@ -202,8 +243,21 @@ class ReadingPartnerApp {
             // Initialize reader components
             this._initializeReader();
 
-            // Load first chapter
-            this._loadChapter(0);
+            // Get saved position
+            const position = this._readingState.getCurrentPosition();
+
+            // Load chapter at saved position
+            await this._loadChapter(position.chapterIndex, false);
+
+            // Update navigation
+            this._navigation.setBook(this._currentBook, position.chapterIndex);
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+
+            // Restore sentence position
+            if (position.sentenceIndex > 0) {
+                this._audioController.goToSentence(position.sentenceIndex);
+                this._readerView.highlightSentence(position.sentenceIndex);
+            }
 
             // Switch to reader screen
             this._showScreen('reader');
@@ -234,6 +288,10 @@ class ReadingPartnerApp {
         this._audioController = new AudioController({
             onSentenceChange: (index) => {
                 this._readerView.highlightSentence(index);
+                // Auto-save position during playback
+                if (this._readingState) {
+                    this._readingState.updateSentencePosition(index);
+                }
             },
             onStateChange: (state) => {
                 if (state.status === 'buffering') {
@@ -267,9 +325,18 @@ class ReadingPartnerApp {
                 onNext: () => this._audioController.skipForward(),
                 onBack2: () => this._audioController.skipBackward(2),
                 onAsk: () => this._startQA(),
-                onSpeedChange: (speed) => this._audioController.setSpeed(speed)
+                onSpeedChange: (speed) => {
+                    this._audioController.setSpeed(speed);
+                    this._saveSettings(); // Auto-save speed setting
+                }
             }
         );
+
+        // Restore saved speed
+        if (this._savedSpeed !== undefined) {
+            this._controls.setSpeed(this._savedSpeed);
+            this._audioController.setSpeed(this._savedSpeed);
+        }
 
         // Set book title
         this._readerView.setBookTitle(this._currentBook.title);
@@ -301,7 +368,7 @@ class ReadingPartnerApp {
         this._readerView.showLoading();
 
         // Lazy load chapter content
-        const sentences = await epubParser.loadChapter(this._currentBook, chapterIndex);
+        const sentences = await this._readingState.loadChapter(chapterIndex);
 
         console.timeEnd(`App._loadChapter[${chapterIndex}]`);
 
@@ -330,12 +397,23 @@ class ReadingPartnerApp {
     async _onChapterEnd() {
         // Auto-advance to next chapter if available
         if (this._currentChapterIndex < this._currentBook.chapters.length - 1) {
-            await this._loadChapter(this._currentChapterIndex + 1);
+            const nextChapterIndex = this._currentChapterIndex + 1;
+
+            // Update reading state
+            this._readingState.goToChapter(nextChapterIndex, 0);
+
+            // Load next chapter
+            await this._loadChapter(nextChapterIndex);
+
+            // Update navigation
+            this._navigation.setCurrentChapter(nextChapterIndex);
+
             // Auto-play next chapter
             this._play();
         } else {
             // End of book
             console.log('End of book reached');
+            this._showToast('End of book reached');
         }
     }
 
@@ -500,6 +578,165 @@ class ReadingPartnerApp {
      */
     _hideTTSStatus() {
         this._elements.ttsStatus.classList.add('hidden');
+    }
+
+    /**
+     * Navigate to a chapter
+     * @param {number} chapterIndex
+     */
+    async _navigateToChapter(chapterIndex) {
+        if (chapterIndex === this._currentChapterIndex) {
+            return;
+        }
+
+        // Pause playback
+        this._pause();
+
+        // Update state
+        this._readingState.goToChapter(chapterIndex, 0);
+
+        // Load chapter
+        await this._loadChapter(chapterIndex, false);
+
+        // Update navigation
+        this._navigation.setCurrentChapter(chapterIndex);
+
+        // Reset to first sentence
+        this._audioController.goToSentence(0);
+        this._readerView.highlightSentence(0);
+    }
+
+    /**
+     * Navigate to a bookmark
+     * @param {Object} bookmark
+     */
+    async _navigateToBookmark(bookmark) {
+        // Pause playback
+        this._pause();
+
+        // Update state
+        this._readingState.goToBookmark(bookmark);
+
+        // Load chapter if different
+        if (bookmark.chapterIndex !== this._currentChapterIndex) {
+            await this._loadChapter(bookmark.chapterIndex, false);
+            this._navigation.setCurrentChapter(bookmark.chapterIndex);
+        }
+
+        // Go to sentence
+        this._audioController.goToSentence(bookmark.sentenceIndex);
+        this._readerView.highlightSentence(bookmark.sentenceIndex);
+    }
+
+    /**
+     * Add a bookmark at current position
+     */
+    async _addBookmark() {
+        if (!this._readingState) return;
+
+        try {
+            const note = prompt('Add a note (optional):');
+            if (note === null) return; // User cancelled
+
+            await this._readingState.addBookmark(note);
+            this._showToast('Bookmark added');
+
+            // Update navigation
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+        } catch (error) {
+            console.error('Failed to add bookmark:', error);
+            this._showToast('Failed to add bookmark');
+        }
+    }
+
+    /**
+     * Delete a bookmark
+     * @param {string} bookmarkId
+     */
+    async _deleteBookmark(bookmarkId) {
+        try {
+            await this._readingState.deleteBookmark(bookmarkId);
+            this._showToast('Bookmark deleted');
+
+            // Update navigation
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+        } catch (error) {
+            console.error('Failed to delete bookmark:', error);
+        }
+    }
+
+    /**
+     * Handle position change
+     * @param {number} chapterIndex
+     * @param {number} sentenceIndex
+     */
+    _onPositionChange(chapterIndex, sentenceIndex) {
+        // This is called when position changes programmatically
+        // Could be used for UI updates if needed
+    }
+
+    /**
+     * Handle bookmarks change
+     */
+    _onBookmarksChange() {
+        // Update navigation if it exists
+        if (this._navigation && this._readingState) {
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+        }
+    }
+
+    /**
+     * Load settings from storage
+     */
+    async _loadSettings() {
+        try {
+            const speed = await storage.getSetting('playbackSpeed');
+            if (speed !== null) {
+                // Will be set when controls are initialized
+                this._savedSpeed = speed;
+            }
+        } catch (error) {
+            console.error('Failed to load settings:', error);
+        }
+    }
+
+    /**
+     * Save settings to storage
+     */
+    async _saveSettings() {
+        try {
+            if (this._controls) {
+                const speed = this._controls.getSpeed();
+                await storage.saveSetting('playbackSpeed', speed);
+            }
+        } catch (error) {
+            console.error('Failed to save settings:', error);
+        }
+    }
+
+    /**
+     * Show a toast notification
+     * @param {string} message
+     */
+    _showToast(message) {
+        // Create toast element
+        const toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.textContent = message;
+        document.body.appendChild(toast);
+
+        // Show toast
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 10);
+
+        // Hide and remove toast
+        setTimeout(() => {
+            toast.classList.remove('show');
+            setTimeout(() => {
+                toast.remove();
+            }, 300);
+        }, 2000);
     }
 }
 

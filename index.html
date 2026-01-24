@@ -109,6 +109,41 @@
         </div>
     </div>
 
+    <!-- Navigation Panel -->
+    <div id="nav-overlay" class="nav-overlay"></div>
+    <div id="nav-panel" class="nav-panel">
+        <div class="nav-header">
+            <h2>Navigation</h2>
+            <button class="nav-close-btn" aria-label="Close navigation">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="nav-section">
+            <h3>Chapters</h3>
+            <div id="chapters-list" class="nav-list">
+                <!-- Chapters will be rendered here -->
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Bookmarks</h3>
+            <div id="bookmarks-list" class="nav-list">
+                <!-- Bookmarks will be rendered here -->
+            </div>
+            <button class="btn btn-primary" id="add-bookmark-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Bookmark
+            </button>
+        </div>
+    </div>
+
     <!-- TTS Status Overlay -->
     <div id="tts-status" class="tts-status hidden">
         <div class="spinner"></div>
