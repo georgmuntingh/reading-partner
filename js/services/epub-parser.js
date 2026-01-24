@@ -172,10 +172,20 @@ export class EPUBParser {
             // Load chapter HTML
             const doc = await this._book.load(chapter.href);
 
+            // Debug: log what we got
+            console.log('Loaded doc type:', typeof doc, doc);
+            console.log('Doc has body:', !!doc?.body);
+            if (doc?.body) {
+                console.log('Body innerHTML length:', doc.body.innerHTML?.length);
+                console.log('Body textContent length:', doc.body.textContent?.length);
+            }
+
             // Extract text content
             const textContent = this._extractText(doc);
+            console.log('Extracted text length:', textContent.length);
 
             if (!textContent.trim()) {
+                console.warn('Chapter has no text content');
                 chapter.sentences = [];
                 chapter.loaded = true;
                 console.timeEnd(`EPUBParser.loadChapter[${chapterIndex}]`);
@@ -224,16 +234,48 @@ export class EPUBParser {
 
     /**
      * Extract text content from a document
-     * @param {Document} doc
+     * @param {Document|Element|string} doc
      * @returns {string}
      */
     _extractText(doc) {
-        if (!doc || !doc.body) {
+        // Handle different types of input
+        let body;
+
+        if (!doc) {
+            console.warn('_extractText: doc is null/undefined');
             return '';
         }
 
-        // Clone the body to avoid modifying the original
-        const body = doc.body.cloneNode(true);
+        // If doc is a string (HTML), parse it
+        if (typeof doc === 'string') {
+            console.log('_extractText: doc is a string, parsing as HTML');
+            const parser = new DOMParser();
+            const parsed = parser.parseFromString(doc, 'text/html');
+            body = parsed.body;
+        }
+        // If doc has a body property (Document)
+        else if (doc.body) {
+            body = doc.body.cloneNode(true);
+        }
+        // If doc is an Element itself
+        else if (doc.nodeType === Node.ELEMENT_NODE) {
+            console.log('_extractText: doc is an Element');
+            body = doc.cloneNode(true);
+        }
+        // If doc has documentElement (XML document)
+        else if (doc.documentElement) {
+            console.log('_extractText: doc has documentElement');
+            body = doc.documentElement.cloneNode(true);
+        }
+        else {
+            console.warn('_extractText: unknown doc type', typeof doc, doc);
+            return '';
+        }
+
+        if (!body) {
+            console.warn('_extractText: could not get body');
+            return '';
+        }
 
         // Remove elements that shouldn't be read
         const removeSelectors = [
