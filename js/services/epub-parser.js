@@ -290,21 +290,26 @@ export class EPUBParser {
         let text = '';
 
         // Process block elements to maintain paragraph structure
-        const blockElements = body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, li, blockquote');
+        const blockElements = body.querySelectorAll('p, h1, h2, h3, h4, h5, h6, div, li, blockquote, span');
+        console.log(`Found ${blockElements.length} block elements`);
 
         if (blockElements.length > 0) {
             const processed = new Set();
 
             blockElements.forEach(el => {
                 if (processed.has(el)) return;
-                el.querySelectorAll('p, div').forEach(nested => processed.add(nested));
+                el.querySelectorAll('p, div, span').forEach(nested => processed.add(nested));
 
                 const elText = el.textContent?.trim();
                 if (elText) {
                     text += elText + '\n\n';
                 }
             });
-        } else {
+        }
+
+        // Fallback: if no text from block elements, use full body text
+        if (!text.trim()) {
+            console.log('No text from block elements, using body.textContent');
             text = body.textContent || '';
         }
 

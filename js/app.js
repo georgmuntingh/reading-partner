@@ -280,8 +280,9 @@ class ReadingPartnerApp {
     /**
      * Load a chapter (lazy loading)
      * @param {number} chapterIndex
+     * @param {boolean} [autoSkipEmpty=true] - Skip to next chapter if empty
      */
-    async _loadChapter(chapterIndex) {
+    async _loadChapter(chapterIndex, autoSkipEmpty = true) {
         if (!this._currentBook || chapterIndex < 0 || chapterIndex >= this._currentBook.chapters.length) {
             return;
         }
@@ -298,14 +299,25 @@ class ReadingPartnerApp {
         // Lazy load chapter content
         const sentences = await epubParser.loadChapter(this._currentBook, chapterIndex);
 
+        console.timeEnd(`App._loadChapter[${chapterIndex}]`);
+
+        // Auto-skip empty chapters
+        if (sentences.length === 0 && autoSkipEmpty) {
+            console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
+            if (chapterIndex < this._currentBook.chapters.length - 1) {
+                return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
+            } else {
+                this._readerView.showError('No readable content found');
+                return;
+            }
+        }
+
         // Update UI with loaded content
         this._readerView.renderSentences(sentences, 0);
         this._readerView.scrollToTop();
 
         // Update audio controller
         this._audioController.setSentences(sentences, 0);
-
-        console.timeEnd(`App._loadChapter[${chapterIndex}]`);
     }
 
     /**
