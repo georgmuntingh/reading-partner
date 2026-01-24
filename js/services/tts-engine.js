@@ -98,6 +98,11 @@ export class TTSEngine {
             const hasWebGPU = await this.isWebGPUAvailable();
             device = hasWebGPU ? 'webgpu' : 'wasm';
             console.log(`Auto-detected device: ${device} (WebGPU ${hasWebGPU ? 'available' : 'not available'})`);
+
+            // Show WebGPU warning if not available
+            if (!hasWebGPU) {
+                this._showWebGPUWarning();
+            }
         }
 
         // Determine dtype based on device
@@ -174,6 +179,55 @@ export class TTSEngine {
         if (this._onProgress) {
             this._onProgress(progress);
         }
+    }
+
+    /**
+     * Show WebGPU not available warning
+     */
+    _showWebGPUWarning() {
+        const message = 'No WebGPU enabled. For better performance, launch Google Chrome with:\n\n' +
+            'google-chrome --enable-unsafe-webgpu --ozone-platform=x11 --use-angle=vulkan --enable-features=Vulkan,VulkanFromANGLE';
+
+        console.warn('WebGPU not available. Using WASM backend (slower).');
+        console.info(message);
+
+        // Show visual warning
+        const warningDiv = document.createElement('div');
+        warningDiv.id = 'webgpu-warning';
+        warningDiv.style.cssText = `
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            max-width: 90vw;
+            padding: 12px 16px;
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #92400e;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        `;
+        warningDiv.innerHTML = `
+            <div style="display: flex; align-items: flex-start; gap: 10px;">
+                <span style="font-size: 18px;">⚠️</span>
+                <div>
+                    <strong>WebGPU not enabled</strong><br>
+                    <span style="font-size: 12px;">Using slower WASM backend. For better performance, launch Chrome with:</span><br>
+                    <code style="font-size: 11px; background: #fde68a; padding: 2px 4px; border-radius: 3px; word-break: break-all;">
+                        google-chrome --enable-unsafe-webgpu --ozone-platform=x11 --use-angle=vulkan --enable-features=Vulkan,VulkanFromANGLE
+                    </code>
+                </div>
+                <button onclick="this.parentElement.parentElement.remove()" style="background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; margin-left: auto;">×</button>
+            </div>
+        `;
+        document.body.appendChild(warningDiv);
+
+        // Auto-hide after 15 seconds
+        setTimeout(() => {
+            warningDiv?.remove();
+        }, 15000);
     }
 
     /**

@@ -1,6 +1,7 @@
 /**
  * Reader View UI Component
  * Handles text display and sentence highlighting
+ * Uses chunked rendering for large chapters
  */
 
 import { scrollIntoViewWithOffset } from '../utils/helpers.js';
@@ -23,6 +24,23 @@ export class ReaderView {
         this._sentences = [];
         this._sentenceElements = [];
         this._currentIndex = -1;
+        this._renderAbortController = null;
+
+        // Use event delegation for click handling
+        this._setupEventDelegation();
+    }
+
+    /**
+     * Setup event delegation for sentence clicks
+     */
+    _setupEventDelegation() {
+        this._textContent.addEventListener('click', (e) => {
+            const sentenceEl = e.target.closest('.sentence');
+            if (sentenceEl && sentenceEl.dataset.index !== undefined) {
+                const index = parseInt(sentenceEl.dataset.index, 10);
+                this._onSentenceClick?.(index);
+            }
+        });
     }
 
     /**
@@ -46,13 +64,21 @@ export class ReaderView {
     }
 
     /**
-     * Render sentences
+     * Render sentences with chunked processing
      * @param {string[]} sentences
      * @param {number} [currentIndex=0]
+     * @returns {Promise<void>}
      */
-    renderSentences(sentences, currentIndex = 0) {
+    async renderSentences(sentences, currentIndex = 0) {
+        // Abort any ongoing render
+        if (this._renderAbortController) {
+            this._renderAbortController.abort();
+        }
+        this._renderAbortController = new AbortController();
+        const signal = this._renderAbortController.signal;
+
         this._sentences = sentences;
-        this._sentenceElements = [];
+        this._sentenceElements = new Array(sentences.length);
         this._currentIndex = currentIndex;
 
         // Clear existing content
@@ -63,29 +89,105 @@ export class ReaderView {
             return;
         }
 
-        // Group sentences into paragraphs (simple heuristic: ~5 sentences per paragraph)
-        // Or detect paragraph breaks if they exist in the text
+        // For small chapters, render synchronously
+        if (sentences.length <= 100) {
+            this._renderSentencesSync(sentences, currentIndex);
+            return;
+        }
+
+        // For large chapters, use chunked rendering
+        console.log(`Rendering ${sentences.length} sentences in chunks...`);
+
+        // Show loading indicator
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'render-progress';
+        loadingDiv.innerHTML = '<span>Loading chapter...</span>';
+        this._textContent.appendChild(loadingDiv);
+
+        const fragment = document.createDocumentFragment();
+        let currentParagraph = document.createElement('p');
+        currentParagraph.className = 'paragraph';
+
+        const CHUNK_SIZE = 50; // Process 50 sentences per frame
+        let processedCount = 0;
+
+        for (let i = 0; i < sentences.length; i += CHUNK_SIZE) {
+            if (signal.aborted) return;
+
+            const chunkEnd = Math.min(i + CHUNK_SIZE, sentences.length);
+
+            // Process chunk
+            for (let j = i; j < chunkEnd; j++) {
+                const sentence = sentences[j];
+
+                // Create sentence span (no individual event listener - using delegation)
+                const span = document.createElement('span');
+                span.className = 'sentence';
+                span.dataset.index = j.toString();
+                span.textContent = sentence + ' ';
+
+                this._sentenceElements[j] = span;
+                currentParagraph.appendChild(span);
+
+                // Paragraph breaks
+                const endsWithBreak = /[.!?]["']?\s*$/.test(sentence);
+                const isParagraphBoundary = (j + 1) % 6 === 0;
+
+                if (endsWithBreak && isParagraphBoundary && j < sentences.length - 1) {
+                    fragment.appendChild(currentParagraph);
+                    currentParagraph = document.createElement('p');
+                    currentParagraph.className = 'paragraph';
+                }
+            }
+
+            processedCount = chunkEnd;
+
+            // Update progress
+            const percent = Math.round((processedCount / sentences.length) * 100);
+            loadingDiv.innerHTML = `<span>Loading chapter... ${percent}%</span>`;
+
+            // Yield to main thread
+            await this._yieldToMain();
+        }
+
+        if (signal.aborted) return;
+
+        // Append last paragraph
+        if (currentParagraph.hasChildNodes()) {
+            fragment.appendChild(currentParagraph);
+        }
+
+        // Remove loading indicator and append content
+        loadingDiv.remove();
+        this._textContent.appendChild(fragment);
+
+        // Highlight current sentence
+        if (currentIndex >= 0 && currentIndex < sentences.length) {
+            this.highlightSentence(currentIndex, false);
+        }
+
+        console.log(`Rendered ${sentences.length} sentences`);
+    }
+
+    /**
+     * Synchronous render for small chapters
+     * @param {string[]} sentences
+     * @param {number} currentIndex
+     */
+    _renderSentencesSync(sentences, currentIndex) {
         const fragment = document.createDocumentFragment();
         let currentParagraph = document.createElement('p');
         currentParagraph.className = 'paragraph';
 
         sentences.forEach((sentence, index) => {
-            // Create sentence span
             const span = document.createElement('span');
             span.className = 'sentence';
             span.dataset.index = index.toString();
             span.textContent = sentence + ' ';
 
-            // Add click handler
-            span.addEventListener('click', () => {
-                this._onSentenceClick?.(index);
-            });
-
-            this._sentenceElements.push(span);
+            this._sentenceElements[index] = span;
             currentParagraph.appendChild(span);
 
-            // Start new paragraph after sentences ending with significant breaks
-            // or every ~5-7 sentences for readability
             const endsWithBreak = /[.!?]["']?\s*$/.test(sentence);
             const isParagraphBoundary = (index + 1) % 6 === 0;
 
@@ -96,17 +198,29 @@ export class ReaderView {
             }
         });
 
-        // Append last paragraph if it has content
         if (currentParagraph.hasChildNodes()) {
             fragment.appendChild(currentParagraph);
         }
 
         this._textContent.appendChild(fragment);
 
-        // Highlight current sentence
         if (currentIndex >= 0 && currentIndex < sentences.length) {
-            this.highlightSentence(currentIndex, false); // Don't scroll on initial render
+            this.highlightSentence(currentIndex, false);
         }
+    }
+
+    /**
+     * Yield to main thread to keep UI responsive
+     * @returns {Promise<void>}
+     */
+    _yieldToMain() {
+        return new Promise(resolve => {
+            if ('requestIdleCallback' in window) {
+                requestIdleCallback(resolve, { timeout: 50 });
+            } else {
+                setTimeout(resolve, 0);
+            }
+        });
     }
 
     /**
@@ -118,8 +232,10 @@ export class ReaderView {
         // Remove previous highlight
         if (this._currentIndex >= 0 && this._currentIndex < this._sentenceElements.length) {
             const prevElement = this._sentenceElements[this._currentIndex];
-            prevElement.classList.remove('current');
-            prevElement.classList.add('played');
+            if (prevElement) {
+                prevElement.classList.remove('current');
+                prevElement.classList.add('played');
+            }
         }
 
         this._currentIndex = index;
@@ -127,17 +243,14 @@ export class ReaderView {
         // Add new highlight
         if (index >= 0 && index < this._sentenceElements.length) {
             const element = this._sentenceElements[index];
-            element.classList.remove('played');
-            element.classList.add('current');
+            if (element) {
+                element.classList.remove('played');
+                element.classList.add('current');
 
-            // Remove 'played' class from sentences after current
-            for (let i = index + 1; i < this._sentenceElements.length; i++) {
-                this._sentenceElements[i].classList.remove('played');
-            }
-
-            // Scroll into view
-            if (scroll) {
-                scrollIntoViewWithOffset(element, this._container, 150);
+                // Scroll into view
+                if (scroll) {
+                    scrollIntoViewWithOffset(element, this._container, 150);
+                }
             }
         }
     }
@@ -147,7 +260,7 @@ export class ReaderView {
      */
     clearHighlights() {
         this._sentenceElements.forEach(el => {
-            el.classList.remove('current', 'played');
+            if (el) el.classList.remove('current', 'played');
         });
         this._currentIndex = -1;
     }
@@ -158,7 +271,9 @@ export class ReaderView {
      */
     resetPlayedState(fromIndex) {
         for (let i = fromIndex; i < this._sentenceElements.length; i++) {
-            this._sentenceElements[i].classList.remove('played');
+            if (this._sentenceElements[i]) {
+                this._sentenceElements[i].classList.remove('played');
+            }
         }
     }
 
