@@ -32,7 +32,8 @@ export class TTSEngine {
         this._isReady = false;
         this._isLoading = false;
         this._useKokoro = true;
-        this._currentVoice = 'af_bella'; // Default Kokoro voice
+        this._currentVoice = 'af_heart'; // Default Kokoro voice
+        this._speed = 1.0; // TTS generation speed (0.5-2.0)
         this._audioContext = null;
         this._onProgress = null;
         this._device = 'wasm'; // Current device: 'webgpu' or 'wasm'
@@ -46,6 +47,9 @@ export class TTSEngine {
         // Synthesis queue - Kokoro can only handle one request at a time
         this._synthesisQueue = [];
         this._isSynthesizing = false;
+
+        // Current audio source for stopping playback
+        this._currentSource = null;
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
@@ -339,6 +343,7 @@ export class TTSEngine {
      */
     async _synthesizeKokoro(text, options) {
         const voice = options.voice || this._currentVoice;
+        const speed = options.speed || this._speed;
 
         // Split long sentences to prevent TTS errors
         // Kokoro has issues with very long sentences (>500 chars)
@@ -347,13 +352,13 @@ export class TTSEngine {
         // If sentence was split, synthesize each chunk and concatenate
         if (chunks.length > 1) {
             console.log(`Splitting long sentence (${text.length} chars) into ${chunks.length} chunks`);
-            return await this._synthesizeChunks(chunks, voice);
+            return await this._synthesizeChunks(chunks, voice, speed);
         }
 
         const startTime = performance.now();
 
-        // Generate audio using Kokoro
-        const audio = await this._kokoro.generate(text, { voice });
+        // Generate audio using Kokoro with speed parameter
+        const audio = await this._kokoro.generate(text, { voice, speed });
 
         const synthesisTime = performance.now() - startTime;
 
@@ -397,9 +402,10 @@ export class TTSEngine {
      * Synthesize multiple chunks and concatenate them
      * @param {string[]} chunks - Text chunks to synthesize
      * @param {string} voice - Voice ID
+     * @param {number} speed - TTS speed
      * @returns {Promise<AudioBuffer>}
      */
-    async _synthesizeChunks(chunks, voice) {
+    async _synthesizeChunks(chunks, voice, speed) {
         // Synthesize each chunk
         const audioBuffers = [];
         let totalLength = 0;
@@ -409,7 +415,7 @@ export class TTSEngine {
             const chunk = chunks[i];
             console.log(`  Chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 50)}..."`);
 
-            const audio = await this._kokoro.generate(chunk, { voice });
+            const audio = await this._kokoro.generate(chunk, { voice, speed });
             const audioData = audio.audio;
             sampleRate = audio.sampling_rate || this._sampleRate;
 
@@ -508,7 +514,7 @@ export class TTSEngine {
     /**
      * Play an AudioBuffer (or trigger Web Speech)
      * @param {AudioBuffer} buffer
-     * @param {number} [speed=1.0]
+     * @param {number} [speed=1.0] - Only used for Web Speech fallback
      * @returns {Promise<void>}
      */
     async playBuffer(buffer, speed = 1.0) {
@@ -521,17 +527,43 @@ export class TTSEngine {
             return this._playWebSpeech(buffer._webSpeechText, speed);
         }
 
+        // Note: Speed is applied at TTS generation time via Kokoro's speed parameter
+        // We don't modify playbackRate here to avoid pitch distortion
         return new Promise((resolve, reject) => {
             const source = this._audioContext.createBufferSource();
             source.buffer = buffer;
-            source.playbackRate.value = speed;
             source.connect(this._audioContext.destination);
 
-            source.onended = () => resolve();
-            source.onerror = (e) => reject(e);
+            // Store current source for stopping
+            this._currentSource = source;
+
+            source.onended = () => {
+                this._currentSource = null;
+                resolve();
+            };
+            source.onerror = (e) => {
+                this._currentSource = null;
+                reject(e);
+            };
 
             source.start();
         });
+    }
+
+    /**
+     * Stop current audio playback
+     */
+    stopAudio() {
+        if (this._currentSource) {
+            try {
+                this._currentSource.stop();
+            } catch (e) {
+                // Source may already be stopped
+            }
+            this._currentSource = null;
+        }
+        // Also stop Web Speech if it's playing
+        this.stopWebSpeech();
     }
 
     /**
@@ -650,6 +682,22 @@ export class TTSEngine {
      */
     setVoice(voiceId) {
         this._currentVoice = voiceId;
+    }
+
+    /**
+     * Set TTS generation speed
+     * @param {number} speed - 0.5 to 2.0
+     */
+    setSpeed(speed) {
+        this._speed = Math.max(0.5, Math.min(2.0, speed));
+    }
+
+    /**
+     * Get current speed
+     * @returns {number}
+     */
+    getSpeed() {
+        return this._speed;
     }
 
     /**
