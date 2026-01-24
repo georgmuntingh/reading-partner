@@ -278,35 +278,45 @@ class ReadingPartnerApp {
     }
 
     /**
-     * Load a chapter
+     * Load a chapter (lazy loading)
      * @param {number} chapterIndex
      */
-    _loadChapter(chapterIndex) {
+    async _loadChapter(chapterIndex) {
         if (!this._currentBook || chapterIndex < 0 || chapterIndex >= this._currentBook.chapters.length) {
             return;
         }
 
+        console.time(`App._loadChapter[${chapterIndex}]`);
+
         this._currentChapterIndex = chapterIndex;
         const chapter = this._currentBook.chapters[chapterIndex];
 
-        // Update UI
+        // Show loading state
         this._readerView.setChapterTitle(chapter.title);
-        this._readerView.renderSentences(chapter.sentences, 0);
+        this._readerView.showLoading();
+
+        // Lazy load chapter content
+        const sentences = await epubParser.loadChapter(this._currentBook, chapterIndex);
+
+        // Update UI with loaded content
+        this._readerView.renderSentences(sentences, 0);
         this._readerView.scrollToTop();
 
         // Update audio controller
-        this._audioController.setSentences(chapter.sentences, 0);
+        this._audioController.setSentences(sentences, 0);
+
+        console.timeEnd(`App._loadChapter[${chapterIndex}]`);
     }
 
     /**
      * Handle chapter end
      */
-    _onChapterEnd() {
+    async _onChapterEnd() {
         // Auto-advance to next chapter if available
         if (this._currentChapterIndex < this._currentBook.chapters.length - 1) {
-            this._loadChapter(this._currentChapterIndex + 1);
+            await this._loadChapter(this._currentChapterIndex + 1);
             // Auto-play next chapter
-            setTimeout(() => this._play(), 500);
+            this._play();
         } else {
             // End of book
             console.log('End of book reached');

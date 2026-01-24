@@ -296,3 +296,16 @@
     border-radius: var(--radius-md);
     border: 1px solid var(--border-color);
 }
+
+/* Content indicators for windowed rendering */
+.content-indicator {
+    text-align: center;
+    padding: var(--spacing-md);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    font-style: italic;
+    border: 1px dashed var(--border-color);
+    border-radius: var(--radius-md);
+    margin: var(--spacing-md) 0;
+    background: var(--bg-color);
+}

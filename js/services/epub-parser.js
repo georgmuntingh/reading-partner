@@ -1,17 +1,19 @@
 /**
  * EPUB Parser Service
  * Handles loading and parsing EPUB files using epub.js
+ * Uses lazy loading - chapters are parsed on-demand
  */
 
 import { splitIntoSentences } from '../utils/sentence-splitter.js';
-import { hashString, htmlToText } from '../utils/helpers.js';
+import { hashString } from '../utils/helpers.js';
 
 /**
  * @typedef {Object} Chapter
  * @property {string} id
  * @property {string} title
  * @property {string} href
- * @property {string[]} sentences
+ * @property {string[]|null} sentences - null until loaded
+ * @property {boolean} loaded
  */
 
 /**
@@ -30,38 +32,47 @@ export class EPUBParser {
     }
 
     /**
-     * Load an EPUB file
+     * Load an EPUB file (metadata only, chapters are lazy-loaded)
      * @param {File} file
      * @returns {Promise<BookState>}
      */
     async loadFromFile(file) {
+        console.time('EPUBParser.loadFromFile');
+
         // Validate file type
         if (!file.name.toLowerCase().endsWith('.epub')) {
             throw new Error('Invalid file type. Please select an EPUB file.');
         }
 
         // Create array buffer from file
+        console.time('EPUBParser.readFile');
         const arrayBuffer = await file.arrayBuffer();
+        console.timeEnd('EPUBParser.readFile');
 
         // Generate book ID from content hash
         const idSource = file.name + file.size + file.lastModified;
         const bookId = await hashString(idSource);
 
         // Initialize epub.js book
+        console.time('EPUBParser.initBook');
         // @ts-ignore - ePub is loaded globally
         this._book = ePub(arrayBuffer);
-
-        // Wait for book to be ready
         await this._book.ready;
+        console.timeEnd('EPUBParser.initBook');
 
         // Extract metadata
         const metadata = await this._extractMetadata();
 
-        // Parse chapters
-        const chapters = await this._parseChapters();
+        // Get chapter metadata only (NOT content)
+        console.time('EPUBParser.getChapterMetadata');
+        const chapters = await this._getChapterMetadata();
+        console.timeEnd('EPUBParser.getChapterMetadata');
 
         // Get cover image
         const coverImage = await this._extractCover();
+
+        console.timeEnd('EPUBParser.loadFromFile');
+        console.log(`Book loaded: ${chapters.length} chapters (content will be loaded on-demand)`);
 
         return {
             id: bookId,
@@ -79,7 +90,6 @@ export class EPUBParser {
      */
     async _extractMetadata() {
         const metadata = this._book.package.metadata;
-
         return {
             title: metadata.title || '',
             author: metadata.creator || ''
@@ -104,10 +114,10 @@ export class EPUBParser {
     }
 
     /**
-     * Parse all chapters from the EPUB
+     * Get chapter metadata without parsing content
      * @returns {Promise<Chapter[]>}
      */
-    async _parseChapters() {
+    async _getChapterMetadata() {
         const spine = this._book.spine;
         const toc = this._book.navigation?.toc || [];
         const chapters = [];
@@ -116,43 +126,80 @@ export class EPUBParser {
         const tocMap = new Map();
         this._flattenToc(toc, tocMap);
 
-        // Iterate through spine items
+        // Just get metadata, don't parse content
         for (let i = 0; i < spine.items.length; i++) {
             const item = spine.items[i];
 
-            // Get chapter content
-            const doc = await this._book.load(item.href);
-
-            // Extract text content
-            const textContent = this._extractText(doc);
-
-            // Skip empty chapters
-            if (!textContent.trim()) {
-                continue;
-            }
-
-            // Split into sentences
-            const sentences = splitIntoSentences(textContent);
-
-            // Skip chapters with no valid sentences
-            if (sentences.length === 0) {
-                continue;
-            }
-
-            // Find title from TOC or generate one
             const title = tocMap.get(item.href) ||
                           tocMap.get(item.href.split('#')[0]) ||
-                          `Chapter ${chapters.length + 1}`;
+                          `Chapter ${i + 1}`;
 
             chapters.push({
                 id: item.idref || `chapter-${i}`,
                 title,
                 href: item.href,
-                sentences
+                sentences: null, // Not loaded yet
+                loaded: false
             });
         }
 
         return chapters;
+    }
+
+    /**
+     * Load chapter content (lazy loading)
+     * @param {BookState} book
+     * @param {number} chapterIndex
+     * @returns {Promise<string[]>}
+     */
+    async loadChapter(book, chapterIndex) {
+        if (chapterIndex < 0 || chapterIndex >= book.chapters.length) {
+            return [];
+        }
+
+        const chapter = book.chapters[chapterIndex];
+
+        // Return cached if already loaded
+        if (chapter.loaded && chapter.sentences) {
+            console.log(`Chapter ${chapterIndex} already loaded (${chapter.sentences.length} sentences)`);
+            return chapter.sentences;
+        }
+
+        console.time(`EPUBParser.loadChapter[${chapterIndex}]`);
+        console.log(`Loading chapter ${chapterIndex}: "${chapter.title}"`);
+
+        try {
+            // Load chapter HTML
+            const doc = await this._book.load(chapter.href);
+
+            // Extract text content
+            const textContent = this._extractText(doc);
+
+            if (!textContent.trim()) {
+                chapter.sentences = [];
+                chapter.loaded = true;
+                console.timeEnd(`EPUBParser.loadChapter[${chapterIndex}]`);
+                return [];
+            }
+
+            // Split into sentences
+            const sentences = splitIntoSentences(textContent);
+
+            // Cache the result
+            chapter.sentences = sentences;
+            chapter.loaded = true;
+
+            console.timeEnd(`EPUBParser.loadChapter[${chapterIndex}]`);
+            console.log(`Chapter ${chapterIndex} loaded: ${sentences.length} sentences`);
+
+            return sentences;
+
+        } catch (error) {
+            console.error(`Failed to load chapter ${chapterIndex}:`, error);
+            chapter.sentences = [];
+            chapter.loaded = true;
+            return [];
+        }
     }
 
     /**
@@ -163,7 +210,6 @@ export class EPUBParser {
     _flattenToc(toc, map) {
         for (const item of toc) {
             if (item.href) {
-                // Store with and without fragment
                 map.set(item.href, item.label?.trim() || '');
                 const hrefWithoutFragment = item.href.split('#')[0];
                 if (!map.has(hrefWithoutFragment)) {
@@ -191,14 +237,9 @@ export class EPUBParser {
 
         // Remove elements that shouldn't be read
         const removeSelectors = [
-            'script',
-            'style',
-            'nav',
-            'aside',
-            '[role="navigation"]',
-            '[role="banner"]',
-            '.pagebreak',
-            '.page-break'
+            'script', 'style', 'nav', 'aside',
+            '[role="navigation"]', '[role="banner"]',
+            '.pagebreak', '.page-break'
         ];
 
         body.querySelectorAll(removeSelectors.join(',')).forEach(el => el.remove());
@@ -213,10 +254,7 @@ export class EPUBParser {
             const processed = new Set();
 
             blockElements.forEach(el => {
-                // Skip if already processed as part of a parent
                 if (processed.has(el)) return;
-
-                // Mark nested elements as processed
                 el.querySelectorAll('p, div').forEach(nested => processed.add(nested));
 
                 const elText = el.textContent?.trim();
@@ -225,22 +263,21 @@ export class EPUBParser {
                 }
             });
         } else {
-            // Fallback: get all text content
             text = body.textContent || '';
         }
 
         // Clean up whitespace
         text = text
-            .replace(/[\t ]+/g, ' ')           // Collapse horizontal whitespace
-            .replace(/\n{3,}/g, '\n\n')        // Max 2 newlines
-            .replace(/^\s+|\s+$/gm, '')        // Trim lines
+            .replace(/[\t ]+/g, ' ')
+            .replace(/\n{3,}/g, '\n\n')
+            .replace(/^\s+|\s+$/gm, '')
             .trim();
 
         return text;
     }
 
     /**
-     * Get chapter content by index (for lazy loading)
+     * Get chapter sentences (for compatibility)
      * @param {BookState} book
      * @param {number} chapterIndex
      * @returns {string[]}
@@ -249,7 +286,7 @@ export class EPUBParser {
         if (chapterIndex < 0 || chapterIndex >= book.chapters.length) {
             return [];
         }
-        return book.chapters[chapterIndex].sentences;
+        return book.chapters[chapterIndex].sentences || [];
     }
 
     /**
