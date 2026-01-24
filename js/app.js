@@ -236,7 +236,11 @@ class ReadingPartnerApp {
                 this._readerView.highlightSentence(index);
             },
             onStateChange: (state) => {
-                this._controls.setPlaying(state.status === 'playing');
+                if (state.status === 'buffering') {
+                    this._controls.setBuffering(true);
+                } else {
+                    this._controls.setPlaying(state.status === 'playing');
+                }
             },
             onChapterEnd: () => {
                 this._onChapterEnd();

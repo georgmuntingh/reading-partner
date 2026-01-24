@@ -94,6 +94,7 @@ export class PlaybackControls {
      */
     setPlaying(isPlaying) {
         this._isPlaying = isPlaying;
+        this._setBuffering(false); // Clear buffering state
 
         if (isPlaying) {
             this._playIcon.classList.add('hidden');
@@ -101,6 +102,28 @@ export class PlaybackControls {
         } else {
             this._playIcon.classList.remove('hidden');
             this._pauseIcon.classList.add('hidden');
+        }
+    }
+
+    /**
+     * Set buffering state (shows spinner)
+     * @param {boolean} isBuffering
+     */
+    setBuffering(isBuffering) {
+        this._setBuffering(isBuffering);
+    }
+
+    /**
+     * Internal method to set buffering state
+     * @param {boolean} isBuffering
+     */
+    _setBuffering(isBuffering) {
+        if (isBuffering) {
+            this._playBtn.classList.add('buffering');
+            this._playIcon.classList.add('hidden');
+            this._pauseIcon.classList.add('hidden');
+        } else {
+            this._playBtn.classList.remove('buffering');
         }
     }
 

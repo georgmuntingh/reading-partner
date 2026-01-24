@@ -7,7 +7,7 @@ import { ttsEngine } from '../services/tts-engine.js';
 
 /**
  * @typedef {Object} PlaybackState
- * @property {'stopped'|'playing'|'paused'} status
+ * @property {'stopped'|'playing'|'paused'|'buffering'} status
  * @property {number} currentIndex
  */
 
@@ -28,10 +28,10 @@ export class AudioController {
         this._status = 'stopped';
         this._speed = 1.0;
 
-        // Buffer management
+        // Buffer management - reduced for faster startup
         this._bufferQueue = new Map(); // index -> AudioBuffer
-        this._prefetchAhead = 3;
-        this._bufferBehind = 2; // Keep for rewind support
+        this._prefetchAhead = 2; // Reduced from 3
+        this._bufferBehind = 2;
 
         // Current playback
         this._currentSource = null;
@@ -51,7 +51,7 @@ export class AudioController {
     }
 
     /**
-     * Set sentences to play
+     * Set sentences to play and pre-buffer the first one
      * @param {string[]} sentences
      * @param {number} [startIndex=0]
      */
@@ -59,6 +59,16 @@ export class AudioController {
         this._sentences = sentences;
         this._currentIndex = startIndex;
         this._clearBuffers();
+
+        // Pre-buffer the first sentence in the background
+        if (sentences.length > 0) {
+            console.log('Pre-buffering first sentence...');
+            this._generateBuffer(startIndex).then(() => {
+                console.log('First sentence pre-buffered');
+            }).catch(err => {
+                console.warn('Pre-buffer failed:', err);
+            });
+        }
     }
 
     /**
@@ -76,7 +86,6 @@ export class AudioController {
         }
 
         if (this._currentIndex >= this._sentences.length) {
-            // End of chapter
             this._onChapterEnd?.();
             return;
         }
@@ -84,9 +93,6 @@ export class AudioController {
         this._stopRequested = false;
         this._status = 'playing';
         this._notifyStateChange();
-
-        // Start pre-buffering
-        this._maintainBuffer();
 
         // Begin playback loop
         await this._playbackLoop();
@@ -103,21 +109,31 @@ export class AudioController {
             let buffer = this._bufferQueue.get(this._currentIndex);
 
             if (!buffer) {
-                // Need to generate on-demand
+                // Show buffering state
+                this._status = 'buffering';
+                this._notifyStateChange();
+
+                console.time(`TTS generate sentence ${this._currentIndex}`);
                 try {
                     buffer = await this._generateBuffer(this._currentIndex);
                 } catch (error) {
                     console.error('Failed to generate audio:', error);
-                    // Skip to next sentence
                     this._currentIndex++;
                     continue;
                 }
+                console.timeEnd(`TTS generate sentence ${this._currentIndex}`);
+
+                this._status = 'playing';
+                this._notifyStateChange();
             }
 
             if (this._stopRequested) break;
 
             // Notify UI of current sentence
             this._onSentenceChange?.(this._currentIndex);
+
+            // Start buffering next sentences in background (don't await)
+            this._maintainBuffer();
 
             // Play the buffer
             try {
@@ -130,15 +146,11 @@ export class AudioController {
 
             // Move to next sentence
             this._currentIndex++;
-
-            // Maintain buffer for upcoming sentences
-            this._maintainBuffer();
         }
 
         this._isPlaying = false;
 
         if (!this._stopRequested && this._currentIndex >= this._sentences.length) {
-            // Reached end of chapter
             this._status = 'stopped';
             this._notifyStateChange();
             this._onChapterEnd?.();
@@ -151,7 +163,7 @@ export class AudioController {
     pause() {
         this._stopRequested = true;
         this._status = 'paused';
-        ttsEngine.stopWebSpeech(); // Stop any Web Speech playback
+        ttsEngine.stopWebSpeech();
         this._notifyStateChange();
     }
 
@@ -188,7 +200,6 @@ export class AudioController {
             this._onSentenceChange?.(this._currentIndex);
 
             if (wasPlaying) {
-                // Small delay to allow current playback to stop
                 setTimeout(() => this.play(), 50);
             }
         }
@@ -222,7 +233,6 @@ export class AudioController {
 
         this._currentIndex = Math.max(0, Math.min(index, this._sentences.length - 1));
         this._onSentenceChange?.(this._currentIndex);
-        this._maintainBuffer();
 
         if (wasPlaying) {
             setTimeout(() => this.play(), 50);
@@ -257,36 +267,38 @@ export class AudioController {
     }
 
     /**
-     * Maintain buffer for upcoming sentences
+     * Check if first buffer is ready
+     * @returns {boolean}
      */
-    async _maintainBuffer() {
-        // Determine range to buffer
-        const start = Math.max(0, this._currentIndex - this._bufferBehind);
+    isFirstBufferReady() {
+        return this._bufferQueue.has(this._currentIndex);
+    }
+
+    /**
+     * Maintain buffer for upcoming sentences (non-blocking)
+     */
+    _maintainBuffer() {
         const end = Math.min(
             this._sentences.length,
             this._currentIndex + this._prefetchAhead + 1
         );
 
-        // Remove buffers outside range
+        // Generate missing buffers in background
+        for (let i = this._currentIndex + 1; i < end; i++) {
+            if (!this._bufferQueue.has(i) && !this._generatingIndices.has(i)) {
+                this._generateBuffer(i).catch(err => {
+                    console.warn(`Buffer generation error for sentence ${i}:`, err);
+                });
+            }
+        }
+
+        // Clean old buffers
+        const start = Math.max(0, this._currentIndex - this._bufferBehind);
         for (const idx of this._bufferQueue.keys()) {
-            if (idx < start || idx >= end) {
+            if (idx < start) {
                 this._bufferQueue.delete(idx);
             }
         }
-
-        // Generate missing buffers
-        const generatePromises = [];
-
-        for (let i = this._currentIndex; i < end; i++) {
-            if (!this._bufferQueue.has(i) && !this._generatingIndices.has(i)) {
-                generatePromises.push(this._generateBuffer(i));
-            }
-        }
-
-        // Don't await - let them generate in background
-        Promise.all(generatePromises).catch(err => {
-            console.warn('Buffer generation error:', err);
-        });
     }
 
     /**
@@ -295,15 +307,25 @@ export class AudioController {
      * @returns {Promise<AudioBuffer>}
      */
     async _generateBuffer(index) {
+        if (this._bufferQueue.has(index)) {
+            return this._bufferQueue.get(index);
+        }
+
         if (this._generatingIndices.has(index)) {
             // Already generating, wait for it
-            return new Promise((resolve) => {
+            return new Promise((resolve, reject) => {
                 const checkBuffer = setInterval(() => {
                     if (this._bufferQueue.has(index)) {
                         clearInterval(checkBuffer);
                         resolve(this._bufferQueue.get(index));
                     }
                 }, 50);
+
+                // Timeout after 30 seconds
+                setTimeout(() => {
+                    clearInterval(checkBuffer);
+                    reject(new Error('Buffer generation timeout'));
+                }, 30000);
             });
         }
 
@@ -311,8 +333,12 @@ export class AudioController {
 
         try {
             const sentence = this._sentences[index];
+            console.log(`Generating TTS for sentence ${index}: "${sentence.slice(0, 50)}..."`);
+
             const buffer = await ttsEngine.synthesize(sentence);
             this._bufferQueue.set(index, buffer);
+
+            console.log(`TTS ready for sentence ${index}`);
             return buffer;
         } finally {
             this._generatingIndices.delete(index);
