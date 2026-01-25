@@ -251,7 +251,7 @@ export class ReadingStateController {
     }
 
     /**
-     * Get context sentences for Q&A (last N sentences)
+     * Get context sentences for Q&A (last N sentences before current position)
      * @param {number} [count=20]
      * @returns {Promise<string[]>}
      */
@@ -282,6 +282,39 @@ export class ReadingStateController {
         }
 
         return context.slice(-count);
+    }
+
+    /**
+     * Get context sentences after current position for Q&A
+     * @param {number} [count=5]
+     * @returns {Promise<string[]>}
+     */
+    async getContextSentencesAfter(count = 5) {
+        if (!this._currentBook) {
+            return [];
+        }
+
+        const context = [];
+        let remaining = count;
+        let chapterIdx = this._position.chapterIndex;
+        let sentenceIdx = this._position.sentenceIndex + 1; // Start after current
+
+        while (remaining > 0 && chapterIdx < this._currentBook.chapters.length) {
+            const sentences = await this.loadChapter(chapterIdx);
+
+            // Get sentences from current position to end of chapter or remaining count
+            const endIdx = Math.min(sentenceIdx + remaining, sentences.length);
+            const chunk = sentences.slice(sentenceIdx, endIdx);
+
+            context.push(...chunk);
+            remaining -= chunk.length;
+
+            // Move to next chapter
+            chapterIdx++;
+            sentenceIdx = 0;
+        }
+
+        return context.slice(0, count);
     }
 
     /**

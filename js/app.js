@@ -6,11 +6,15 @@
 import { epubParser } from './services/epub-parser.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
+import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
 import { AudioController } from './controllers/audio-controller.js';
+import { QAController, QAState } from './controllers/qa-controller.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
 import { NavigationPanel } from './ui/navigation.js';
+import { QAOverlay } from './ui/qa-overlay.js';
+import { SettingsModal } from './ui/settings-modal.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -20,6 +24,15 @@ class ReadingPartnerApp {
         this._isInitialized = false;
         this._savedSpeed = undefined;
         this._savedVoice = undefined;
+        this._wasPlayingBeforeQA = false;
+
+        // Q&A Settings
+        this._qaSettings = {
+            apiKey: '',
+            model: DEFAULT_MODEL,
+            contextBefore: 20,
+            contextAfter: 5
+        };
 
         // DOM Elements
         this._elements = {};
@@ -30,6 +43,9 @@ class ReadingPartnerApp {
         this._controls = null;
         this._audioController = null;
         this._navigation = null;
+        this._qaController = null;
+        this._qaOverlay = null;
+        this._settingsModal = null;
     }
 
     /**
@@ -39,6 +55,7 @@ class ReadingPartnerApp {
         this._cacheElements();
         this._setupUploadHandlers();
         this._setupKeyboardShortcuts();
+        this._setupQASetup();
 
         // Initialize storage and reading state
         this._readingState = new ReadingStateController({
@@ -70,6 +87,37 @@ class ReadingPartnerApp {
                 onAddBookmark: () => this._addBookmark()
             }
         );
+
+        // Initialize Q&A Overlay
+        this._qaOverlay = new QAOverlay(
+            { container: document.getElementById('qa-overlay') },
+            {
+                onClose: () => this._closeQAOverlay(),
+                onPause: () => this._qaController?.pause(),
+                onResume: () => this._qaController?.resume(),
+                onStop: () => this._qaController?.stop(),
+                onContinueReading: () => this._continueReadingFromQA(),
+                onAskAnother: () => this._askAnotherQuestion(),
+                onTextSubmit: (text) => this._submitTextQuestion(text),
+                onRetryVoice: () => this._retryVoiceInput()
+            }
+        );
+
+        // Initialize Settings Modal
+        this._settingsModal = new SettingsModal(
+            { container: document.getElementById('settings-modal') },
+            {
+                onClose: () => this._settingsModal.hide(),
+                onSave: (settings) => this._saveQASettings(settings)
+            }
+        );
+
+        // Setup settings button
+        this._elements.settingsBtn = document.getElementById('settings-btn');
+        this._elements.settingsBtn?.addEventListener('click', () => {
+            this._settingsModal.setSettings(this._qaSettings);
+            this._settingsModal.show();
+        });
 
         // Show TTS loading status
         this._showTTSStatus('Initializing TTS engine...');
@@ -119,8 +167,18 @@ class ReadingPartnerApp {
             loadingIndicator: document.getElementById('loading-indicator'),
             loadingText: document.getElementById('loading-text'),
 
+            // Q&A Setup on welcome screen
+            qaSetupDetails: document.getElementById('qa-setup-details'),
+            qaSetupStatus: document.getElementById('qa-setup-status'),
+            setupApiKey: document.getElementById('setup-api-key'),
+            setupModel: document.getElementById('setup-model'),
+            setupFreeModels: document.getElementById('setup-free-models'),
+            setupPaidModels: document.getElementById('setup-paid-models'),
+            saveQaSetupBtn: document.getElementById('save-qa-setup-btn'),
+
             // Reader
             menuBtn: document.getElementById('menu-btn'),
+            settingsBtn: document.getElementById('settings-btn'),
             bookTitle: document.getElementById('book-title'),
             chapterTitle: document.getElementById('chapter-title'),
             readerContent: document.getElementById('reader-content'),
@@ -361,8 +419,8 @@ class ReadingPartnerApp {
         // Enable controls
         this._controls.setEnabled(true);
 
-        // Disable Ask button for now (Phase 3)
-        this._controls.setAskDisabled(true);
+        // Enable/disable Ask button based on API key configuration
+        this._controls.setAskDisabled(!this._qaSettings.apiKey);
     }
 
     /**
@@ -473,11 +531,267 @@ class ReadingPartnerApp {
     }
 
     /**
-     * Start Q&A mode (placeholder for Phase 3)
+     * Setup Q&A configuration on welcome screen
      */
-    _startQA() {
-        console.log('Q&A mode - not implemented yet');
-        alert('Q&A mode will be available in a future update!');
+    _setupQASetup() {
+        const { setupFreeModels, setupPaidModels, setupApiKey, setupModel, saveQaSetupBtn } = this._elements;
+
+        // Populate model dropdowns
+        if (setupFreeModels && setupPaidModels) {
+            OPENROUTER_MODELS.free.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = model.name;
+                setupFreeModels.appendChild(option);
+            });
+
+            OPENROUTER_MODELS.paid.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = model.name;
+                setupPaidModels.appendChild(option);
+            });
+
+            // Set default
+            if (setupModel) {
+                setupModel.value = DEFAULT_MODEL;
+            }
+        }
+
+        // Save button handler
+        saveQaSetupBtn?.addEventListener('click', () => {
+            const apiKey = setupApiKey?.value?.trim() || '';
+            const model = setupModel?.value || DEFAULT_MODEL;
+
+            this._qaSettings.apiKey = apiKey;
+            this._qaSettings.model = model;
+
+            // Update LLM client
+            llmClient.setApiKey(apiKey);
+            llmClient.setModel(model);
+
+            // Save to storage
+            this._saveQASettings(this._qaSettings);
+
+            // Update status display
+            this._updateQASetupStatus();
+
+            this._showToast('Q&A settings saved');
+        });
+    }
+
+    /**
+     * Update Q&A setup status display
+     */
+    _updateQASetupStatus() {
+        const { qaSetupStatus, setupApiKey, setupModel } = this._elements;
+
+        if (qaSetupStatus) {
+            if (this._qaSettings.apiKey) {
+                qaSetupStatus.textContent = 'Configured';
+                qaSetupStatus.classList.add('configured');
+            } else {
+                qaSetupStatus.textContent = 'Not configured';
+                qaSetupStatus.classList.remove('configured');
+            }
+        }
+
+        // Update form fields
+        if (setupApiKey) {
+            setupApiKey.value = this._qaSettings.apiKey || '';
+        }
+        if (setupModel) {
+            setupModel.value = this._qaSettings.model || DEFAULT_MODEL;
+        }
+    }
+
+    /**
+     * Start Q&A mode
+     */
+    async _startQA() {
+        // Check if API key is configured
+        if (!this._qaSettings.apiKey) {
+            this._showToast('Please configure Q&A settings first');
+            this._settingsModal.setSettings(this._qaSettings);
+            this._settingsModal.show();
+            return;
+        }
+
+        // Remember if we were playing
+        this._wasPlayingBeforeQA = this._audioController?.getState()?.status === 'playing';
+
+        // Pause current playback
+        this._pause();
+
+        // Initialize Q&A controller if needed
+        if (!this._qaController) {
+            this._initializeQAController();
+        }
+
+        // Update Q&A controller settings
+        this._qaController.setContextSettings(
+            this._qaSettings.contextBefore,
+            this._qaSettings.contextAfter
+        );
+        this._qaController.setPlaybackSpeed(this._controls?.getSpeed() || 1.0);
+
+        // Show overlay
+        this._qaOverlay.reset();
+        this._qaOverlay.setHistory(this._qaController.getHistory());
+        this._qaOverlay.show();
+
+        // Start voice Q&A
+        if (this._qaController.isSTTSupported()) {
+            this._qaController.startVoiceQA();
+        } else {
+            // STT not supported, show text input
+            this._qaOverlay.setState(QAState.IDLE);
+            this._qaOverlay.showTextInput();
+        }
+    }
+
+    /**
+     * Initialize Q&A controller
+     */
+    _initializeQAController() {
+        // Ensure LLM client is configured
+        llmClient.setApiKey(this._qaSettings.apiKey);
+        llmClient.setModel(this._qaSettings.model);
+
+        this._qaController = new QAController({
+            readingState: this._readingState,
+            onStateChange: (state, data) => {
+                this._qaOverlay.setState(state, data);
+
+                // Handle errors - show text input fallback
+                if (data?.error && state === QAState.IDLE) {
+                    if (data.error.includes('permission') || data.error.includes('Microphone')) {
+                        this._qaOverlay.showTextInput();
+                    }
+                }
+            },
+            onTranscript: (text) => {
+                this._qaOverlay.setTranscript(text);
+            },
+            onResponse: (text) => {
+                this._qaOverlay.setResponse(text);
+            },
+            onSentenceSpoken: (sentence, index) => {
+                // Could be used for highlighting current sentence in response
+            },
+            onHistoryAdd: (entry) => {
+                this._qaOverlay.addHistoryEntry(entry);
+            }
+        });
+    }
+
+    /**
+     * Close Q&A overlay
+     */
+    _closeQAOverlay() {
+        this._qaController?.stop();
+        this._qaOverlay.hide();
+    }
+
+    /**
+     * Continue reading from Q&A
+     */
+    _continueReadingFromQA() {
+        this._qaController?.stop();
+        this._qaOverlay.hide();
+
+        // Resume playback if we were playing before
+        if (this._wasPlayingBeforeQA) {
+            this._play();
+        }
+    }
+
+    /**
+     * Ask another question
+     */
+    _askAnotherQuestion() {
+        this._qaController?.stop();
+        this._qaOverlay.reset();
+        this._qaOverlay.setHistory(this._qaController?.getHistory() || []);
+
+        // Start new Q&A
+        if (this._qaController?.isSTTSupported()) {
+            this._qaController.startVoiceQA();
+        } else {
+            this._qaOverlay.setState(QAState.IDLE);
+            this._qaOverlay.showTextInput();
+        }
+    }
+
+    /**
+     * Submit text question
+     * @param {string} text
+     */
+    _submitTextQuestion(text) {
+        if (!this._qaController) {
+            this._initializeQAController();
+        }
+        this._qaOverlay.hideTextInput();
+        this._qaController.startTextQA(text);
+    }
+
+    /**
+     * Retry voice input
+     */
+    async _retryVoiceInput() {
+        if (!this._qaController) {
+            this._initializeQAController();
+        }
+
+        // Request microphone permission first
+        const hasPermission = await this._qaController.requestMicPermission();
+        if (hasPermission) {
+            this._qaOverlay.hideTextInput();
+            this._qaController.startVoiceQA();
+        } else {
+            this._showToast('Microphone permission denied');
+        }
+    }
+
+    /**
+     * Save Q&A settings
+     * @param {Object} settings
+     */
+    async _saveQASettings(settings) {
+        this._qaSettings = { ...this._qaSettings, ...settings };
+
+        // Update LLM client
+        llmClient.setApiKey(this._qaSettings.apiKey);
+        llmClient.setModel(this._qaSettings.model);
+
+        // Update Q&A controller if it exists
+        if (this._qaController) {
+            this._qaController.setContextSettings(
+                this._qaSettings.contextBefore,
+                this._qaSettings.contextAfter
+            );
+        }
+
+        // Save to storage
+        try {
+            await storage.saveSetting('qaApiKey', this._qaSettings.apiKey);
+            await storage.saveSetting('qaModel', this._qaSettings.model);
+            await storage.saveSetting('qaContextBefore', this._qaSettings.contextBefore);
+            await storage.saveSetting('qaContextAfter', this._qaSettings.contextAfter);
+        } catch (error) {
+            console.error('Failed to save Q&A settings:', error);
+        }
+
+        // Update UI
+        this._updateQASetupStatus();
+
+        // Update settings modal
+        this._settingsModal.setSettings(this._qaSettings);
+
+        // Enable/disable Ask button based on API key
+        if (this._controls) {
+            this._controls.setAskDisabled(!this._qaSettings.apiKey);
+        }
     }
 
     /**
@@ -721,6 +1035,36 @@ class ReadingPartnerApp {
                 // Will be set when controls are initialized
                 this._savedVoice = voice;
             }
+
+            // Load Q&A settings
+            const apiKey = await storage.getSetting('qaApiKey');
+            if (apiKey !== null) {
+                this._qaSettings.apiKey = apiKey;
+                llmClient.setApiKey(apiKey);
+            }
+
+            const model = await storage.getSetting('qaModel');
+            if (model !== null) {
+                this._qaSettings.model = model;
+                llmClient.setModel(model);
+            }
+
+            const contextBefore = await storage.getSetting('qaContextBefore');
+            if (contextBefore !== null) {
+                this._qaSettings.contextBefore = contextBefore;
+            }
+
+            const contextAfter = await storage.getSetting('qaContextAfter');
+            if (contextAfter !== null) {
+                this._qaSettings.contextAfter = contextAfter;
+            }
+
+            // Update Q&A setup UI
+            this._updateQASetupStatus();
+
+            // Update settings modal
+            this._settingsModal?.setSettings(this._qaSettings);
+
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
