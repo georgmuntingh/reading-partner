@@ -183,6 +183,11 @@ class ReadingPartnerApp {
             chapterTitle: document.getElementById('chapter-title'),
             readerContent: document.getElementById('reader-content'),
             textContent: document.getElementById('text-content'),
+            pageContainer: document.getElementById('page-container'),
+            pagePrevBtn: document.getElementById('page-prev-btn'),
+            pageNextBtn: document.getElementById('page-next-btn'),
+            pageCurrent: document.getElementById('page-current'),
+            pageTotal: document.getElementById('page-total'),
 
             // Controls
             playBtn: document.getElementById('play-btn'),
@@ -274,6 +279,14 @@ class ReadingPartnerApp {
                 case 'KeyB':
                     e.preventDefault();
                     this._audioController?.skipBackward(2);
+                    break;
+                case 'PageUp':
+                    e.preventDefault();
+                    this._readerView?.previousPage();
+                    break;
+                case 'PageDown':
+                    e.preventDefault();
+                    this._readerView?.nextPage();
                     break;
             }
         });
