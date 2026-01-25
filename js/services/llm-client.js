@@ -83,20 +83,57 @@ export class LLMClient {
     }
 
     /**
+     * Build system prompt with optional book metadata
+     * @param {{ title?: string, author?: string }} [bookMeta]
+     * @returns {string}
+     */
+    _buildSystemPrompt(bookMeta) {
+        let prompt = `You are a helpful reading assistant. The user is reading a book`;
+        if (bookMeta?.title) {
+            prompt += ` titled "${bookMeta.title}"`;
+            if (bookMeta.author) {
+                prompt += ` by ${bookMeta.author}`;
+            }
+        }
+        prompt += ` and has a question about it. Answer based on the provided context. Be concise and helpful. If the answer cannot be found in the context, say so.`;
+        return prompt;
+    }
+
+    /**
+     * Build user message with context
+     * @param {string[]} contextSentences
+     * @param {string} question
+     * @param {{ title?: string, author?: string }} [bookMeta]
+     * @returns {string}
+     */
+    _buildUserMessage(contextSentences, question, bookMeta) {
+        const contextText = contextSentences.join(' ');
+        let message = '';
+        if (bookMeta?.title) {
+            message += `Book: ${bookMeta.title}`;
+            if (bookMeta.author) {
+                message += ` by ${bookMeta.author}`;
+            }
+            message += '\n\n';
+        }
+        message += `Context from the book:\n"${contextText}"\n\nQuestion: ${question}`;
+        return message;
+    }
+
+    /**
      * Ask a question with context (non-streaming)
      * @param {string[]} contextSentences - Sentences for context
      * @param {string} question - User's question
+     * @param {{ title?: string, author?: string }} [bookMeta] - Book metadata
      * @returns {Promise<string>} LLM response
      */
-    async askQuestion(contextSentences, question) {
+    async askQuestion(contextSentences, question, bookMeta) {
         if (!this._apiKey) {
             throw new Error('API key not set');
         }
 
-        const systemPrompt = `You are a helpful reading assistant. The user is reading a book and has a question about it. Answer based on the provided context. Be concise and helpful. If the answer cannot be found in the context, say so.`;
-
-        const contextText = contextSentences.join(' ');
-        const userMessage = `Context from the book:\n"${contextText}"\n\nQuestion: ${question}`;
+        const systemPrompt = this._buildSystemPrompt(bookMeta);
+        const userMessage = this._buildUserMessage(contextSentences, question, bookMeta);
 
         const response = await fetch(this._endpoint, {
             method: 'POST',
@@ -132,9 +169,10 @@ export class LLMClient {
      * @param {string} question - User's question
      * @param {(chunk: string) => void} onChunk - Callback for each text chunk
      * @param {(sentence: string) => void} onSentence - Callback when a complete sentence is detected
+     * @param {{ title?: string, author?: string }} [bookMeta] - Book metadata
      * @returns {Promise<string>} Full response when complete
      */
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
         if (!this._apiKey) {
             throw new Error('API key not set');
         }
@@ -142,10 +180,8 @@ export class LLMClient {
         // Create abort controller for cancellation
         this._abortController = new AbortController();
 
-        const systemPrompt = `You are a helpful reading assistant. The user is reading a book and has a question about it. Answer based on the provided context. Be concise and helpful. If the answer cannot be found in the context, say so.`;
-
-        const contextText = contextSentences.join(' ');
-        const userMessage = `Context from the book:\n"${contextText}"\n\nQuestion: ${question}`;
+        const systemPrompt = this._buildSystemPrompt(bookMeta);
+        const userMessage = this._buildUserMessage(contextSentences, question, bookMeta);
 
         let response;
         try {
