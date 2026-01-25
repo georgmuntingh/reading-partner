@@ -1,0 +1,463 @@
+/**
+ * Q&A Controller
+ * Orchestrates the STT -> LLM -> TTS flow for Q&A mode
+ */
+
+import { sttService } from '../services/stt-service.js';
+import { llmClient } from '../services/llm-client.js';
+import { ttsEngine } from '../services/tts-engine.js';
+import { splitIntoSentences } from '../utils/sentence-splitter.js';
+
+// Q&A States
+export const QAState = {
+    IDLE: 'idle',
+    LISTENING: 'listening',
+    THINKING: 'thinking',
+    RESPONDING: 'responding',
+    PAUSED: 'paused'
+};
+
+/**
+ * @typedef {Object} QAHistoryEntry
+ * @property {string} id - Unique ID
+ * @property {string} question - User's question
+ * @property {string} answer - LLM's answer
+ * @property {number} timestamp - When the Q&A occurred
+ */
+
+export class QAController {
+    /**
+     * @param {Object} options
+     * @param {Object} options.readingState - ReadingStateController instance
+     * @param {(state: string, data?: any) => void} options.onStateChange - State change callback
+     * @param {(text: string) => void} options.onTranscript - Live transcript callback
+     * @param {(text: string) => void} options.onResponse - Response text callback
+     * @param {(sentence: string, index: number) => void} options.onSentenceSpoken - When a sentence finishes
+     * @param {(entry: QAHistoryEntry) => void} options.onHistoryAdd - When a Q&A is added to history
+     */
+    constructor(options) {
+        this._readingState = options.readingState;
+        this._onStateChange = options.onStateChange;
+        this._onTranscript = options.onTranscript;
+        this._onResponse = options.onResponse;
+        this._onSentenceSpoken = options.onSentenceSpoken;
+        this._onHistoryAdd = options.onHistoryAdd;
+
+        // State
+        this._state = QAState.IDLE;
+        this._currentQuestion = '';
+        this._currentResponse = '';
+        this._responseSentences = [];
+        this._currentSentenceIndex = 0;
+        this._isPaused = false;
+        this._isStopped = false;
+
+        // TTS state
+        this._currentAudioSource = null;
+        this._playbackSpeed = 1.0;
+
+        // Session history
+        this._history = [];
+
+        // Context settings (sentences before and after current position)
+        this._contextBefore = 20;
+        this._contextAfter = 5;
+
+        // Setup STT callbacks
+        sttService.onInterimResult = (text) => {
+            this._onTranscript?.(text);
+        };
+    }
+
+    /**
+     * Get current state
+     * @returns {string}
+     */
+    getState() {
+        return this._state;
+    }
+
+    /**
+     * Check if Q&A mode is active
+     * @returns {boolean}
+     */
+    isActive() {
+        return this._state !== QAState.IDLE;
+    }
+
+    /**
+     * Get session Q&A history
+     * @returns {QAHistoryEntry[]}
+     */
+    getHistory() {
+        return [...this._history];
+    }
+
+    /**
+     * Clear session history
+     */
+    clearHistory() {
+        this._history = [];
+    }
+
+    /**
+     * Set context settings
+     * @param {number} before - Sentences before current position
+     * @param {number} after - Sentences after current position
+     */
+    setContextSettings(before, after) {
+        this._contextBefore = before;
+        this._contextAfter = after;
+    }
+
+    /**
+     * Set playback speed for TTS
+     * @param {number} speed
+     */
+    setPlaybackSpeed(speed) {
+        this._playbackSpeed = speed;
+    }
+
+    /**
+     * Start Q&A mode with voice input
+     * @returns {Promise<void>}
+     */
+    async startVoiceQA() {
+        if (this._state !== QAState.IDLE && this._state !== QAState.PAUSED) {
+            console.warn('Q&A already in progress');
+            return;
+        }
+
+        this._isStopped = false;
+        this._isPaused = false;
+        this._setState(QAState.LISTENING);
+
+        try {
+            // Start listening
+            const question = await sttService.startListening();
+            this._currentQuestion = question;
+            this._onTranscript?.(question);
+
+            // Process the question
+            await this._processQuestion(question);
+        } catch (error) {
+            console.error('Voice Q&A error:', error);
+            if (error.message !== 'Speech recognition aborted') {
+                this._onStateChange?.(QAState.IDLE, { error: error.message });
+            }
+            this._setState(QAState.IDLE);
+        }
+    }
+
+    /**
+     * Start Q&A mode with text input
+     * @param {string} question
+     * @returns {Promise<void>}
+     */
+    async startTextQA(question) {
+        if (this._state !== QAState.IDLE && this._state !== QAState.PAUSED) {
+            console.warn('Q&A already in progress');
+            return;
+        }
+
+        if (!question || !question.trim()) {
+            return;
+        }
+
+        this._isStopped = false;
+        this._isPaused = false;
+        this._currentQuestion = question.trim();
+
+        await this._processQuestion(this._currentQuestion);
+    }
+
+    /**
+     * Process a question through LLM and TTS
+     * @param {string} question
+     */
+    async _processQuestion(question) {
+        this._setState(QAState.THINKING);
+        this._currentResponse = '';
+        this._responseSentences = [];
+        this._currentSentenceIndex = 0;
+
+        try {
+            // Get context sentences
+            const context = await this._getContextSentences();
+
+            // Stream the LLM response
+            const fullResponse = await llmClient.askQuestionStreaming(
+                context,
+                question,
+                // On each chunk
+                (chunk) => {
+                    this._currentResponse += chunk;
+                    this._onResponse?.(this._currentResponse);
+                },
+                // On each complete sentence
+                (sentence) => {
+                    if (this._isStopped) return;
+
+                    this._responseSentences.push(sentence);
+
+                    // If this is the first sentence and we're still thinking, start responding
+                    if (this._state === QAState.THINKING && this._responseSentences.length === 1) {
+                        this._setState(QAState.RESPONDING);
+                        this._startSpeaking();
+                    }
+                }
+            );
+
+            // Add to history
+            const historyEntry = {
+                id: `qa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                question,
+                answer: fullResponse,
+                timestamp: Date.now()
+            };
+            this._history.push(historyEntry);
+            this._onHistoryAdd?.(historyEntry);
+
+        } catch (error) {
+            console.error('Q&A processing error:', error);
+            if (!this._isStopped) {
+                this._onStateChange?.(QAState.IDLE, { error: error.message });
+                this._setState(QAState.IDLE);
+            }
+        }
+    }
+
+    /**
+     * Get context sentences (before and after current position)
+     * @returns {Promise<string[]>}
+     */
+    async _getContextSentences() {
+        if (!this._readingState) {
+            return [];
+        }
+
+        const beforeSentences = await this._readingState.getContextSentences(this._contextBefore);
+        const afterSentences = await this._readingState.getContextSentencesAfter(this._contextAfter);
+
+        return [...beforeSentences, ...afterSentences];
+    }
+
+    /**
+     * Start speaking the response sentences
+     */
+    async _startSpeaking() {
+        while (this._currentSentenceIndex < this._responseSentences.length && !this._isStopped) {
+            if (this._isPaused) {
+                // Wait for unpause
+                await new Promise(resolve => {
+                    this._resumeCallback = resolve;
+                });
+                continue;
+            }
+
+            const sentence = this._responseSentences[this._currentSentenceIndex];
+
+            try {
+                await this._speakSentence(sentence);
+                this._onSentenceSpoken?.(sentence, this._currentSentenceIndex);
+                this._currentSentenceIndex++;
+            } catch (error) {
+                if (this._isStopped || this._isPaused) {
+                    break;
+                }
+                console.error('TTS error:', error);
+                this._currentSentenceIndex++;
+            }
+        }
+
+        // Check if we're done (LLM finished and all sentences spoken)
+        if (!this._isStopped && !this._isPaused && this._currentSentenceIndex >= this._responseSentences.length) {
+            // Wait a moment to see if more sentences are coming
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // If still at the end, we're done
+            if (this._currentSentenceIndex >= this._responseSentences.length) {
+                this._setState(QAState.IDLE);
+            }
+        }
+    }
+
+    /**
+     * Speak a single sentence
+     * @param {string} text
+     * @returns {Promise<void>}
+     */
+    async _speakSentence(text) {
+        if (!text || !text.trim()) {
+            return;
+        }
+
+        // Synthesize audio
+        const audioBuffer = await ttsEngine.synthesize(text);
+
+        if (this._isStopped) {
+            return;
+        }
+
+        // Play audio
+        return new Promise((resolve, reject) => {
+            this._currentAudioSource = ttsEngine.playBuffer(audioBuffer, this._playbackSpeed);
+
+            if (this._currentAudioSource) {
+                this._currentAudioSource.onended = () => {
+                    this._currentAudioSource = null;
+                    resolve();
+                };
+            } else {
+                resolve();
+            }
+        });
+    }
+
+    /**
+     * Pause the Q&A response
+     */
+    pause() {
+        if (this._state !== QAState.RESPONDING) {
+            return;
+        }
+
+        this._isPaused = true;
+        this._setState(QAState.PAUSED);
+
+        // Stop current audio
+        if (this._currentAudioSource) {
+            try {
+                this._currentAudioSource.stop();
+            } catch (e) {
+                // Ignore errors when stopping
+            }
+            this._currentAudioSource = null;
+        }
+    }
+
+    /**
+     * Resume the Q&A response
+     */
+    resume() {
+        if (this._state !== QAState.PAUSED) {
+            return;
+        }
+
+        this._isPaused = false;
+        this._setState(QAState.RESPONDING);
+
+        // Resume speaking
+        if (this._resumeCallback) {
+            this._resumeCallback();
+            this._resumeCallback = null;
+        } else {
+            this._startSpeaking();
+        }
+    }
+
+    /**
+     * Stop Q&A mode completely
+     */
+    stop() {
+        this._isStopped = true;
+        this._isPaused = false;
+
+        // Cancel STT if listening
+        if (this._state === QAState.LISTENING) {
+            sttService.abortListening();
+        }
+
+        // Cancel LLM request
+        llmClient.abort();
+
+        // Stop current audio
+        if (this._currentAudioSource) {
+            try {
+                this._currentAudioSource.stop();
+            } catch (e) {
+                // Ignore errors when stopping
+            }
+            this._currentAudioSource = null;
+        }
+
+        // Clear state
+        this._currentQuestion = '';
+        this._currentResponse = '';
+        this._responseSentences = [];
+        this._currentSentenceIndex = 0;
+
+        this._setState(QAState.IDLE);
+    }
+
+    /**
+     * Cancel listening (during STT phase)
+     */
+    cancelListening() {
+        if (this._state === QAState.LISTENING) {
+            sttService.abortListening();
+            this._setState(QAState.IDLE);
+        }
+    }
+
+    /**
+     * Ask another question (restart Q&A)
+     */
+    askAnother() {
+        this.stop();
+        // Small delay to ensure cleanup
+        setTimeout(() => {
+            this.startVoiceQA();
+        }, 100);
+    }
+
+    /**
+     * Get current question
+     * @returns {string}
+     */
+    getCurrentQuestion() {
+        return this._currentQuestion;
+    }
+
+    /**
+     * Get current response
+     * @returns {string}
+     */
+    getCurrentResponse() {
+        return this._currentResponse;
+    }
+
+    /**
+     * Check if STT is supported
+     * @returns {boolean}
+     */
+    isSTTSupported() {
+        return sttService.isSupported();
+    }
+
+    /**
+     * Request microphone permission
+     * @returns {Promise<boolean>}
+     */
+    async requestMicPermission() {
+        return sttService.requestPermission();
+    }
+
+    /**
+     * Set state and notify
+     * @param {string} newState
+     */
+    _setState(newState) {
+        const oldState = this._state;
+        this._state = newState;
+
+        if (oldState !== newState) {
+            this._onStateChange?.(newState, {
+                question: this._currentQuestion,
+                response: this._currentResponse,
+                sentenceIndex: this._currentSentenceIndex,
+                totalSentences: this._responseSentences.length
+            });
+        }
+    }
+}

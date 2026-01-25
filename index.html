@@ -17,6 +17,35 @@
                 <h1>Reading Partner</h1>
                 <p class="subtitle">Upload an EPUB to start listening</p>
 
+                <!-- Q&A Setup Section -->
+                <div class="qa-setup" id="qa-setup">
+                    <details class="qa-setup-details" id="qa-setup-details">
+                        <summary class="qa-setup-summary">
+                            <span class="qa-setup-title">Q&A Settings (Optional)</span>
+                            <span class="qa-setup-status" id="qa-setup-status">Not configured</span>
+                        </summary>
+                        <div class="qa-setup-content">
+                            <div class="form-group">
+                                <label for="setup-api-key">OpenRouter API Key</label>
+                                <input type="password" id="setup-api-key" class="form-input" placeholder="sk-or-...">
+                                <p class="form-hint">
+                                    Get your free API key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+                                </p>
+                            </div>
+                            <div class="form-group">
+                                <label for="setup-model">AI Model</label>
+                                <select id="setup-model" class="form-select">
+                                    <optgroup label="Free Models" id="setup-free-models">
+                                    </optgroup>
+                                    <optgroup label="Paid Models" id="setup-paid-models">
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="save-qa-setup-btn">Save Q&A Settings</button>
+                        </div>
+                    </details>
+                </div>
+
                 <div class="upload-area" id="upload-area">
                     <input type="file" id="file-input" accept=".epub" hidden>
                     <div class="upload-icon">
@@ -156,6 +185,16 @@
     <div id="tts-status" class="tts-status hidden">
         <div class="spinner"></div>
         <p>Loading TTS engine...</p>
+    </div>
+
+    <!-- Q&A Overlay -->
+    <div id="qa-overlay" class="qa-overlay hidden">
+        <!-- Content will be rendered by QAOverlay component -->
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay hidden">
+        <!-- Content will be rendered by SettingsModal component -->
     </div>
 
     <!-- Scripts -->
