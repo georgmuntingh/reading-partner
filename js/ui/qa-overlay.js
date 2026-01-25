@@ -349,6 +349,12 @@ export class QAOverlay {
      * @param {string} state
      */
     _updateControls(state) {
+        // Icon SVGs for compact buttons
+        const pauseIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>`;
+        const stopIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>`;
+        const playIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`;
+        const micIcon = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>`;
+
         let html = '';
 
         switch (state) {
@@ -366,24 +372,25 @@ export class QAOverlay {
 
             case QAState.THINKING:
                 html = `
-                    <button class="btn btn-secondary" data-action="stop">Stop</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="stop" title="Stop">${stopIcon}</button>
                 `;
                 break;
 
             case QAState.RESPONDING:
                 html = `
-                    <button class="btn btn-secondary" data-action="pause">Pause</button>
-                    <button class="btn btn-secondary" data-action="stop">Stop</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="pause" title="Pause">${pauseIcon}</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="stop" title="Stop">${stopIcon}</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="ask-another" title="Ask Another">${micIcon}</button>
                     <button class="btn btn-primary" data-action="continue">Continue Reading</button>
                 `;
                 break;
 
             case QAState.PAUSED:
                 html = `
-                    <button class="btn btn-primary" data-action="resume">Resume</button>
-                    <button class="btn btn-secondary" data-action="stop">Stop</button>
+                    <button class="btn btn-primary btn-icon-text" data-action="resume" title="Resume">${playIcon}</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="stop" title="Stop">${stopIcon}</button>
+                    <button class="btn btn-secondary btn-icon-text" data-action="ask-another" title="Ask Another">${micIcon}</button>
                     <button class="btn btn-secondary" data-action="continue">Continue Reading</button>
-                    <button class="btn btn-secondary" data-action="ask-another">Ask Another</button>
                 `;
                 break;
         }

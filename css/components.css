@@ -554,10 +554,30 @@
     padding: var(--spacing-md) var(--spacing-lg);
     border-top: 1px solid var(--border-color);
     justify-content: center;
+    align-items: center;
 }
 
 .qa-controls .btn {
+    min-width: auto;
+}
+
+.qa-controls .btn:not(.btn-icon-text) {
     min-width: 100px;
+}
+
+/* Icon-only buttons in Q&A controls */
+.btn-icon-text {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: var(--radius-full);
+}
+
+.btn-icon-text svg {
+    flex-shrink: 0;
 }
 
 /* Listening Animation */

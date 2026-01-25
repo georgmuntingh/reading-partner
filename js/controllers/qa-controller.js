@@ -51,6 +51,7 @@ export class QAController {
         this._currentSentenceIndex = 0;
         this._isPaused = false;
         this._isStopped = false;
+        this._isStreamingComplete = false;
 
         // TTS state
         this._currentAudioSource = null;
@@ -180,6 +181,7 @@ export class QAController {
         this._currentResponse = '';
         this._responseSentences = [];
         this._currentSentenceIndex = 0;
+        this._isStreamingComplete = false;
 
         try {
             // Get context sentences
@@ -208,6 +210,9 @@ export class QAController {
                 }
             );
 
+            // Mark streaming as complete
+            this._isStreamingComplete = true;
+
             // Add to history
             const historyEntry = {
                 id: `qa_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -220,6 +225,7 @@ export class QAController {
 
         } catch (error) {
             console.error('Q&A processing error:', error);
+            this._isStreamingComplete = true;
             if (!this._isStopped) {
                 this._onStateChange?.(QAState.IDLE, { error: error.message });
                 this._setState(QAState.IDLE);
@@ -246,7 +252,9 @@ export class QAController {
      * Start speaking the response sentences
      */
     async _startSpeaking() {
-        while (this._currentSentenceIndex < this._responseSentences.length && !this._isStopped) {
+        // Keep looping while not stopped
+        while (!this._isStopped) {
+            // Check if paused
             if (this._isPaused) {
                 // Wait for unpause
                 await new Promise(resolve => {
@@ -255,30 +263,33 @@ export class QAController {
                 continue;
             }
 
-            const sentence = this._responseSentences[this._currentSentenceIndex];
+            // Check if there's a sentence to speak
+            if (this._currentSentenceIndex < this._responseSentences.length) {
+                const sentence = this._responseSentences[this._currentSentenceIndex];
 
-            try {
-                await this._speakSentence(sentence);
-                this._onSentenceSpoken?.(sentence, this._currentSentenceIndex);
-                this._currentSentenceIndex++;
-            } catch (error) {
-                if (this._isStopped || this._isPaused) {
-                    break;
+                try {
+                    await this._speakSentence(sentence);
+                    this._onSentenceSpoken?.(sentence, this._currentSentenceIndex);
+                    this._currentSentenceIndex++;
+                } catch (error) {
+                    if (this._isStopped || this._isPaused) {
+                        break;
+                    }
+                    console.error('TTS error:', error);
+                    this._currentSentenceIndex++;
                 }
-                console.error('TTS error:', error);
-                this._currentSentenceIndex++;
+            } else if (this._isStreamingComplete) {
+                // No more sentences and streaming is done - we're finished
+                break;
+            } else {
+                // Wait for more sentences from the LLM stream
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
 
-        // Check if we're done (LLM finished and all sentences spoken)
-        if (!this._isStopped && !this._isPaused && this._currentSentenceIndex >= this._responseSentences.length) {
-            // Wait a moment to see if more sentences are coming
-            await new Promise(resolve => setTimeout(resolve, 500));
-
-            // If still at the end, we're done
-            if (this._currentSentenceIndex >= this._responseSentences.length) {
-                this._setState(QAState.IDLE);
-            }
+        // Set to idle if we finished normally (not stopped or paused)
+        if (!this._isStopped && !this._isPaused) {
+            this._setState(QAState.IDLE);
         }
     }
 

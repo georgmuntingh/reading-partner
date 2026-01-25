@@ -3,28 +3,32 @@
  * Handles streaming chat completions for Q&A mode
  */
 
-// Popular OpenRouter models - free models first, then paid
+// Popular OpenRouter models - free models first (sorted by popularity), then paid
 export const OPENROUTER_MODELS = {
     free: [
-        { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini (Free)' },
-        { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (Free)' },
-        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B (Free)' },
-        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen 2.5 72B (Free)' },
-        { id: 'deepseek/deepseek-r1:free', name: 'DeepSeek R1 (Free)' },
-        { id: 'deepseek/deepseek-chat:free', name: 'DeepSeek V3 (Free)' },
-        { id: 'microsoft/phi-4:free', name: 'Phi-4 (Free)' },
+        { id: 'meta-llama/llama-4-maverick:free', name: 'Llama 4 Maverick (Free)' },
+        { id: 'meta-llama/llama-4-scout:free', name: 'Llama 4 Scout (Free)' },
+        { id: 'google/gemini-2.5-pro-exp-03-25:free', name: 'Gemini 2.5 Pro Exp (Free)' },
+        { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 Chat (Free)' },
+        { id: 'deepseek/deepseek-r1-zero:free', name: 'DeepSeek R1 Zero (Free)' },
+        { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 24B (Free)' },
+        { id: 'nvidia/llama-3.1-nemotron-nano-8b-v1:free', name: 'Nemotron Nano 8B (Free)' },
+        { id: 'qwen/qwen2.5-vl-3b-instruct:free', name: 'Qwen 2.5 VL 3B (Free)' },
+        { id: 'nousresearch/deephermes-3-llama-3-8b-preview:free', name: 'DeepHermes 3 8B (Free)' },
     ],
     paid: [
+        { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+        { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
+        { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+        { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4' },
         { id: 'openai/gpt-4o', name: 'GPT-4o' },
         { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' },
-        { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
-        { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus' },
-        { id: 'google/gemini-pro-1.5', name: 'Gemini Pro 1.5' },
+        { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3' },
         { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
     ]
 };
 
-export const DEFAULT_MODEL = 'openai/gpt-4o-mini';
+export const DEFAULT_MODEL = 'meta-llama/llama-4-maverick:free';
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {
