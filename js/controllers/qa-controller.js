@@ -64,6 +64,9 @@ export class QAController {
         // Session history
         this._history = [];
 
+        // Book metadata for LLM context
+        this._bookMeta = null;
+
         // Context settings (sentences before and after current position)
         this._contextBefore = 20;
         this._contextAfter = 5;
@@ -103,6 +106,14 @@ export class QAController {
      */
     clearHistory() {
         this._history = [];
+    }
+
+    /**
+     * Set book metadata for LLM context
+     * @param {{ title?: string, author?: string }} bookMeta
+     */
+    setBookMeta(bookMeta) {
+        this._bookMeta = bookMeta;
     }
 
     /**
@@ -219,7 +230,8 @@ export class QAController {
                         this._setState(QAState.RESPONDING);
                         this._startSpeaking();
                     }
-                }
+                },
+                this._bookMeta
             );
 
             // Mark streaming as complete

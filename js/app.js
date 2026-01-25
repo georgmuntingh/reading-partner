@@ -119,6 +119,11 @@ class ReadingPartnerApp {
             this._settingsModal.show();
         });
 
+        // Setup load book button
+        this._elements.loadBookBtn?.addEventListener('click', () => {
+            this._triggerLoadNewBook();
+        });
+
         // Show TTS loading status
         this._showTTSStatus('Initializing TTS engine...');
 
@@ -195,11 +200,15 @@ class ReadingPartnerApp {
             pauseIcon: document.getElementById('pause-icon'),
             prevBtn: document.getElementById('prev-btn'),
             nextBtn: document.getElementById('next-btn'),
-            back2Btn: document.getElementById('back-2-btn'),
+            prevChapterBtn: document.getElementById('prev-chapter-btn'),
+            nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
             speedSlider: document.getElementById('speed-slider'),
             speedValue: document.getElementById('speed-value'),
             voiceSelect: document.getElementById('voice-select'),
+
+            // Header actions
+            loadBookBtn: document.getElementById('load-book-btn'),
 
             // Status
             ttsStatus: document.getElementById('tts-status')
@@ -278,7 +287,11 @@ class ReadingPartnerApp {
                     break;
                 case 'KeyB':
                     e.preventDefault();
-                    this._audioController?.skipBackward(2);
+                    this._navigateToPrevChapter();
+                    break;
+                case 'KeyN':
+                    e.preventDefault();
+                    this._navigateToNextChapter();
                     break;
                 case 'PageUp':
                     e.preventDefault();
@@ -293,16 +306,63 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Trigger file picker to load a new book from the reader screen
+     */
+    _triggerLoadNewBook() {
+        // Create a temporary file input (reuse won't work if same file is selected)
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.epub';
+        input.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+                this._loadNewBook(file);
+            }
+        });
+        input.click();
+    }
+
+    /**
+     * Load a new book while already in the reader screen
+     * @param {File} file
+     */
+    async _loadNewBook(file) {
+        // Stop any current playback
+        this._pause();
+
+        // Stop Q&A if active
+        this._qaController?.stop();
+        this._qaOverlay?.hide();
+
+        // Reset Q&A controller book metadata
+        if (this._qaController) {
+            this._qaController.setBookMeta(null);
+            this._qaController.clearHistory();
+        }
+
+        // Reset chapter index
+        this._currentChapterIndex = 0;
+
+        // Load the book using the existing _loadBook flow
+        await this._loadBook(file);
+    }
+
+    /**
      * Load a book from file
      * @param {File} file
      */
     async _loadBook(file) {
         const { loadingIndicator, loadingText } = this._elements;
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
 
         try {
-            // Show loading
-            loadingIndicator.classList.remove('hidden');
-            loadingText.textContent = 'Parsing EPUB...';
+            // Show loading feedback
+            if (isFromReader) {
+                this._showTTSStatus('Loading new book...');
+            } else {
+                loadingIndicator.classList.remove('hidden');
+                loadingText.textContent = 'Parsing EPUB...';
+            }
 
             // Parse EPUB and save to storage
             this._currentBook = await this._readingState.loadBook(file);
@@ -311,10 +371,21 @@ class ReadingPartnerApp {
                 throw new Error('No readable content found in this EPUB');
             }
 
-            loadingText.textContent = 'Preparing reader...';
+            if (isFromReader) {
+                this._showTTSStatus('Preparing reader...');
+            } else {
+                loadingText.textContent = 'Preparing reader...';
+            }
 
-            // Initialize reader components
-            this._initializeReader();
+            // Initialize reader components (only once)
+            if (!this._controls) {
+                this._initializeReader();
+            } else {
+                // Update for the new book
+                this._readerView.setBookTitle(this._currentBook.title);
+                this._controls.setEnabled(true);
+                this._controls.setAskDisabled(!this._qaSettings.apiKey);
+            }
 
             // Get saved position
             const position = this._readingState.getCurrentPosition();
@@ -335,11 +406,23 @@ class ReadingPartnerApp {
             // Switch to reader screen
             this._showScreen('reader');
 
+            if (isFromReader) {
+                this._hideTTSStatus();
+                this._showToast(`Loaded "${this._currentBook.title}"`);
+            }
+
         } catch (error) {
             console.error('Failed to load book:', error);
-            this._showUploadError(error.message);
+            if (isFromReader) {
+                this._hideTTSStatus();
+                this._showToast(`Failed to load: ${error.message}`);
+            } else {
+                this._showUploadError(error.message);
+            }
         } finally {
-            loadingIndicator.classList.add('hidden');
+            if (!isFromReader) {
+                loadingIndicator.classList.add('hidden');
+            }
         }
     }
 
@@ -386,7 +469,8 @@ class ReadingPartnerApp {
                 pauseIcon: this._elements.pauseIcon,
                 prevBtn: this._elements.prevBtn,
                 nextBtn: this._elements.nextBtn,
-                back2Btn: this._elements.back2Btn,
+                prevChapterBtn: this._elements.prevChapterBtn,
+                nextChapterBtn: this._elements.nextChapterBtn,
                 askBtn: this._elements.askBtn,
                 speedSlider: this._elements.speedSlider,
                 speedValue: this._elements.speedValue,
@@ -397,7 +481,8 @@ class ReadingPartnerApp {
                 onPause: () => this._pause(),
                 onPrev: () => this._audioController.skipBackward(1),
                 onNext: () => this._audioController.skipForward(),
-                onBack2: () => this._audioController.skipBackward(2),
+                onPrevChapter: () => this._navigateToPrevChapter(),
+                onNextChapter: () => this._navigateToNextChapter(),
                 onAsk: () => this._startQA(),
                 onSpeedChange: (speed) => {
                     this._audioController.setSpeed(speed);
@@ -647,6 +732,14 @@ class ReadingPartnerApp {
             this._qaSettings.contextAfter
         );
         this._qaController.setPlaybackSpeed(this._controls?.getSpeed() || 1.0);
+
+        // Provide book metadata for LLM context
+        if (this._currentBook) {
+            this._qaController.setBookMeta({
+                title: this._currentBook.title,
+                author: this._currentBook.author
+            });
+        }
 
         // Show overlay
         this._qaOverlay.reset();
@@ -925,6 +1018,22 @@ class ReadingPartnerApp {
      */
     _hideTTSStatus() {
         this._elements.ttsStatus.classList.add('hidden');
+    }
+
+    /**
+     * Navigate to the previous chapter
+     */
+    async _navigateToPrevChapter() {
+        if (!this._currentBook || this._currentChapterIndex <= 0) return;
+        await this._navigateToChapter(this._currentChapterIndex - 1);
+    }
+
+    /**
+     * Navigate to the next chapter
+     */
+    async _navigateToNextChapter() {
+        if (!this._currentBook || this._currentChapterIndex >= this._currentBook.chapters.length - 1) return;
+        await this._navigateToChapter(this._currentChapterIndex + 1);
     }
 
     /**

@@ -10,7 +10,8 @@ export class PlaybackControls {
      * @param {HTMLElement} options.playIcon
      * @param {HTMLElement} options.prevBtn
      * @param {HTMLElement} options.nextBtn
-     * @param {HTMLElement} options.back2Btn
+     * @param {HTMLElement} options.prevChapterBtn
+     * @param {HTMLElement} options.nextChapterBtn
      * @param {HTMLElement} options.askBtn
      * @param {HTMLInputElement} options.speedSlider
      * @param {HTMLElement} options.speedValue
@@ -20,7 +21,8 @@ export class PlaybackControls {
      * @param {() => void} callbacks.onPause
      * @param {() => void} callbacks.onPrev
      * @param {() => void} callbacks.onNext
-     * @param {() => void} callbacks.onBack2
+     * @param {() => void} callbacks.onPrevChapter
+     * @param {() => void} callbacks.onNextChapter
      * @param {() => void} callbacks.onAsk
      * @param {(speed: number) => void} callbacks.onSpeedChange
      * @param {(voiceId: string) => void} callbacks.onVoiceChange
@@ -31,7 +33,8 @@ export class PlaybackControls {
         this._playIcon = options.playIcon;
         this._prevBtn = options.prevBtn;
         this._nextBtn = options.nextBtn;
-        this._back2Btn = options.back2Btn;
+        this._prevChapterBtn = options.prevChapterBtn;
+        this._nextChapterBtn = options.nextChapterBtn;
         this._askBtn = options.askBtn;
         this._speedSlider = options.speedSlider;
         this._speedValue = options.speedValue;
@@ -66,8 +69,12 @@ export class PlaybackControls {
             this._callbacks.onNext?.();
         });
 
-        this._back2Btn.addEventListener('click', () => {
-            this._callbacks.onBack2?.();
+        this._prevChapterBtn.addEventListener('click', () => {
+            this._callbacks.onPrevChapter?.();
+        });
+
+        this._nextChapterBtn.addEventListener('click', () => {
+            this._callbacks.onNextChapter?.();
         });
 
         // Ask button
@@ -146,7 +153,8 @@ export class PlaybackControls {
         this._playBtn.disabled = !enabled;
         this._prevBtn.disabled = !enabled;
         this._nextBtn.disabled = !enabled;
-        this._back2Btn.disabled = !enabled;
+        this._prevChapterBtn.disabled = !enabled;
+        this._nextChapterBtn.disabled = !enabled;
         this._askBtn.disabled = !enabled;
         this._speedSlider.disabled = !enabled;
     }
