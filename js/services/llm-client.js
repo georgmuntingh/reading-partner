@@ -3,18 +3,14 @@
  * Handles streaming chat completions for Q&A mode
  */
 
-// Popular OpenRouter models - free models first (sorted by popularity), then paid
+// Popular OpenRouter models - free models first, then paid
 export const OPENROUTER_MODELS = {
     free: [
-        { id: 'meta-llama/llama-4-maverick:free', name: 'Llama 4 Maverick (Free)' },
-        { id: 'meta-llama/llama-4-scout:free', name: 'Llama 4 Scout (Free)' },
-        { id: 'google/gemini-2.5-pro-exp-03-25:free', name: 'Gemini 2.5 Pro Exp (Free)' },
-        { id: 'deepseek/deepseek-chat-v3-0324:free', name: 'DeepSeek V3 Chat (Free)' },
-        { id: 'deepseek/deepseek-r1-zero:free', name: 'DeepSeek R1 Zero (Free)' },
-        { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1 24B (Free)' },
-        { id: 'nvidia/llama-3.1-nemotron-nano-8b-v1:free', name: 'Nemotron Nano 8B (Free)' },
-        { id: 'qwen/qwen2.5-vl-3b-instruct:free', name: 'Qwen 2.5 VL 3B (Free)' },
-        { id: 'nousresearch/deephermes-3-llama-3-8b-preview:free', name: 'DeepHermes 3 8B (Free)' },
+        { id: 'openai/gpt-oss-120b:free', name: 'GPT OSS 120B (Free)' },
+        { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (Free)' },
+        { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 3 Nano 30B (Free)' },
+        { id: 'xiaomi/mimo-v2-flash:free', name: 'MiMo V2 Flash (Free)' },
+        { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air (Free)' },
     ],
     paid: [
         { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
@@ -28,7 +24,7 @@ export const OPENROUTER_MODELS = {
     ]
 };
 
-export const DEFAULT_MODEL = 'meta-llama/llama-4-maverick:free';
+export const DEFAULT_MODEL = 'openai/gpt-oss-120b:free';
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {

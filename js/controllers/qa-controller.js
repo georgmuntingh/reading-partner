@@ -54,7 +54,6 @@ export class QAController {
         this._isStreamingComplete = false;
 
         // TTS state
-        this._currentAudioSource = null;
         this._playbackSpeed = 1.0;
 
         // Session history
@@ -310,19 +309,8 @@ export class QAController {
             return;
         }
 
-        // Play audio
-        return new Promise((resolve, reject) => {
-            this._currentAudioSource = ttsEngine.playBuffer(audioBuffer, this._playbackSpeed);
-
-            if (this._currentAudioSource) {
-                this._currentAudioSource.onended = () => {
-                    this._currentAudioSource = null;
-                    resolve();
-                };
-            } else {
-                resolve();
-            }
-        });
+        // Play audio - playBuffer returns a Promise that resolves when playback ends
+        await ttsEngine.playBuffer(audioBuffer, this._playbackSpeed);
     }
 
     /**
@@ -336,15 +324,8 @@ export class QAController {
         this._isPaused = true;
         this._setState(QAState.PAUSED);
 
-        // Stop current audio
-        if (this._currentAudioSource) {
-            try {
-                this._currentAudioSource.stop();
-            } catch (e) {
-                // Ignore errors when stopping
-            }
-            this._currentAudioSource = null;
-        }
+        // Stop current audio using TTS engine
+        ttsEngine.stopAudio();
     }
 
     /**
@@ -382,15 +363,8 @@ export class QAController {
         // Cancel LLM request
         llmClient.abort();
 
-        // Stop current audio
-        if (this._currentAudioSource) {
-            try {
-                this._currentAudioSource.stop();
-            } catch (e) {
-                // Ignore errors when stopping
-            }
-            this._currentAudioSource = null;
-        }
+        // Stop current audio using TTS engine
+        ttsEngine.stopAudio();
 
         // Clear state
         this._currentQuestion = '';
