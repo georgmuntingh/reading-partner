@@ -29,24 +29,93 @@
 
 /* Content area */
 .reader-content {
-    flex: 1;
+    height: calc(100vh - var(--header-height) - var(--controls-height));
     margin-top: var(--header-height);
-    margin-bottom: var(--controls-height);
-    padding: var(--spacing-lg);
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    padding: var(--spacing-md) var(--spacing-lg);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
 }
 
 .chapter-title {
     font-size: var(--font-size-xl);
     font-weight: 600;
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
     color: var(--text-color);
+    flex-shrink: 0;
 }
 
 .text-content {
     max-width: 65ch;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
     margin: 0 auto;
+    overflow: hidden;
+    position: relative;
+    padding: 0 50px;
+    box-sizing: border-box;
+    line-height: 1.8;
+}
+
+/* Page container for pagination */
+.page-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* Page navigation buttons */
+.page-nav-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    z-index: 10;
+    transition: all 0.2s ease;
+    opacity: 0.7;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.page-nav-btn:hover:not(:disabled) {
+    opacity: 1;
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.page-nav-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.page-nav-prev {
+    left: 0;
+}
+
+.page-nav-next {
+    right: 0;
+}
+
+/* Page indicator */
+.page-indicator {
+    text-align: center;
+    padding: var(--spacing-xs) 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    user-select: none;
+    flex-shrink: 0;
 }
 
 /* EPUB Content Container */
@@ -365,9 +434,9 @@
     color: var(--text-secondary);
 }
 
-/* Scroll behavior when highlighting */
-.reader-content {
-    scroll-behavior: smooth;
+/* Page content styling */
+.page-content {
+    column-count: 1;
 }
 
 /* Loading state for content */
@@ -382,7 +451,7 @@
 /* Mobile adjustments */
 @media (max-width: 480px) {
     .reader-content {
-        padding: var(--spacing-md);
+        padding: var(--spacing-sm) var(--spacing-md);
     }
 
     .controls-row {
@@ -396,6 +465,19 @@
 
     #speed-slider {
         width: 100px;
+    }
+
+    .page-nav-btn {
+        width: 36px;
+        height: 36px;
+    }
+
+    .page-nav-prev {
+        left: -4px;
+    }
+
+    .page-nav-next {
+        right: -4px;
     }
 }
 

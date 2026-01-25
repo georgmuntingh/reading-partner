@@ -1,10 +1,10 @@
 /**
  * Reader View UI Component
- * Handles text display and sentence highlighting
+ * Handles text display with pagination and sentence highlighting
  * Displays full EPUB HTML with embedded sentence spans for highlighting
  */
 
-import { scrollIntoViewWithOffset } from '../utils/helpers.js';
+import { debounce } from '../utils/helpers.js';
 
 export class ReaderView {
     /**
@@ -13,20 +13,38 @@ export class ReaderView {
      * @param {HTMLElement} options.titleElement - Chapter title element
      * @param {HTMLElement} options.bookTitleElement - Book title element
      * @param {(index: number) => void} options.onSentenceClick - Callback when sentence is clicked
+     * @param {() => void} [options.onPageChange] - Callback when page changes
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
         this._onSentenceClick = onSentenceClick;
+        this._onPageChange = onPageChange;
 
         this._textContent = container.querySelector('#text-content') || container;
+        this._pageContainer = container.querySelector('#page-container');
+        this._prevBtn = container.querySelector('#page-prev-btn');
+        this._nextBtn = container.querySelector('#page-next-btn');
+        this._pageCurrentEl = container.querySelector('#page-current');
+        this._pageTotalEl = container.querySelector('#page-total');
+
         this._sentences = [];
         this._currentIndex = -1;
         this._html = null; // Full HTML content
 
+        // Pagination state
+        this._currentPage = 0;
+        this._totalPages = 1;
+        this._pageHeight = 0; // Calculated page height
+        this._sentenceToPage = new Map(); // Maps sentence index to page number
+        this._pageToSentences = new Map(); // Maps page number to array of sentence indices
+        this._isCalculatingPages = false;
+
         // Use event delegation for click handling
         this._setupEventDelegation();
+        this._setupPageNavigation();
+        this._setupResizeHandler();
     }
 
     /**
@@ -40,6 +58,31 @@ export class ReaderView {
                 this._onSentenceClick?.(index);
             }
         });
+    }
+
+    /**
+     * Setup page navigation button handlers
+     */
+    _setupPageNavigation() {
+        if (this._prevBtn) {
+            this._prevBtn.addEventListener('click', () => this.previousPage());
+        }
+        if (this._nextBtn) {
+            this._nextBtn.addEventListener('click', () => this.nextPage());
+        }
+    }
+
+    /**
+     * Setup resize handler to recalculate pages
+     */
+    _setupResizeHandler() {
+        this._debouncedRecalculate = debounce(() => {
+            if (this._sentences.length > 0) {
+                this._recalculatePages();
+            }
+        }, 250);
+
+        window.addEventListener('resize', this._debouncedRecalculate);
     }
 
     /**
@@ -74,12 +117,14 @@ export class ReaderView {
         this._sentences = sentences;
         this._currentIndex = currentIndex;
         this._html = html;
+        this._currentPage = 0;
 
         // Clear existing content
         this._textContent.innerHTML = '';
 
         if (sentences.length === 0) {
             this._textContent.innerHTML = '<p class="empty-message">No content to display</p>';
+            this._updatePageIndicator();
             console.timeEnd('ReaderView.setSentences');
             return;
         }
@@ -93,6 +138,21 @@ export class ReaderView {
             // Fallback to sentences-only rendering
             this._renderSentencesOnly(sentences, currentIndex);
         }
+
+        // Calculate pagination after content is rendered
+        // Use double requestAnimationFrame to ensure layout is complete
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this._calculatePages();
+                // Navigate to page containing current sentence
+                if (currentIndex > 0) {
+                    const page = this._sentenceToPage.get(currentIndex);
+                    if (page !== undefined) {
+                        this._goToPageInternal(page, false);
+                    }
+                }
+            });
+        });
 
         console.timeEnd('ReaderView.setSentences');
     }
@@ -132,16 +192,6 @@ export class ReaderView {
                 el.classList.add('current');
             }
         });
-
-        // Scroll to current sentence if needed
-        if (currentIndex >= 0 && currentIndex < this._sentences.length) {
-            const currentEl = this._textContent.querySelector(`.sentence[data-index="${currentIndex}"]`);
-            if (currentEl) {
-                setTimeout(() => {
-                    scrollIntoViewWithOffset(currentEl, this._container, 150);
-                }, 100);
-            }
-        }
 
         console.timeEnd('ReaderView._renderHtml');
     }
@@ -196,9 +246,208 @@ export class ReaderView {
     }
 
     /**
+     * Calculate page boundaries based on container height
+     */
+    _calculatePages() {
+        if (this._isCalculatingPages) return;
+        this._isCalculatingPages = true;
+
+        console.time('ReaderView._calculatePages');
+
+        // Use page container height as the reference (it's constrained by flexbox)
+        // Fall back to text content if page container isn't available
+        const referenceContainer = this._pageContainer || this._textContent.parentElement || this._textContent;
+        let pageHeight = referenceContainer.clientHeight;
+
+        // Get the full content height
+        const scrollHeight = this._textContent.scrollHeight;
+
+        console.log(`Page calculation: container=${pageHeight}px, content=${scrollHeight}px`);
+
+        // If container height is 0 or not properly constrained, use a sensible default
+        // based on viewport height minus header/footer/padding (~400px for UI elements)
+        if (pageHeight <= 0 || pageHeight >= scrollHeight) {
+            pageHeight = Math.max(300, window.innerHeight - 400);
+            console.log(`Using fallback page height: ${pageHeight}px`);
+        }
+
+        // Reset pagination state
+        this._sentenceToPage = new Map();
+        this._pageToSentences = new Map();
+        this._pageHeight = pageHeight; // Store for use in navigation
+
+        const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
+        if (sentenceElements.length === 0) {
+            this._totalPages = 1;
+            this._updatePageIndicator();
+            this._updatePageButtons();
+            this._isCalculatingPages = false;
+            console.timeEnd('ReaderView._calculatePages');
+            return;
+        }
+
+        // Calculate total pages
+        this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
+
+        // Map each sentence to a page based on its position
+        sentenceElements.forEach(el => {
+            const index = parseInt(el.dataset.index, 10);
+            const elementTop = el.offsetTop;
+            const page = Math.floor(elementTop / pageHeight);
+
+            this._sentenceToPage.set(index, page);
+
+            if (!this._pageToSentences.has(page)) {
+                this._pageToSentences.set(page, []);
+            }
+            this._pageToSentences.get(page).push(index);
+        });
+
+        // Ensure total pages is at least the max page number + 1
+        const maxPage = Math.max(...this._sentenceToPage.values(), 0);
+        this._totalPages = Math.max(this._totalPages, maxPage + 1);
+
+        console.log(`Calculated ${this._totalPages} pages for ${sentenceElements.length} sentences (pageHeight=${pageHeight}px)`);
+        console.timeEnd('ReaderView._calculatePages');
+
+        this._updatePageIndicator();
+        this._updatePageButtons();
+        this._isCalculatingPages = false;
+    }
+
+    /**
+     * Recalculate pages (e.g., after resize)
+     */
+    _recalculatePages() {
+        const currentSentence = this._currentIndex;
+        this._calculatePages();
+
+        // Navigate to page containing current sentence
+        if (currentSentence >= 0) {
+            const page = this._sentenceToPage.get(currentSentence);
+            if (page !== undefined && page !== this._currentPage) {
+                this._goToPageInternal(page, false);
+            }
+        }
+    }
+
+    /**
+     * Go to a specific page
+     * @param {number} pageNumber - 0-indexed page number
+     */
+    goToPage(pageNumber) {
+        this._goToPageInternal(pageNumber, true);
+    }
+
+    /**
+     * Internal page navigation
+     * @param {number} pageNumber
+     * @param {boolean} triggerCallback
+     */
+    _goToPageInternal(pageNumber, triggerCallback = true) {
+        const targetPage = Math.max(0, Math.min(pageNumber, this._totalPages - 1));
+
+        if (targetPage === this._currentPage && this._totalPages > 1) {
+            return;
+        }
+
+        this._currentPage = targetPage;
+
+        // Scroll to the correct position using stored page height
+        const pageHeight = this._pageHeight || this._textContent.clientHeight;
+        const scrollTop = targetPage * pageHeight;
+        this._textContent.scrollTop = scrollTop;
+
+        this._updatePageIndicator();
+        this._updatePageButtons();
+
+        if (triggerCallback) {
+            this._onPageChange?.();
+        }
+    }
+
+    /**
+     * Go to next page
+     * @returns {boolean} Whether navigation occurred
+     */
+    nextPage() {
+        if (this._currentPage < this._totalPages - 1) {
+            this._goToPageInternal(this._currentPage + 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Go to previous page
+     * @returns {boolean} Whether navigation occurred
+     */
+    previousPage() {
+        if (this._currentPage > 0) {
+            this._goToPageInternal(this._currentPage - 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Get current page (0-indexed)
+     * @returns {number}
+     */
+    getCurrentPage() {
+        return this._currentPage;
+    }
+
+    /**
+     * Get total pages
+     * @returns {number}
+     */
+    getTotalPages() {
+        return this._totalPages;
+    }
+
+    /**
+     * Update page indicator display
+     */
+    _updatePageIndicator() {
+        if (this._pageCurrentEl) {
+            this._pageCurrentEl.textContent = (this._currentPage + 1).toString();
+        }
+        if (this._pageTotalEl) {
+            this._pageTotalEl.textContent = this._totalPages.toString();
+        }
+    }
+
+    /**
+     * Update page navigation button states
+     */
+    _updatePageButtons() {
+        if (this._prevBtn) {
+            this._prevBtn.disabled = this._currentPage <= 0;
+        }
+        if (this._nextBtn) {
+            this._nextBtn.disabled = this._currentPage >= this._totalPages - 1;
+        }
+    }
+
+    /**
+     * Navigate to page containing a specific sentence
+     * @param {number} sentenceIndex
+     * @returns {boolean} Whether page change occurred
+     */
+    _navigateToSentencePage(sentenceIndex) {
+        const page = this._sentenceToPage.get(sentenceIndex);
+        if (page !== undefined && page !== this._currentPage) {
+            this._goToPageInternal(page, false);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Highlight a specific sentence
      * @param {number} index
-     * @param {boolean} [scroll=true] - Whether to scroll to sentence
+     * @param {boolean} [scroll=true] - Whether to navigate to page containing sentence
      */
     highlightSentence(index, scroll = true) {
         // Remove previous highlight
@@ -217,7 +466,8 @@ export class ReaderView {
             element.classList.add('current');
 
             if (scroll) {
-                scrollIntoViewWithOffset(element, this._container, 150);
+                // Navigate to page containing this sentence
+                this._navigateToSentencePage(index);
             }
         }
     }
@@ -273,6 +523,10 @@ export class ReaderView {
                 <p>Loading chapter...</p>
             </div>
         `;
+        this._totalPages = 1;
+        this._currentPage = 0;
+        this._updatePageIndicator();
+        this._updatePageButtons();
     }
 
     /**
@@ -290,12 +544,23 @@ export class ReaderView {
                 <span>${message}</span>
             </div>
         `;
+        this._totalPages = 1;
+        this._currentPage = 0;
+        this._updatePageIndicator();
+        this._updatePageButtons();
     }
 
     /**
-     * Scroll to top of content
+     * Scroll to top of content (go to first page)
      */
     scrollToTop() {
-        this._container.scrollTo({ top: 0, behavior: 'smooth' });
+        this._goToPageInternal(0, false);
+    }
+
+    /**
+     * Cleanup event listeners
+     */
+    destroy() {
+        window.removeEventListener('resize', this._debouncedRecalculate);
     }
 }

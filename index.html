@@ -88,8 +88,23 @@
 
             <main class="reader-content" id="reader-content">
                 <div class="chapter-title" id="chapter-title">Chapter Title</div>
-                <div class="text-content" id="text-content">
-                    <!-- Sentences will be rendered here -->
+                <div class="page-container" id="page-container">
+                    <button class="page-nav-btn page-nav-prev" id="page-prev-btn" aria-label="Previous page">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                    </button>
+                    <div class="text-content" id="text-content">
+                        <!-- Sentences will be rendered here -->
+                    </div>
+                    <button class="page-nav-btn page-nav-next" id="page-next-btn" aria-label="Next page">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="page-indicator" id="page-indicator">
+                    <span id="page-current">1</span> / <span id="page-total">1</span>
                 </div>
             </main>
 
