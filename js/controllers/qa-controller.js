@@ -56,6 +56,11 @@ export class QAController {
         // TTS state
         this._playbackSpeed = 1.0;
 
+        // Audio buffer cache for pre-synthesizing sentences
+        // Maps sentence index -> AudioBuffer
+        this._audioBufferCache = new Map();
+        this._nextSynthesisIndex = 0;
+
         // Session history
         this._history = [];
 
@@ -182,6 +187,10 @@ export class QAController {
         this._currentSentenceIndex = 0;
         this._isStreamingComplete = false;
 
+        // Clear audio buffer cache
+        this._audioBufferCache.clear();
+        this._nextSynthesisIndex = 0;
+
         try {
             // Get context sentences
             const context = await this._getContextSentences();
@@ -199,7 +208,11 @@ export class QAController {
                 (sentence) => {
                     if (this._isStopped) return;
 
+                    const sentenceIndex = this._responseSentences.length;
                     this._responseSentences.push(sentence);
+
+                    // Start pre-synthesizing this sentence immediately
+                    this._prefetchSentenceAudio(sentenceIndex, sentence);
 
                     // If this is the first sentence and we're still thinking, start responding
                     if (this._state === QAState.THINKING && this._responseSentences.length === 1) {
@@ -293,7 +306,39 @@ export class QAController {
     }
 
     /**
-     * Speak a single sentence
+     * Pre-fetch (synthesize) audio for a sentence in the background
+     * @param {number} index - Sentence index
+     * @param {string} text - Sentence text
+     */
+    async _prefetchSentenceAudio(index, text) {
+        if (!text || !text.trim() || this._isStopped) {
+            return;
+        }
+
+        // Don't re-synthesize if already in cache or being synthesized
+        if (this._audioBufferCache.has(index)) {
+            return;
+        }
+
+        // Mark as being synthesized (store a Promise)
+        const synthesisPromise = ttsEngine.synthesize(text)
+            .then(audioBuffer => {
+                if (!this._isStopped) {
+                    this._audioBufferCache.set(index, audioBuffer);
+                }
+                return audioBuffer;
+            })
+            .catch(error => {
+                console.error(`Pre-fetch synthesis error for sentence ${index}:`, error);
+                return null;
+            });
+
+        // Store the promise so we can await it if needed
+        this._audioBufferCache.set(index, synthesisPromise);
+    }
+
+    /**
+     * Speak a single sentence (uses cached audio if available)
      * @param {string} text
      * @returns {Promise<void>}
      */
@@ -302,12 +347,27 @@ export class QAController {
             return;
         }
 
-        // Synthesize audio
-        const audioBuffer = await ttsEngine.synthesize(text);
+        const index = this._currentSentenceIndex;
+        let audioBuffer;
+
+        // Check if audio is in cache (or being synthesized)
+        const cached = this._audioBufferCache.get(index);
+        if (cached) {
+            // If it's a Promise, await it; if it's an AudioBuffer, use it directly
+            audioBuffer = await Promise.resolve(cached);
+        }
+
+        // If not in cache or synthesis failed, synthesize now
+        if (!audioBuffer) {
+            audioBuffer = await ttsEngine.synthesize(text);
+        }
 
         if (this._isStopped) {
             return;
         }
+
+        // Clear this entry from cache after use to free memory
+        this._audioBufferCache.delete(index);
 
         // Play audio - playBuffer returns a Promise that resolves when playback ends
         await ttsEngine.playBuffer(audioBuffer, this._playbackSpeed);
@@ -371,6 +431,10 @@ export class QAController {
         this._currentResponse = '';
         this._responseSentences = [];
         this._currentSentenceIndex = 0;
+
+        // Clear audio buffer cache
+        this._audioBufferCache.clear();
+        this._nextSynthesisIndex = 0;
 
         this._setState(QAState.IDLE);
     }
