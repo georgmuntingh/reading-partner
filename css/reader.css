@@ -29,9 +29,8 @@
 
 /* Content area */
 .reader-content {
-    flex: 1;
+    height: calc(100vh - var(--header-height) - var(--controls-height));
     margin-top: var(--header-height);
-    margin-bottom: var(--controls-height);
     padding: var(--spacing-md) var(--spacing-lg);
     overflow: hidden;
     display: flex;
@@ -49,7 +48,8 @@
 .text-content {
     max-width: 65ch;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     margin: 0 auto;
     overflow: hidden;
     position: relative;
