@@ -36,6 +36,7 @@ export class ReaderView {
         // Pagination state
         this._currentPage = 0;
         this._totalPages = 1;
+        this._pageHeight = 0; // Calculated page height
         this._sentenceToPage = new Map(); // Maps sentence index to page number
         this._pageToSentences = new Map(); // Maps page number to array of sentence indices
         this._isCalculatingPages = false;
@@ -139,15 +140,18 @@ export class ReaderView {
         }
 
         // Calculate pagination after content is rendered
+        // Use double requestAnimationFrame to ensure layout is complete
         requestAnimationFrame(() => {
-            this._calculatePages();
-            // Navigate to page containing current sentence
-            if (currentIndex > 0) {
-                const page = this._sentenceToPage.get(currentIndex);
-                if (page !== undefined) {
-                    this._goToPageInternal(page, false);
+            requestAnimationFrame(() => {
+                this._calculatePages();
+                // Navigate to page containing current sentence
+                if (currentIndex > 0) {
+                    const page = this._sentenceToPage.get(currentIndex);
+                    if (page !== undefined) {
+                        this._goToPageInternal(page, false);
+                    }
                 }
-            }
+            });
         });
 
         console.timeEnd('ReaderView.setSentences');
@@ -250,30 +254,39 @@ export class ReaderView {
 
         console.time('ReaderView._calculatePages');
 
-        const containerHeight = this._textContent.clientHeight;
-        if (containerHeight <= 0) {
-            console.warn('Container height is 0, cannot calculate pages');
-            this._isCalculatingPages = false;
-            return;
+        // Use page container height as the reference (it's constrained by flexbox)
+        // Fall back to text content if page container isn't available
+        const referenceContainer = this._pageContainer || this._textContent.parentElement || this._textContent;
+        let pageHeight = referenceContainer.clientHeight;
+
+        // Get the full content height
+        const scrollHeight = this._textContent.scrollHeight;
+
+        console.log(`Page calculation: container=${pageHeight}px, content=${scrollHeight}px`);
+
+        // If container height is 0 or not properly constrained, use a sensible default
+        // based on viewport height minus header/footer/padding (~400px for UI elements)
+        if (pageHeight <= 0 || pageHeight >= scrollHeight) {
+            pageHeight = Math.max(300, window.innerHeight - 400);
+            console.log(`Using fallback page height: ${pageHeight}px`);
         }
 
         // Reset pagination state
         this._sentenceToPage = new Map();
         this._pageToSentences = new Map();
+        this._pageHeight = pageHeight; // Store for use in navigation
 
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
             this._totalPages = 1;
             this._updatePageIndicator();
+            this._updatePageButtons();
             this._isCalculatingPages = false;
+            console.timeEnd('ReaderView._calculatePages');
             return;
         }
 
-        // Get the scroll height and calculate number of pages
-        const scrollHeight = this._textContent.scrollHeight;
-        const pageHeight = containerHeight;
-
-        // Calculate pages with a small buffer for better page breaks
+        // Calculate total pages
         this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
 
         // Map each sentence to a page based on its position
@@ -294,7 +307,7 @@ export class ReaderView {
         const maxPage = Math.max(...this._sentenceToPage.values(), 0);
         this._totalPages = Math.max(this._totalPages, maxPage + 1);
 
-        console.log(`Calculated ${this._totalPages} pages for ${sentenceElements.length} sentences`);
+        console.log(`Calculated ${this._totalPages} pages for ${sentenceElements.length} sentences (pageHeight=${pageHeight}px)`);
         console.timeEnd('ReaderView._calculatePages');
 
         this._updatePageIndicator();
@@ -340,9 +353,9 @@ export class ReaderView {
 
         this._currentPage = targetPage;
 
-        // Scroll to the correct position
-        const containerHeight = this._textContent.clientHeight;
-        const scrollTop = targetPage * containerHeight;
+        // Scroll to the correct position using stored page height
+        const pageHeight = this._pageHeight || this._textContent.clientHeight;
+        const scrollTop = targetPage * pageHeight;
         this._textContent.scrollTop = scrollTop;
 
         this._updatePageIndicator();
