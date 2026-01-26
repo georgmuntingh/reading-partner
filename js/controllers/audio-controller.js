@@ -353,6 +353,13 @@ export class AudioController {
     }
 
     /**
+     * Clear all buffers (public, for backend switches)
+     */
+    clearBuffers() {
+        this._clearBuffers();
+    }
+
+    /**
      * Clear all buffers
      */
     _clearBuffers() {

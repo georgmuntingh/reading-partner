@@ -108,7 +108,8 @@ class ReadingPartnerApp {
             { container: document.getElementById('settings-modal') },
             {
                 onClose: () => this._settingsModal.hide(),
-                onSave: (settings) => this._saveQASettings(settings)
+                onSave: (settings) => this._saveQASettings(settings),
+                onBackendChange: (backend) => this._onTTSBackendChange(backend)
             }
         );
 
@@ -124,8 +125,11 @@ class ReadingPartnerApp {
             this._triggerLoadNewBook();
         });
 
+        // Load saved settings first so we know the preferred backend
+        await this._loadSettings();
+
         // Show TTS loading status
-        this._showTTSStatus('Initializing TTS engine...');
+        this._showTTSStatus('Detecting TTS backends...');
 
         // Initialize TTS engine in background
         ttsEngine.onProgress((progress) => {
@@ -133,8 +137,34 @@ class ReadingPartnerApp {
         });
 
         try {
-            const usingKokoro = await ttsEngine.initialize();
-            if (usingKokoro) {
+            // Load saved backend preference
+            const savedBackend = await storage.getSetting('ttsBackend');
+            const savedFastApiUrl = await storage.getSetting('fastApiUrl');
+
+            if (savedFastApiUrl) {
+                ttsEngine.setFastApiUrl(savedFastApiUrl);
+            }
+
+            // Check FastAPI availability
+            const fastApiAvailable = await ttsEngine.isKokoroFastAPIAvailable();
+            this._settingsModal.setFastApiAvailable(fastApiAvailable);
+            console.log(`Kokoro FastAPI: ${fastApiAvailable ? 'available' : 'not available'} at ${ttsEngine.getFastApiUrl()}`);
+
+            // Determine which backend to use
+            let backend = savedBackend;
+            if (!backend) {
+                // Auto-detect: prefer FastAPI if available
+                backend = fastApiAvailable ? 'kokoro-fastapi' : 'kokoro-js';
+            }
+
+            // Initialize with the chosen backend
+            const usingKokoro = await ttsEngine.initialize({ backend });
+            const activeBackend = ttsEngine.getBackend();
+
+            if (activeBackend === 'kokoro-fastapi') {
+                this._showTTSStatus('TTS ready (Kokoro FastAPI)');
+                console.log(`TTS Engine: Kokoro FastAPI at ${ttsEngine.getFastApiUrl()}`);
+            } else if (usingKokoro) {
                 const device = ttsEngine.getDevice();
                 const dtype = ttsEngine.getDtype();
                 this._showTTSStatus(`TTS ready (${device}, ${dtype})`);
@@ -142,14 +172,19 @@ class ReadingPartnerApp {
             } else {
                 this._showTTSStatus('TTS ready (Browser)');
             }
+
+            // Update settings modal to reflect actual backend
+            this._settingsModal.setSettings({
+                ...this._settingsModal.getSettings(),
+                ttsBackend: activeBackend,
+                fastApiUrl: ttsEngine.getFastApiUrl()
+            });
+
             setTimeout(() => this._hideTTSStatus(), 3000);
         } catch (error) {
             console.error('TTS initialization failed:', error);
             this._showTTSStatus('TTS initialization failed');
         }
-
-        // Load saved settings
-        await this._loadSettings();
 
         this._isInitialized = true;
         console.log('Reading Partner initialized');
@@ -860,6 +895,53 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Handle TTS backend change from settings
+     * @param {string} backend
+     */
+    async _onTTSBackendChange(backend) {
+        this._showTTSStatus('Switching TTS backend...');
+
+        // Pause any playback
+        this._pause();
+
+        // Clear audio buffers in the controller
+        if (this._audioController) {
+            this._audioController.clearBuffers();
+        }
+
+        try {
+            // Update FastAPI URL if changed
+            const settings = this._settingsModal.getSettings();
+            ttsEngine.setFastApiUrl(settings.fastApiUrl);
+
+            await ttsEngine.setBackend(backend);
+            const activeBackend = ttsEngine.getBackend();
+
+            if (activeBackend === 'kokoro-fastapi') {
+                this._showTTSStatus('TTS ready (Kokoro FastAPI)');
+            } else if (activeBackend === 'kokoro-js') {
+                const device = ttsEngine.getDevice();
+                const dtype = ttsEngine.getDtype();
+                this._showTTSStatus(`TTS ready (${device}, ${dtype})`);
+            } else {
+                this._showTTSStatus('TTS ready (Browser)');
+            }
+
+            // Refresh voice list
+            if (this._controls) {
+                const voices = ttsEngine.getAvailableVoices();
+                this._controls.setVoices(voices);
+            }
+
+            setTimeout(() => this._hideTTSStatus(), 3000);
+        } catch (error) {
+            console.error('Failed to switch TTS backend:', error);
+            this._showTTSStatus('Backend switch failed');
+            setTimeout(() => this._hideTTSStatus(), 5000);
+        }
+    }
+
+    /**
      * Save Q&A settings
      * @param {Object} settings
      */
@@ -884,8 +966,16 @@ class ReadingPartnerApp {
             await storage.saveSetting('qaModel', this._qaSettings.model);
             await storage.saveSetting('qaContextBefore', this._qaSettings.contextBefore);
             await storage.saveSetting('qaContextAfter', this._qaSettings.contextAfter);
+
+            // Save TTS backend settings
+            if (settings.ttsBackend) {
+                await storage.saveSetting('ttsBackend', settings.ttsBackend);
+            }
+            if (settings.fastApiUrl) {
+                await storage.saveSetting('fastApiUrl', settings.fastApiUrl);
+            }
         } catch (error) {
-            console.error('Failed to save Q&A settings:', error);
+            console.error('Failed to save settings:', error);
         }
 
         // Update UI
@@ -949,8 +1039,11 @@ class ReadingPartnerApp {
         return {
             ready: ttsEngine.isReady(),
             usingKokoro: ttsEngine.isUsingKokoro(),
+            backend: ttsEngine.getBackend(),
             device: ttsEngine.getDevice(),
             dtype: ttsEngine.getDtype(),
+            fastApiUrl: ttsEngine.getFastApiUrl(),
+            fastApiAvailable: ttsEngine.isFastAPIAvailable(),
             averageRTF: ttsEngine.getAverageRTF(),
             benchmarkResults: ttsEngine.getBenchmarkResults()
         };
