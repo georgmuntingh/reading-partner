@@ -1,6 +1,6 @@
 /**
  * Settings Modal UI Component
- * Displays settings for API key, model selection, and Q&A context
+ * Displays settings for TTS backend, API key, model selection, and Q&A context
  */
 
 import { OPENROUTER_MODELS, DEFAULT_MODEL } from '../services/llm-client.js';
@@ -12,16 +12,20 @@ export class SettingsModal {
      * @param {Object} callbacks
      * @param {() => void} callbacks.onClose - Close modal
      * @param {(settings: Object) => void} callbacks.onSave - Save settings
+     * @param {(backend: string) => void} [callbacks.onBackendChange] - Backend changed
      */
     constructor(options, callbacks) {
         this._container = options.container;
         this._callbacks = callbacks;
+        this._fastApiAvailable = false;
 
         this._settings = {
             apiKey: '',
             model: DEFAULT_MODEL,
             contextBefore: 20,
-            contextAfter: 5
+            contextAfter: 5,
+            ttsBackend: 'kokoro-js',
+            fastApiUrl: 'http://localhost:8880'
         };
 
         this._buildUI();
@@ -45,6 +49,28 @@ export class SettingsModal {
                 </div>
 
                 <div class="modal-content">
+                    <div class="settings-section">
+                        <h3>TTS Backend</h3>
+
+                        <div class="form-group">
+                            <label for="settings-tts-backend">Text-to-Speech Engine</label>
+                            <select id="settings-tts-backend" class="form-select">
+                                <option value="kokoro-fastapi">Kokoro FastAPI (local server)</option>
+                                <option value="kokoro-js">Kokoro.js (in-browser, WebGPU/WASM)</option>
+                                <option value="web-speech">Browser TTS (Web Speech API)</option>
+                            </select>
+                            <p class="form-hint" id="settings-tts-backend-hint">
+                                Kokoro FastAPI requires a local server running at the URL below.
+                            </p>
+                        </div>
+
+                        <div class="form-group" id="settings-fastapi-url-group">
+                            <label for="settings-fastapi-url">Kokoro FastAPI URL</label>
+                            <input type="text" id="settings-fastapi-url" class="form-input" placeholder="http://localhost:8880" value="http://localhost:8880">
+                            <p class="form-hint" id="settings-fastapi-status"></p>
+                        </div>
+                    </div>
+
                     <div class="settings-section">
                         <h3>Q&A Settings</h3>
 
@@ -97,6 +123,11 @@ export class SettingsModal {
         this._elements = {
             modal: this._container.querySelector('.modal'),
             closeBtn: this._container.querySelector('.modal-close-btn'),
+            ttsBackend: this._container.querySelector('#settings-tts-backend'),
+            fastApiUrl: this._container.querySelector('#settings-fastapi-url'),
+            fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
+            fastApiStatus: this._container.querySelector('#settings-fastapi-status'),
+            ttsBackendHint: this._container.querySelector('#settings-tts-backend-hint'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
             contextBefore: this._container.querySelector('#settings-context-before'),
@@ -125,6 +156,11 @@ export class SettingsModal {
             this._save();
         });
 
+        // TTS backend change - toggle FastAPI URL visibility
+        this._elements.ttsBackend.addEventListener('change', () => {
+            this._updateBackendUI();
+        });
+
         // Click outside to close
         this._container.addEventListener('click', (e) => {
             if (e.target === this._container) {
@@ -141,6 +177,33 @@ export class SettingsModal {
     }
 
     /**
+     * Update backend-related UI visibility
+     */
+    _updateBackendUI() {
+        const backend = this._elements.ttsBackend.value;
+        const showFastApi = backend === 'kokoro-fastapi';
+        this._elements.fastApiUrlGroup.style.display = showFastApi ? '' : 'none';
+
+        // Update hint text
+        const hints = {
+            'kokoro-fastapi': 'Kokoro FastAPI requires a local server running at the URL below.',
+            'kokoro-js': 'Runs the Kokoro TTS model directly in the browser using WebGPU or WASM.',
+            'web-speech': 'Uses the browser\'s built-in speech synthesis. No setup required.'
+        };
+        this._elements.ttsBackendHint.textContent = hints[backend] || '';
+
+        // Show status for FastAPI
+        if (showFastApi) {
+            this._elements.fastApiStatus.textContent = this._fastApiAvailable
+                ? 'Server detected'
+                : 'Server not detected';
+            this._elements.fastApiStatus.style.color = this._fastApiAvailable
+                ? '#059669'
+                : '#dc2626';
+        }
+    }
+
+    /**
      * Save settings
      */
     _save() {
@@ -148,7 +211,9 @@ export class SettingsModal {
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
             contextBefore: parseInt(this._elements.contextBefore.value) || 20,
-            contextAfter: parseInt(this._elements.contextAfter.value) || 5
+            contextAfter: parseInt(this._elements.contextAfter.value) || 5,
+            ttsBackend: this._elements.ttsBackend.value,
+            fastApiUrl: this._elements.fastApiUrl.value.trim() || 'http://localhost:8880'
         };
 
         // Validate
@@ -157,8 +222,17 @@ export class SettingsModal {
         if (settings.contextAfter < 0) settings.contextAfter = 0;
         if (settings.contextAfter > 100) settings.contextAfter = 100;
 
+        // Detect backend change
+        const backendChanged = settings.ttsBackend !== this._settings.ttsBackend ||
+            settings.fastApiUrl !== this._settings.fastApiUrl;
+
         this._settings = settings;
         this._callbacks.onSave?.(settings);
+
+        if (backendChanged) {
+            this._callbacks.onBackendChange?.(settings.ttsBackend);
+        }
+
         this._callbacks.onClose?.();
     }
 
@@ -203,6 +277,9 @@ export class SettingsModal {
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
         this._elements.contextBefore.value = this._settings.contextBefore || 20;
         this._elements.contextAfter.value = this._settings.contextAfter || 5;
+        this._elements.ttsBackend.value = this._settings.ttsBackend || 'kokoro-js';
+        this._elements.fastApiUrl.value = this._settings.fastApiUrl || 'http://localhost:8880';
+        this._updateBackendUI();
     }
 
     /**
@@ -230,5 +307,13 @@ export class SettingsModal {
      */
     hasApiKey() {
         return Boolean(this._settings.apiKey && this._settings.apiKey.trim());
+    }
+
+    /**
+     * Set FastAPI availability status (for UI display)
+     * @param {boolean} available
+     */
+    setFastApiAvailable(available) {
+        this._fastApiAvailable = available;
     }
 }

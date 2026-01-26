@@ -1,6 +1,6 @@
 /**
  * TTS Engine Service
- * Handles text-to-speech using Kokoro (ONNX) with Web Speech API fallback
+ * Handles text-to-speech using Kokoro (ONNX), Kokoro FastAPI, or Web Speech API fallback
  * Supports WebGPU for GPU acceleration
  */
 
@@ -19,12 +19,19 @@ import { splitLongSentence } from '../utils/sentence-splitter.js';
  * @property {number} synthesisTimeMs - Time to synthesize (ms)
  * @property {number} audioDurationMs - Duration of generated audio (ms)
  * @property {number} rtf - Real-time factor (synthesis time / audio duration)
- * @property {string} device - Device used (webgpu/wasm)
+ * @property {string} device - Device used (webgpu/wasm/fastapi)
  */
+
+/** @typedef {'kokoro-fastapi'|'kokoro-js'|'web-speech'} TTSBackend */
+
+/**
+ * Default Kokoro FastAPI base URL
+ */
+const DEFAULT_FASTAPI_URL = 'http://localhost:8880';
 
 /**
  * TTS Engine class
- * Uses Kokoro TTS when available, falls back to Web Speech API
+ * Uses Kokoro FastAPI, Kokoro TTS (ONNX), or Web Speech API
  */
 export class TTSEngine {
     constructor() {
@@ -36,9 +43,15 @@ export class TTSEngine {
         this._speed = 1.0; // TTS generation speed (0.5-2.0)
         this._audioContext = null;
         this._onProgress = null;
-        this._device = 'wasm'; // Current device: 'webgpu' or 'wasm'
+        this._device = 'wasm'; // Current device: 'webgpu', 'wasm', or 'fastapi'
         this._dtype = 'fp32'; // Current dtype: 'fp32', 'fp16', 'q8', 'q4'
         this._sampleRate = 24000;
+
+        // TTS Backend: 'kokoro-fastapi', 'kokoro-js', or 'web-speech'
+        /** @type {TTSBackend} */
+        this._backend = 'kokoro-js';
+        this._fastApiUrl = DEFAULT_FASTAPI_URL;
+        this._fastApiAvailable = false;
 
         // Benchmarking
         this._benchmarkResults = [];
@@ -80,11 +93,86 @@ export class TTSEngine {
     }
 
     /**
+     * Check if Kokoro FastAPI server is available
+     * @param {string} [url] - Base URL to check (defaults to stored URL)
+     * @returns {Promise<boolean>}
+     */
+    async isKokoroFastAPIAvailable(url) {
+        const baseUrl = url || this._fastApiUrl;
+        try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 2000);
+            const response = await fetch(`${baseUrl}/v1/models`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeout);
+            this._fastApiAvailable = response.ok;
+            return response.ok;
+        } catch (e) {
+            this._fastApiAvailable = false;
+            return false;
+        }
+    }
+
+    /**
+     * Get Kokoro FastAPI availability (last check result)
+     * @returns {boolean}
+     */
+    isFastAPIAvailable() {
+        return this._fastApiAvailable;
+    }
+
+    /**
+     * Set Kokoro FastAPI base URL
+     * @param {string} url
+     */
+    setFastApiUrl(url) {
+        this._fastApiUrl = url || DEFAULT_FASTAPI_URL;
+    }
+
+    /**
+     * Get Kokoro FastAPI base URL
+     * @returns {string}
+     */
+    getFastApiUrl() {
+        return this._fastApiUrl;
+    }
+
+    /**
+     * Get current backend
+     * @returns {TTSBackend}
+     */
+    getBackend() {
+        return this._backend;
+    }
+
+    /**
+     * Set TTS backend. If the engine is already initialized, this will
+     * trigger a re-initialization.
+     * @param {TTSBackend} backend
+     * @returns {Promise<void>}
+     */
+    async setBackend(backend) {
+        if (backend === this._backend && this._isReady) return;
+
+        this._backend = backend;
+
+        // Reset state so re-initialization happens
+        this._isReady = false;
+        this._isLoading = false;
+        this._kokoro = null;
+
+        // Re-initialize with the new backend
+        await this.initialize({ backend });
+    }
+
+    /**
      * Initialize the TTS engine
      * @param {Object} [options]
      * @param {string} [options.device] - 'webgpu', 'wasm', or 'auto'
      * @param {string} [options.dtype] - 'fp32', 'fp16', 'q8', 'q4'
-     * @returns {Promise<boolean>} True if Kokoro loaded, false if using fallback
+     * @param {TTSBackend} [options.backend] - Force a specific backend
+     * @returns {Promise<boolean>} True if Kokoro loaded (JS or FastAPI), false if using fallback
      */
     async initialize(options = {}) {
         if (this._isReady) return this._useKokoro;
@@ -102,6 +190,58 @@ export class TTSEngine {
 
         this._isLoading = true;
 
+        // If a specific backend is requested, use it
+        if (options.backend) {
+            this._backend = options.backend;
+        }
+
+        // Handle FastAPI backend
+        if (this._backend === 'kokoro-fastapi') {
+            try {
+                this._reportProgress({ status: 'Connecting to Kokoro FastAPI...' });
+                const available = await this.isKokoroFastAPIAvailable();
+                if (available) {
+                    this._useKokoro = true;
+                    this._device = 'fastapi';
+                    this._isReady = true;
+                    this._isLoading = false;
+
+                    // Ensure we have an AudioContext for decoding
+                    if (!this._audioContext) {
+                        this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+
+                    this._reportProgress({ status: 'TTS ready (Kokoro FastAPI)', progress: 100 });
+                    console.log(`Kokoro FastAPI TTS initialized: ${this._fastApiUrl}`);
+                    return true;
+                } else {
+                    console.warn('Kokoro FastAPI not available, falling back to kokoro-js');
+                    this._backend = 'kokoro-js';
+                    // Fall through to kokoro-js initialization
+                }
+            } catch (error) {
+                console.warn('Kokoro FastAPI check failed:', error);
+                this._backend = 'kokoro-js';
+            }
+        }
+
+        // Handle web-speech backend
+        if (this._backend === 'web-speech') {
+            if (this._webSpeechSupported) {
+                this._useKokoro = false;
+                this._device = 'web-speech';
+                this._isReady = true;
+                this._isLoading = false;
+                this._reportProgress({ status: 'TTS ready (Browser)' });
+                console.log('Using Web Speech API backend');
+                return false;
+            } else {
+                console.warn('Web Speech not supported, falling back to kokoro-js');
+                this._backend = 'kokoro-js';
+            }
+        }
+
+        // kokoro-js backend
         // Determine device
         let device = options.device || 'auto';
         if (device === 'auto') {
@@ -131,6 +271,7 @@ export class TTSEngine {
             // Try to load Kokoro
             await this._initializeKokoro(device, dtype);
             this._useKokoro = true;
+            this._backend = 'kokoro-js';
             this._isReady = true;
             this._reportProgress({ status: `TTS ready (${device}, ${dtype})`, progress: 100 });
             console.log(`Kokoro TTS initialized: device=${device}, dtype=${dtype}`);
@@ -141,6 +282,7 @@ export class TTSEngine {
 
             if (this._webSpeechSupported) {
                 this._useKokoro = false;
+                this._backend = 'web-speech';
                 this._isReady = true;
                 this._reportProgress({ status: 'Using browser TTS (fallback)' });
                 return false;
@@ -291,7 +433,11 @@ export class TTSEngine {
             throw new Error('No text provided for synthesis');
         }
 
-        if (this._useKokoro) {
+        if (this._backend === 'kokoro-fastapi') {
+            // FastAPI can handle concurrent requests, but we still queue
+            // to maintain ordering and avoid overwhelming the server
+            return this._queueSynthesis(text, options);
+        } else if (this._useKokoro) {
             // Queue the request - Kokoro can only handle one at a time
             return this._queueSynthesis(text, options);
         } else {
@@ -324,7 +470,12 @@ export class TTSEngine {
         const { text, options, resolve, reject } = this._synthesisQueue.shift();
 
         try {
-            const buffer = await this._synthesizeKokoro(text, options);
+            let buffer;
+            if (this._backend === 'kokoro-fastapi') {
+                buffer = await this._synthesizeKokoroFastAPI(text, options);
+            } else {
+                buffer = await this._synthesizeKokoro(text, options);
+            }
             resolve(buffer);
         } catch (error) {
             reject(error);
@@ -442,6 +593,62 @@ export class TTSEngine {
     }
 
     /**
+     * Synthesize using Kokoro FastAPI
+     * @param {string} text
+     * @param {TTSOptions} options
+     * @returns {Promise<AudioBuffer>}
+     */
+    async _synthesizeKokoroFastAPI(text, options) {
+        const voice = options.voice || this._currentVoice;
+        const speed = options.speed || this._speed;
+
+        const startTime = performance.now();
+
+        const response = await fetch(`${this._fastApiUrl}/v1/audio/speech`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'kokoro',
+                input: text,
+                voice: voice,
+                speed: speed,
+                response_format: 'wav'
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Kokoro FastAPI error: ${response.status} ${response.statusText}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const synthesisTime = performance.now() - startTime;
+
+        // Decode WAV to AudioBuffer
+        if (!this._audioContext) {
+            this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer);
+
+        // Record benchmark if enabled
+        if (this._benchmarkEnabled) {
+            const audioDurationMs = audioBuffer.duration * 1000;
+            const rtf = synthesisTime / audioDurationMs;
+            const result = {
+                text: text.slice(0, 50) + (text.length > 50 ? '...' : ''),
+                textLength: text.length,
+                synthesisTimeMs: Math.round(synthesisTime),
+                audioDurationMs: Math.round(audioDurationMs),
+                rtf: Math.round(rtf * 1000) / 1000,
+                device: 'fastapi'
+            };
+            this._benchmarkResults.push(result);
+            console.log(`TTS Benchmark (FastAPI): ${result.synthesisTimeMs}ms for ${result.audioDurationMs}ms audio (RTF: ${result.rtf})`);
+        }
+
+        return audioBuffer;
+    }
+
+    /**
      * Synthesize using Web Speech API (fallback)
      * Returns a "fake" AudioBuffer - actually uses SpeechSynthesis directly
      * @param {string} text
@@ -479,7 +686,7 @@ export class TTSEngine {
             await this.initialize();
         }
 
-        if (!this._useKokoro) {
+        if (!this._useKokoro && this._backend !== 'kokoro-fastapi') {
             throw new Error('Benchmarking only available with Kokoro TTS');
         }
 
@@ -722,6 +929,7 @@ export class TTSEngine {
         }
         this._kokoro = null;
         this._isReady = false;
+        this._isLoading = false;
     }
 }
 
