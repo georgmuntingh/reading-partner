@@ -15,14 +15,16 @@ export class ReaderView {
      * @param {(index: number) => void} options.onSentenceClick - Callback when sentence is clicked
      * @param {() => void} [options.onPageChange] - Callback when page changes
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
+     * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
         this._onSentenceClick = onSentenceClick;
         this._onPageChange = onPageChange;
         this._onLinkClick = onLinkClick;
+        this._onImageClick = onImageClick;
 
         this._textContent = container.querySelector('#text-content') || container;
         this._pageContainer = container.querySelector('#page-container');
@@ -30,6 +32,7 @@ export class ReaderView {
         this._nextBtn = container.querySelector('#page-next-btn');
         this._pageCurrentEl = container.querySelector('#page-current');
         this._pageTotalEl = container.querySelector('#page-total');
+        this._pageCurrentOverlayEl = container.querySelector('#page-current-overlay');
 
         this._sentences = [];
         this._currentIndex = -1;
@@ -50,11 +53,20 @@ export class ReaderView {
     }
 
     /**
-     * Setup event delegation for sentence clicks and internal link interception
+     * Setup event delegation for sentence clicks, image clicks, and internal link interception
      */
     _setupEventDelegation() {
         this._textContent.addEventListener('click', (e) => {
-            // Check for link clicks first
+            // Check for image clicks first (before links, as images might be inside links)
+            const imgEl = e.target.closest('img');
+            if (imgEl && imgEl.src) {
+                e.preventDefault();
+                const alt = imgEl.alt || '';
+                this._onImageClick?.(imgEl.src, alt);
+                return;
+            }
+
+            // Check for link clicks
             const linkEl = e.target.closest('a[href]');
             if (linkEl) {
                 const href = linkEl.getAttribute('href');
@@ -441,6 +453,9 @@ export class ReaderView {
         }
         if (this._pageTotalEl) {
             this._pageTotalEl.textContent = this._totalPages.toString();
+        }
+        if (this._pageCurrentOverlayEl) {
+            this._pageCurrentOverlayEl.textContent = (this._currentPage + 1).toString();
         }
     }
 

@@ -110,6 +110,13 @@ export class SettingsModal {
                             <p class="form-hint">Number of sentences after current position to include as context</p>
                         </div>
                     </div>
+
+                    <div class="settings-section">
+                        <h3>About</h3>
+                        <div id="settings-about-content" class="about-content">
+                            <p>Loading information...</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="modal-footer">
@@ -133,7 +140,8 @@ export class SettingsModal {
             contextBefore: this._container.querySelector('#settings-context-before'),
             contextAfter: this._container.querySelector('#settings-context-after'),
             cancelBtn: this._container.querySelector('#settings-cancel-btn'),
-            saveBtn: this._container.querySelector('#settings-save-btn')
+            saveBtn: this._container.querySelector('#settings-save-btn'),
+            aboutContent: this._container.querySelector('#settings-about-content')
         };
     }
 
@@ -237,6 +245,31 @@ export class SettingsModal {
     }
 
     /**
+     * Load and display build information
+     */
+    async _loadBuildInfo() {
+        try {
+            const response = await fetch('./build-info.json');
+            const info = await response.json();
+
+            const buildDate = new Date(info.buildTime);
+            const formattedDate = buildDate.toLocaleString();
+
+            let html = '<div class="about-info">';
+            html += `<p><strong>Version:</strong> ${info.version}</p>`;
+            html += `<p><strong>Last Updated:</strong> ${formattedDate}</p>`;
+            html += `<p><strong>Commit:</strong> <code>${info.commitShort}</code></p>`;
+            html += `<p><strong>Branch:</strong> ${info.branch}</p>`;
+            html += '</div>';
+
+            this._elements.aboutContent.innerHTML = html;
+        } catch (error) {
+            console.warn('Could not load build info:', error);
+            this._elements.aboutContent.innerHTML = '<p class="form-hint">Build information not available</p>';
+        }
+    }
+
+    /**
      * Show the modal
      */
     show() {
@@ -246,6 +279,7 @@ export class SettingsModal {
         this._container.offsetHeight;
         this._container.classList.add('active');
         this._loadCurrentSettings();
+        this._loadBuildInfo();
     }
 
     /**

@@ -15,6 +15,7 @@ import { PlaybackControls } from './ui/controls.js';
 import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
 import { SettingsModal } from './ui/settings-modal.js';
+import { ImageViewerModal } from './ui/image-viewer-modal.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -46,6 +47,7 @@ class ReadingPartnerApp {
         this._qaController = null;
         this._qaOverlay = null;
         this._settingsModal = null;
+        this._imageViewerModal = null;
     }
 
     /**
@@ -119,6 +121,14 @@ class ReadingPartnerApp {
             this._settingsModal.setSettings(this._qaSettings);
             this._settingsModal.show();
         });
+
+        // Initialize Image Viewer Modal
+        this._imageViewerModal = new ImageViewerModal(
+            { container: document.getElementById('image-viewer-modal') },
+            {
+                onClose: () => this._imageViewerModal.hide()
+            }
+        );
 
         // Setup load book button
         this._elements.loadBookBtn?.addEventListener('click', () => {
@@ -475,6 +485,9 @@ class ReadingPartnerApp {
             },
             onLinkClick: (href) => {
                 this._handleInternalLink(href);
+            },
+            onImageClick: (src, alt) => {
+                this._imageViewerModal?.show(src, alt);
             }
         });
 
