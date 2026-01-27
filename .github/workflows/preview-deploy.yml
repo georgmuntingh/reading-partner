@@ -30,15 +30,11 @@ jobs:
 
       - name: Install dependencies
         if: github.event.action != 'closed'
-		run: |
-          if [ -d "reading-partner" ]; then cd reading-partner; fi
-          npm install
+		run: npm install
 
       - name: Build
         if: github.event.action != 'closed'
-		run: |
-          if [ -d "reading-partner" ]; then cd reading-partner; fi
-          npm run build
+		run: npx vite build
         env:
           # Set base path for PR previews - must match umbrella-dir structure
           VITE_BASE_PATH: /reading-partner/pr-previews/pr-${{ github.event.number }}/
