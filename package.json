@@ -1,0 +1,20 @@
+{
+  "name": "reading-partner",
+  "version": "1.0.0",
+  "description": "On Linux, a separate Chrome instance with webgpu can be started with: ```bash google-chrome --enable-unsafe-webgpu --ozone-platform=x11 --use-angle=vulkan --enable-features=Vulkan,VulkanFromANGLE --user-data-dir=/tmp/chrome-webgpu ```",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/georgmuntingh/reading-partner.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/georgmuntingh/reading-partner/issues"
+  },
+  "homepage": "https://github.com/georgmuntingh/reading-partner#readme"
+}
