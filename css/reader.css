@@ -230,10 +230,20 @@
 .epub-content a {
     color: var(--primary-color);
     text-decoration: none;
+    cursor: pointer;
 }
 
 .epub-content a:hover {
     text-decoration: underline;
+}
+
+/* Highlight for internal link targets */
+.link-target {
+    background-color: rgba(255, 200, 0, 0.3);
+    outline: 2px solid rgba(255, 200, 0, 0.5);
+    outline-offset: 2px;
+    border-radius: 2px;
+    transition: background-color 2s ease-out, outline-color 2s ease-out;
 }
 
 /* Code blocks in EPUB */

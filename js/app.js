@@ -472,6 +472,9 @@ class ReadingPartnerApp {
             bookTitleElement: this._elements.bookTitle,
             onSentenceClick: (index) => {
                 this._audioController?.goToSentence(index);
+            },
+            onLinkClick: (href) => {
+                this._handleInternalLink(href);
             }
         });
 
@@ -580,14 +583,24 @@ class ReadingPartnerApp {
 
         console.timeEnd(`App._loadChapter[${chapterIndex}]`);
 
-        // Auto-skip empty chapters
+        // Auto-skip truly empty chapters (no text AND no visual content like images)
         if (sentences.length === 0 && autoSkipEmpty) {
-            console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
-            if (chapterIndex < this._currentBook.chapters.length - 1) {
-                return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
-            } else {
-                this._readerView.showError('No readable content found');
-                return;
+            const chapterHtml = this._currentBook.chapters[chapterIndex].html;
+            const hasVisualContent = chapterHtml && (
+                chapterHtml.includes('<img') ||
+                chapterHtml.includes('<svg') ||
+                chapterHtml.includes('<image') ||
+                chapterHtml.includes('<video') ||
+                chapterHtml.includes('<canvas')
+            );
+            if (!hasVisualContent) {
+                console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
+                if (chapterIndex < this._currentBook.chapters.length - 1) {
+                    return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
+                } else {
+                    this._readerView.showError('No readable content found');
+                    return;
+                }
             }
         }
 
@@ -1175,6 +1188,60 @@ class ReadingPartnerApp {
         // Go to sentence
         this._audioController.goToSentence(bookmark.sentenceIndex);
         this._readerView.highlightSentence(bookmark.sentenceIndex);
+    }
+
+    /**
+     * Handle click on an internal EPUB link
+     * @param {string} href - The raw href attribute from the link
+     */
+    async _handleInternalLink(href) {
+        if (!this._currentBook) return;
+
+        // Parse href into file part and fragment
+        const hashIndex = href.indexOf('#');
+        const filePart = hashIndex >= 0 ? href.substring(0, hashIndex) : href;
+        const fragment = hashIndex >= 0 ? href.substring(hashIndex + 1) : '';
+
+        if (!filePart && fragment) {
+            // Same-chapter fragment link (e.g., #footnote-1)
+            this._readerView.scrollToFragment(fragment);
+            return;
+        }
+
+        // Find the target chapter by matching filename
+        const targetFilename = filePart.split('/').pop();
+        const targetIndex = this._currentBook.chapters.findIndex(ch => {
+            const chapterFilename = ch.href.split('/').pop().split('#')[0];
+            return chapterFilename === targetFilename;
+        });
+
+        if (targetIndex === -1) {
+            console.warn('Could not find chapter for internal link:', href);
+            return;
+        }
+
+        // Navigate to the target chapter if it's different from the current one
+        if (targetIndex !== this._currentChapterIndex) {
+            this._pause();
+            this._readingState.goToChapter(targetIndex, 0);
+            await this._loadChapter(targetIndex, false);
+            this._navigation.setCurrentChapter(targetIndex);
+            this._audioController.goToSentence(0);
+            this._readerView.highlightSentence(0);
+        }
+
+        // Scroll to the fragment target after rendering completes
+        if (fragment) {
+            // setSentences uses double requestAnimationFrame for pagination,
+            // so we need to wait for that to finish before scrolling
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        this._readerView.scrollToFragment(fragment);
+                    });
+                });
+            });
+        }
     }
 
     /**

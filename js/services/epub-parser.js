@@ -296,25 +296,16 @@ export class EPUBParser {
         images.forEach(img => {
             const src = img.getAttribute('src');
             if (src && !src.startsWith('data:') && !src.startsWith('blob:') && !src.startsWith('http')) {
-                // Try to resolve relative URL using epub.js
-                try {
-                    const resolvedUrl = this._book.resolve(src, chapterHref);
-                    if (resolvedUrl) {
-                        // Load the image from epub archive
-                        const promise = this._book.archive.getBlob(resolvedUrl)
-                            .then(blob => {
-                                if (blob) {
-                                    img.src = URL.createObjectURL(blob);
-                                }
-                            })
-                            .catch(e => {
-                                console.warn('Failed to load image:', src, e);
-                            });
-                        imagePromises.push(promise);
-                    }
-                } catch (e) {
-                    console.warn('Failed to resolve image URL:', src, e);
-                }
+                const promise = this._loadImageBlob(src, chapterHref)
+                    .then(blob => {
+                        if (blob) {
+                            img.src = URL.createObjectURL(blob);
+                        }
+                    })
+                    .catch(e => {
+                        console.warn('Failed to load image:', src, e);
+                    });
+                imagePromises.push(promise);
             }
         });
 
@@ -323,25 +314,18 @@ export class EPUBParser {
         svgImages.forEach(img => {
             const href = img.getAttribute('href') || img.getAttribute('xlink:href');
             if (href && !href.startsWith('data:') && !href.startsWith('blob:') && !href.startsWith('http')) {
-                try {
-                    const resolvedUrl = this._book.resolve(href, chapterHref);
-                    if (resolvedUrl) {
-                        const promise = this._book.archive.getBlob(resolvedUrl)
-                            .then(blob => {
-                                if (blob) {
-                                    const blobUrl = URL.createObjectURL(blob);
-                                    img.setAttribute('href', blobUrl);
-                                    img.removeAttribute('xlink:href');
-                                }
-                            })
-                            .catch(e => {
-                                console.warn('Failed to load SVG image:', href, e);
-                            });
-                        imagePromises.push(promise);
-                    }
-                } catch (e) {
-                    console.warn('Failed to resolve SVG image URL:', href, e);
-                }
+                const promise = this._loadImageBlob(href, chapterHref)
+                    .then(blob => {
+                        if (blob) {
+                            const blobUrl = URL.createObjectURL(blob);
+                            img.setAttribute('href', blobUrl);
+                            img.removeAttribute('xlink:href');
+                        }
+                    })
+                    .catch(e => {
+                        console.warn('Failed to load SVG image:', href, e);
+                    });
+                imagePromises.push(promise);
             }
         });
 
@@ -351,6 +335,130 @@ export class EPUBParser {
             await Promise.all(imagePromises);
             console.log('All images loaded');
         }
+    }
+
+    /**
+     * Try multiple strategies to load an image blob from the EPUB archive.
+     * Falls back through: epub.js resolve, manual path resolution, raw path, filename search.
+     * @param {string} src - The image source path from the HTML
+     * @param {string} chapterHref - The chapter's href for resolving relative paths
+     * @returns {Promise<Blob|null>}
+     */
+    async _loadImageBlob(src, chapterHref) {
+        // Strategy 1: Use epub.js resolve()
+        try {
+            const resolvedUrl = this._book.resolve(src, chapterHref);
+            if (resolvedUrl) {
+                const blob = await this._book.archive.getBlob(resolvedUrl).catch(() => null);
+                if (blob && blob.size > 0) {
+                    return this._ensureBlobMimeType(blob, src);
+                }
+            }
+        } catch (e) {
+            // resolve() failed, try fallbacks
+        }
+
+        // Strategy 2: Manual relative path resolution
+        try {
+            const manualPath = this._resolveRelativePath(src, chapterHref);
+            if (manualPath) {
+                const blob = await this._book.archive.getBlob(manualPath).catch(() => null);
+                if (blob && blob.size > 0) {
+                    return this._ensureBlobMimeType(blob, src);
+                }
+            }
+        } catch (e) {
+            // Manual resolution failed
+        }
+
+        // Strategy 3: Try the raw src path directly
+        try {
+            const blob = await this._book.archive.getBlob(src).catch(() => null);
+            if (blob && blob.size > 0) {
+                return this._ensureBlobMimeType(blob, src);
+            }
+        } catch (e) {
+            // Raw path failed
+        }
+
+        // Strategy 4: Try stripping leading slash or path components
+        try {
+            const strippedSrc = src.replace(/^\/+/, '');
+            if (strippedSrc !== src) {
+                const blob = await this._book.archive.getBlob(strippedSrc).catch(() => null);
+                if (blob && blob.size > 0) {
+                    return this._ensureBlobMimeType(blob, src);
+                }
+            }
+        } catch (e) {
+            // Stripped path failed
+        }
+
+        console.warn('All image loading strategies failed for:', src);
+        return null;
+    }
+
+    /**
+     * Manually resolve a relative path against a chapter href
+     * @param {string} src - The relative image source path
+     * @param {string} chapterHref - The chapter's href
+     * @returns {string|null}
+     */
+    _resolveRelativePath(src, chapterHref) {
+        if (!chapterHref) return null;
+
+        // Get the directory of the chapter
+        const chapterDir = chapterHref.split('/').slice(0, -1).join('/');
+        const combined = chapterDir ? chapterDir + '/' + src : src;
+        const parts = combined.split('/');
+        const resolved = [];
+
+        for (const part of parts) {
+            if (part === '..' && resolved.length > 0) {
+                resolved.pop();
+            } else if (part !== '.' && part !== '') {
+                resolved.push(part);
+            }
+        }
+
+        return resolved.join('/') || null;
+    }
+
+    /**
+     * Ensure a blob has the correct MIME type based on file extension.
+     * Some EPUB archives return blobs with empty or generic MIME types,
+     * which prevents the browser from displaying images correctly.
+     * @param {Blob} blob
+     * @param {string} filename
+     * @returns {Blob}
+     */
+    _ensureBlobMimeType(blob, filename) {
+        // If the blob already has a specific image MIME type, keep it
+        if (blob.type && blob.type.startsWith('image/')) {
+            return blob;
+        }
+
+        // Infer MIME type from file extension
+        const ext = filename.split('.').pop()?.toLowerCase().split('?')[0];
+        const mimeTypes = {
+            'png': 'image/png',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'gif': 'image/gif',
+            'svg': 'image/svg+xml',
+            'webp': 'image/webp',
+            'bmp': 'image/bmp',
+            'tif': 'image/tiff',
+            'tiff': 'image/tiff',
+            'avif': 'image/avif',
+            'jxl': 'image/jxl',
+        };
+
+        const type = mimeTypes[ext];
+        if (type) {
+            return new Blob([blob], { type });
+        }
+        return blob;
     }
 
     /**

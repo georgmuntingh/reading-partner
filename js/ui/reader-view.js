@@ -14,13 +14,15 @@ export class ReaderView {
      * @param {HTMLElement} options.bookTitleElement - Book title element
      * @param {(index: number) => void} options.onSentenceClick - Callback when sentence is clicked
      * @param {() => void} [options.onPageChange] - Callback when page changes
+     * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
         this._onSentenceClick = onSentenceClick;
         this._onPageChange = onPageChange;
+        this._onLinkClick = onLinkClick;
 
         this._textContent = container.querySelector('#text-content') || container;
         this._pageContainer = container.querySelector('#page-container');
@@ -48,10 +50,32 @@ export class ReaderView {
     }
 
     /**
-     * Setup event delegation for sentence clicks
+     * Setup event delegation for sentence clicks and internal link interception
      */
     _setupEventDelegation() {
         this._textContent.addEventListener('click', (e) => {
+            // Check for link clicks first
+            const linkEl = e.target.closest('a[href]');
+            if (linkEl) {
+                const href = linkEl.getAttribute('href');
+                if (href) {
+                    // Let mailto/tel links behave normally
+                    if (href.startsWith('mailto:') || href.startsWith('tel:')) {
+                        return;
+                    }
+                    // Open external links in a new tab
+                    if (href.startsWith('http://') || href.startsWith('https://')) {
+                        e.preventDefault();
+                        window.open(href, '_blank', 'noopener,noreferrer');
+                        return;
+                    }
+                    // Intercept internal EPUB links
+                    e.preventDefault();
+                    this._onLinkClick?.(href);
+                    return;
+                }
+            }
+
             const sentenceEl = e.target.closest('.sentence');
             if (sentenceEl && sentenceEl.dataset.index !== undefined) {
                 const index = parseInt(sentenceEl.dataset.index, 10);
@@ -77,7 +101,7 @@ export class ReaderView {
      */
     _setupResizeHandler() {
         this._debouncedRecalculate = debounce(() => {
-            if (this._sentences.length > 0) {
+            if (this._sentences.length > 0 || this._html) {
                 this._recalculatePages();
             }
         }, 250);
@@ -122,7 +146,7 @@ export class ReaderView {
         // Clear existing content
         this._textContent.innerHTML = '';
 
-        if (sentences.length === 0) {
+        if (sentences.length === 0 && !html) {
             this._textContent.innerHTML = '<p class="empty-message">No content to display</p>';
             this._updatePageIndicator();
             console.timeEnd('ReaderView.setSentences');
@@ -132,7 +156,7 @@ export class ReaderView {
         console.log(`Chapter has ${sentences.length} sentences, HTML mode: ${!!html}`);
 
         if (html) {
-            // Render full HTML with embedded sentence spans
+            // Render full HTML with embedded sentence spans (also used for image-only chapters)
             this._renderHtml(html, currentIndex);
         } else {
             // Fallback to sentences-only rendering
@@ -278,10 +302,12 @@ export class ReaderView {
 
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
-            this._totalPages = 1;
+            // Still calculate total pages from scroll height for image-only chapters
+            this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
             this._updatePageIndicator();
             this._updatePageButtons();
             this._isCalculatingPages = false;
+            console.log(`No sentence elements; ${this._totalPages} pages from content height (${scrollHeight}px)`);
             console.timeEnd('ReaderView._calculatePages');
             return;
         }
@@ -555,6 +581,37 @@ export class ReaderView {
      */
     scrollToTop() {
         this._goToPageInternal(0, false);
+    }
+
+    /**
+     * Scroll to an element with the given ID (for internal EPUB link targets)
+     * @param {string} fragmentId - The element ID to scroll to
+     * @returns {boolean} Whether the element was found and scrolled to
+     */
+    scrollToFragment(fragmentId) {
+        if (!fragmentId) return false;
+
+        try {
+            const target = this._textContent.querySelector(`[id="${CSS.escape(fragmentId)}"]`);
+            if (target) {
+                // Calculate which page this element is on
+                const elementTop = target.offsetTop;
+                const pageHeight = this._pageHeight || this._textContent.clientHeight;
+                if (pageHeight > 0) {
+                    const page = Math.floor(elementTop / pageHeight);
+                    this._goToPageInternal(page, false);
+                }
+
+                // Briefly highlight the target element
+                target.classList.add('link-target');
+                setTimeout(() => target.classList.remove('link-target'), 2000);
+
+                return true;
+            }
+        } catch (e) {
+            console.warn('Failed to scroll to fragment:', fragmentId, e);
+        }
+        return false;
     }
 
     /**
