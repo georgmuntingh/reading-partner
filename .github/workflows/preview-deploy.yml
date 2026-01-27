@@ -26,26 +26,36 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          cache-dependency-path: reading-partner/package-lock.json
 
       - name: Install dependencies
         if: github.event.action != 'closed'
         run: npm ci
+        working-directory: reading-partner
 
       - name: Build
         if: github.event.action != 'closed'
         run: npm run build
+        working-directory: reading-partner
         env:
           # Set base path for PR previews - must match umbrella-dir structure
           VITE_BASE_PATH: /reading-partner/pr-previews/pr-${{ github.event.number }}/
 
       - name: Add .nojekyll file
         if: github.event.action != 'closed'
-        run: touch dist/.nojekyll
+        run: touch reading-partner/dist/.nojekyll
+        # run: touch dist/.nojekyll
 
       - name: Deploy PR Preview
         uses: rossjrw/pr-preview-action@v1
+        # with:
+        #   source-dir: dist/
+        #   preview-branch: gh-pages
+        #   umbrella-dir: pr-previews
+        #   action: ${{ github.event.action == 'closed' && 'remove' || 'deploy' }}
+          
         with:
-          source-dir: dist/
+          source-dir: reading-partner/dist/
           preview-branch: gh-pages
           umbrella-dir: pr-previews
           action: ${{ github.event.action == 'closed' && 'remove' || 'deploy' }}
