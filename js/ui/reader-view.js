@@ -101,7 +101,7 @@ export class ReaderView {
      */
     _setupResizeHandler() {
         this._debouncedRecalculate = debounce(() => {
-            if (this._sentences.length > 0) {
+            if (this._sentences.length > 0 || this._html) {
                 this._recalculatePages();
             }
         }, 250);
@@ -146,7 +146,7 @@ export class ReaderView {
         // Clear existing content
         this._textContent.innerHTML = '';
 
-        if (sentences.length === 0) {
+        if (sentences.length === 0 && !html) {
             this._textContent.innerHTML = '<p class="empty-message">No content to display</p>';
             this._updatePageIndicator();
             console.timeEnd('ReaderView.setSentences');
@@ -156,7 +156,7 @@ export class ReaderView {
         console.log(`Chapter has ${sentences.length} sentences, HTML mode: ${!!html}`);
 
         if (html) {
-            // Render full HTML with embedded sentence spans
+            // Render full HTML with embedded sentence spans (also used for image-only chapters)
             this._renderHtml(html, currentIndex);
         } else {
             // Fallback to sentences-only rendering
@@ -302,10 +302,12 @@ export class ReaderView {
 
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
-            this._totalPages = 1;
+            // Still calculate total pages from scroll height for image-only chapters
+            this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
             this._updatePageIndicator();
             this._updatePageButtons();
             this._isCalculatingPages = false;
+            console.log(`No sentence elements; ${this._totalPages} pages from content height (${scrollHeight}px)`);
             console.timeEnd('ReaderView._calculatePages');
             return;
         }

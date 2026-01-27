@@ -583,14 +583,24 @@ class ReadingPartnerApp {
 
         console.timeEnd(`App._loadChapter[${chapterIndex}]`);
 
-        // Auto-skip empty chapters
+        // Auto-skip truly empty chapters (no text AND no visual content like images)
         if (sentences.length === 0 && autoSkipEmpty) {
-            console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
-            if (chapterIndex < this._currentBook.chapters.length - 1) {
-                return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
-            } else {
-                this._readerView.showError('No readable content found');
-                return;
+            const chapterHtml = this._currentBook.chapters[chapterIndex].html;
+            const hasVisualContent = chapterHtml && (
+                chapterHtml.includes('<img') ||
+                chapterHtml.includes('<svg') ||
+                chapterHtml.includes('<image') ||
+                chapterHtml.includes('<video') ||
+                chapterHtml.includes('<canvas')
+            );
+            if (!hasVisualContent) {
+                console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
+                if (chapterIndex < this._currentBook.chapters.length - 1) {
+                    return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
+                } else {
+                    this._readerView.showError('No readable content found');
+                    return;
+                }
             }
         }
 
