@@ -102,11 +102,28 @@ export class EPUBParser {
      * @returns {Promise<Blob|null>}
      */
     async _extractCover() {
+        // Method 1: Use the already-resolved cover path from epub.js directly
+        // book.cover is set via book.resolve(packaging.cover) which produces
+        // a path like "/OEBPS/cover.jpeg" — suitable for archive.getBlob()
+        try {
+            if (this._book.cover) {
+                const blob = await this._book.archive.getBlob(this._book.cover).catch(() => null);
+                if (blob && blob.size > 0) {
+                    return this._ensureBlobMimeType(blob, this._book.cover);
+                }
+            }
+        } catch (e) {
+            // Direct archive access failed, try fallback
+        }
+
+        // Method 2: Use coverUrl() which creates a blob URL, then fetch it
         try {
             const coverUrl = await this._book.coverUrl();
             if (coverUrl) {
                 const response = await fetch(coverUrl);
-                return await response.blob();
+                if (response.ok) {
+                    return await response.blob();
+                }
             }
         } catch (e) {
             console.warn('Could not extract cover:', e);
@@ -339,41 +356,48 @@ export class EPUBParser {
 
     /**
      * Try multiple strategies to load an image blob from the EPUB archive.
-     * Falls back through: epub.js resolve, manual path resolution, raw path, filename search.
+     * epub.js archive.getBlob(url) internally does url.substr(1) to strip a
+     * leading "/" before looking up zip entries, so all paths must start with "/".
      * @param {string} src - The image source path from the HTML
      * @param {string} chapterHref - The chapter's href for resolving relative paths
      * @returns {Promise<Blob|null>}
      */
     async _loadImageBlob(src, chapterHref) {
-        // Strategy 1: Use epub.js resolve()
+        // Strategy 1: Resolve using full archive path (book directory + chapter href)
+        // e.g., book dir "/OEBPS/" + chapter "text/ch1.xhtml" + src "../images/fig.jpg"
+        //   → "/OEBPS/images/fig.jpg" → getBlob strips "/" → "OEBPS/images/fig.jpg" ✓
         try {
-            const resolvedUrl = this._book.resolve(src, chapterHref);
-            if (resolvedUrl) {
-                const blob = await this._book.archive.getBlob(resolvedUrl).catch(() => null);
+            const bookDir = this._book?.path?.directory || '/';
+            const fullChapterPath = bookDir + chapterHref;
+            const archivePath = this._resolveToArchivePath(src, fullChapterPath);
+            if (archivePath) {
+                const blob = await this._book.archive.getBlob(archivePath).catch(() => null);
                 if (blob && blob.size > 0) {
                     return this._ensureBlobMimeType(blob, src);
                 }
             }
         } catch (e) {
-            // resolve() failed, try fallbacks
+            // Full path resolution failed
         }
 
-        // Strategy 2: Manual relative path resolution
+        // Strategy 2: Resolve relative to chapter href only (without book directory prefix)
+        // Handles EPUBs where the OPF is at the root
         try {
-            const manualPath = this._resolveRelativePath(src, chapterHref);
-            if (manualPath) {
-                const blob = await this._book.archive.getBlob(manualPath).catch(() => null);
+            const archivePath = this._resolveToArchivePath(src, chapterHref);
+            if (archivePath) {
+                const blob = await this._book.archive.getBlob(archivePath).catch(() => null);
                 if (blob && blob.size > 0) {
                     return this._ensureBlobMimeType(blob, src);
                 }
             }
         } catch (e) {
-            // Manual resolution failed
+            // Relative resolution failed
         }
 
-        // Strategy 3: Try the raw src path directly
+        // Strategy 3: Try the raw src path with leading "/"
         try {
-            const blob = await this._book.archive.getBlob(src).catch(() => null);
+            const rawPath = src.startsWith('/') ? src : '/' + src;
+            const blob = await this._book.archive.getBlob(rawPath).catch(() => null);
             if (blob && blob.size > 0) {
                 return this._ensureBlobMimeType(blob, src);
             }
@@ -381,17 +405,17 @@ export class EPUBParser {
             // Raw path failed
         }
 
-        // Strategy 4: Try stripping leading slash or path components
+        // Strategy 4: Use epub.js resolve() with absolute=false (path-only resolution)
         try {
-            const strippedSrc = src.replace(/^\/+/, '');
-            if (strippedSrc !== src) {
-                const blob = await this._book.archive.getBlob(strippedSrc).catch(() => null);
+            const resolvedPath = this._book.resolve(src, false);
+            if (resolvedPath) {
+                const blob = await this._book.archive.getBlob(resolvedPath).catch(() => null);
                 if (blob && blob.size > 0) {
                     return this._ensureBlobMimeType(blob, src);
                 }
             }
         } catch (e) {
-            // Stripped path failed
+            // resolve() failed
         }
 
         console.warn('All image loading strategies failed for:', src);
@@ -399,29 +423,35 @@ export class EPUBParser {
     }
 
     /**
-     * Manually resolve a relative path against a chapter href
-     * @param {string} src - The relative image source path
-     * @param {string} chapterHref - The chapter's href
+     * Resolve a relative source path against a context file path, returning
+     * a normalized path with leading "/" suitable for archive.getBlob().
+     * @param {string} src - The relative source path (e.g., "../images/fig.jpg")
+     * @param {string} contextPath - The context file path (e.g., "/OEBPS/text/ch1.xhtml")
      * @returns {string|null}
      */
-    _resolveRelativePath(src, chapterHref) {
-        if (!chapterHref) return null;
+    _resolveToArchivePath(src, contextPath) {
+        if (!contextPath) return null;
 
-        // Get the directory of the chapter
-        const chapterDir = chapterHref.split('/').slice(0, -1).join('/');
-        const combined = chapterDir ? chapterDir + '/' + src : src;
+        // Get the directory of the context path
+        const lastSlash = contextPath.lastIndexOf('/');
+        const contextDir = lastSlash >= 0 ? contextPath.substring(0, lastSlash) : '';
+
+        // Combine context directory with the source path
+        const combined = contextDir ? contextDir + '/' + src : src;
+
+        // Normalize the path (resolve ".." and "." segments)
         const parts = combined.split('/');
         const resolved = [];
-
         for (const part of parts) {
-            if (part === '..' && resolved.length > 0) {
+            if (part === '..' && resolved.length > 0 && resolved[resolved.length - 1] !== '') {
                 resolved.pop();
             } else if (part !== '.' && part !== '') {
                 resolved.push(part);
             }
         }
 
-        return resolved.join('/') || null;
+        // Return with leading "/" for archive.getBlob() which does url.substr(1)
+        return '/' + resolved.join('/');
     }
 
     /**
