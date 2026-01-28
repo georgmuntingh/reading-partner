@@ -361,7 +361,7 @@ class ReadingPartnerApp {
             let bookId;
             if (input.includes('gutenberg.org')) {
                 // Extract ID from URL
-                const match = input.match(/\/(?:ebooks|files)\/(\d+)/);
+                const match = input.match(/\/(?:ebooks|files|cache\/epub)\/(\d+)/);
                 if (match) {
                     bookId = match[1];
                 } else {
@@ -379,15 +379,17 @@ class ReadingPartnerApp {
 
             loadingText.textContent = 'Downloading EPUB...';
 
-            // Try multiple URL formats to avoid CORS issues
-            // Project Gutenberg's direct file URLs work better than redirect URLs
+            // Project Gutenberg doesn't support CORS, so we need to use a CORS proxy
+            // The cache mirror is most reliable
+            const corsProxy = 'https://corsproxy.io/?';
+
             const urlsToTry = [
-                // UTF-8 version (preferred)
-                `https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
+                // Cache mirror (most reliable)
+                `${corsProxy}https://gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`,
+                // UTF-8 version
+                `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
                 // Standard version
-                `https://www.gutenberg.org/files/${bookId}/${bookId}.epub`,
-                // Try cache mirror which may have better CORS support
-                `https://gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`
+                `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}.epub`
             ];
 
             let lastError = null;
@@ -395,13 +397,16 @@ class ReadingPartnerApp {
 
             for (const url of urlsToTry) {
                 try {
-                    const response = await fetch(url, {
-                        mode: 'cors',
-                        credentials: 'omit'
-                    });
+                    const response = await fetch(url);
 
                     if (response.ok) {
                         const blob = await response.blob();
+
+                        // Verify it's actually an EPUB file
+                        if (blob.size < 100) {
+                            throw new Error('Downloaded file is too small to be an EPUB');
+                        }
+
                         const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
                         await this._loadBook(file);
                         success = true;
@@ -409,13 +414,14 @@ class ReadingPartnerApp {
                     }
                 } catch (error) {
                     lastError = error;
+                    console.log(`Failed to load from ${url}:`, error.message);
                     // Continue to next URL
                 }
             }
 
             if (!success) {
                 throw new Error(
-                    `Book ${bookId} could not be loaded. This may be due to CORS restrictions or the book might not be available as EPUB. ` +
+                    `Book ${bookId} could not be loaded. The book might not be available as EPUB, or there may be network issues. ` +
                     `Try downloading manually from https://www.gutenberg.org/ebooks/${bookId} and uploading the EPUB file.`
                 );
             }
