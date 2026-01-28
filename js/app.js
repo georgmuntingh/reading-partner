@@ -532,7 +532,7 @@ class ReadingPartnerApp {
                 // Update for the new book
                 this._readerView.setBookTitle(this._currentBook.title);
                 this._controls.setEnabled(true);
-                this._controls.setAskDisabled(!this._qaSettings.apiKey);
+                this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
             }
 
             // Get saved position
@@ -679,7 +679,7 @@ class ReadingPartnerApp {
         this._controls.setEnabled(true);
 
         // Enable/disable Ask button based on API key configuration
-        this._controls.setAskDisabled(!this._qaSettings.apiKey);
+        this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
     }
 
     /**
@@ -1128,7 +1128,7 @@ class ReadingPartnerApp {
 
         // Enable/disable Ask button based on API key
         if (this._controls) {
-            this._controls.setAskDisabled(!this._qaSettings.apiKey);
+            this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
         }
     }
 
@@ -1712,7 +1712,7 @@ class ReadingPartnerApp {
             } else {
                 this._readerView.setBookTitle(this._currentBook.title);
                 this._controls.setEnabled(true);
-                this._controls.setAskDisabled(!this._qaSettings.apiKey);
+                this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
             }
 
             // Get saved position
