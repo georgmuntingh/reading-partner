@@ -110,6 +110,9 @@
                             <polyline points="9 18 15 12 9 6"/>
                         </svg>
                     </button>
+                    <div class="page-number-overlay" id="page-number-overlay">
+                        Page <span id="page-current-overlay">1</span>/<span id="page-total-overlay">1</span>
+                    </div>
                 </div>
                 <div class="page-indicator" id="page-indicator">
                     <span id="page-current">1</span> / <span id="page-total">1</span>
@@ -224,6 +227,11 @@
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal-overlay hidden">
         <!-- Content will be rendered by SettingsModal component -->
+    </div>
+
+    <!-- Image Viewer Modal -->
+    <div id="image-viewer-modal" class="image-viewer-modal hidden">
+        <!-- Content will be rendered by ImageViewerModal component -->
     </div>
 
     <!-- Scripts -->

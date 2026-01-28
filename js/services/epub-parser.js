@@ -327,16 +327,20 @@ export class EPUBParser {
         });
 
         // Also handle SVG images and image elements within SVG
-        const svgImages = element.querySelectorAll('image[href], image[xlink\\:href]');
+        const svgImages = element.querySelectorAll('image');
         svgImages.forEach(img => {
-            const href = img.getAttribute('href') || img.getAttribute('xlink:href');
+            // Try both namespaced and non-namespaced href attributes
+            const href = img.getAttribute('href') ||
+                        img.getAttribute('xlink:href') ||
+                        img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
             if (href && !href.startsWith('data:') && !href.startsWith('blob:') && !href.startsWith('http')) {
                 const promise = this._loadImageBlob(href, chapterHref)
                     .then(blob => {
                         if (blob) {
                             const blobUrl = URL.createObjectURL(blob);
+                            // Set both href and xlink:href for compatibility
                             img.setAttribute('href', blobUrl);
-                            img.removeAttribute('xlink:href');
+                            img.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', blobUrl);
                         }
                     })
                     .catch(e => {

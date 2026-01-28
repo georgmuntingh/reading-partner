@@ -15,14 +15,16 @@ export class ReaderView {
      * @param {(index: number) => void} options.onSentenceClick - Callback when sentence is clicked
      * @param {() => void} [options.onPageChange] - Callback when page changes
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
+     * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
         this._onSentenceClick = onSentenceClick;
         this._onPageChange = onPageChange;
         this._onLinkClick = onLinkClick;
+        this._onImageClick = onImageClick;
 
         this._textContent = container.querySelector('#text-content') || container;
         this._pageContainer = container.querySelector('#page-container');
@@ -30,6 +32,8 @@ export class ReaderView {
         this._nextBtn = container.querySelector('#page-next-btn');
         this._pageCurrentEl = container.querySelector('#page-current');
         this._pageTotalEl = container.querySelector('#page-total');
+        this._pageCurrentOverlayEl = container.querySelector('#page-current-overlay');
+        this._pageTotalOverlayEl = container.querySelector('#page-total-overlay');
 
         this._sentences = [];
         this._currentIndex = -1;
@@ -50,11 +54,20 @@ export class ReaderView {
     }
 
     /**
-     * Setup event delegation for sentence clicks and internal link interception
+     * Setup event delegation for sentence clicks, image clicks, and internal link interception
      */
     _setupEventDelegation() {
         this._textContent.addEventListener('click', (e) => {
-            // Check for link clicks first
+            // Check for image clicks first (before links, as images might be inside links)
+            const imgEl = e.target.closest('img');
+            if (imgEl && imgEl.src) {
+                e.preventDefault();
+                const alt = imgEl.alt || '';
+                this._onImageClick?.(imgEl.src, alt);
+                return;
+            }
+
+            // Check for link clicks
             const linkEl = e.target.closest('a[href]');
             if (linkEl) {
                 const href = linkEl.getAttribute('href');
@@ -303,7 +316,11 @@ export class ReaderView {
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
             // Still calculate total pages from scroll height for image-only chapters
-            this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
+            // Add tolerance: if content is within 20px of page boundary, don't count extra page
+            const pageRatio = scrollHeight / pageHeight;
+            const fractionalPart = pageRatio % 1;
+            this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
+            this._totalPages = Math.max(1, this._totalPages);
             this._updatePageIndicator();
             this._updatePageButtons();
             this._isCalculatingPages = false;
@@ -312,8 +329,12 @@ export class ReaderView {
             return;
         }
 
-        // Calculate total pages
-        this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
+        // Calculate total pages with tolerance for small overflow
+        // If content is within 5% of a page boundary, don't count it as an extra page
+        const pageRatio = scrollHeight / pageHeight;
+        const fractionalPart = pageRatio % 1;
+        this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
+        this._totalPages = Math.max(1, this._totalPages);
 
         // Map each sentence to a page based on its position
         sentenceElements.forEach(el => {
@@ -441,6 +462,12 @@ export class ReaderView {
         }
         if (this._pageTotalEl) {
             this._pageTotalEl.textContent = this._totalPages.toString();
+        }
+        if (this._pageCurrentOverlayEl) {
+            this._pageCurrentOverlayEl.textContent = (this._currentPage + 1).toString();
+        }
+        if (this._pageTotalOverlayEl) {
+            this._pageTotalOverlayEl.textContent = this._totalPages.toString();
         }
     }
 
