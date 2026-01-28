@@ -7,6 +7,7 @@ import { epubParser } from './services/epub-parser.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
+import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { ReadingStateController } from './state/reading-state.js';
@@ -616,11 +617,16 @@ class ReadingPartnerApp {
                 } else {
                     this._controls.setPlaying(state.status === 'playing');
                 }
+                // Update Media Session playback state
+                mediaSessionManager.setPlaybackState(state.status);
             },
             onChapterEnd: () => {
                 this._onChapterEnd();
             }
         });
+
+        // Initialize Media Session for headset controls
+        this._initializeMediaSession();
 
         // Initialize Controls
         this._controls = new PlaybackControls(
@@ -683,6 +689,55 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Initialize Media Session for headset/media key controls
+     * - Single tap (play/pause): Toggle TTS playback
+     * - Double tap / Next track: Enter Q&A mode
+     * - Double tap back / Previous track: Exit Q&A mode and continue reading
+     */
+    _initializeMediaSession() {
+        if (!mediaSessionManager.isSupported()) {
+            console.log('Media Session API not supported on this device');
+            return;
+        }
+
+        mediaSessionManager.initialize({
+            onPlay: () => {
+                this._play();
+            },
+            onPause: () => {
+                this._pause();
+            },
+            onEnterQAMode: () => {
+                // Only enter Q&A mode if API key is configured
+                if (this._qaSettings.apiKey) {
+                    this._startQA();
+                } else {
+                    this._showToast('Q&A not available - configure API key in settings');
+                }
+            },
+            onExitQAMode: () => {
+                this._continueReadingFromQA();
+            }
+        });
+
+        console.log('Media Session initialized for headset controls');
+    }
+
+    /**
+     * Update Media Session metadata with current book and chapter info
+     */
+    _updateMediaSessionMetadata() {
+        if (!this._currentBook) return;
+
+        const chapter = this._currentBook.chapters[this._currentChapterIndex];
+        mediaSessionManager.updateMetadata({
+            bookTitle: this._currentBook.title,
+            chapterTitle: chapter?.title || '',
+            author: this._currentBook.author || ''
+        });
+    }
+
+    /**
      * Load a chapter (lazy loading)
      * @param {number} chapterIndex
      * @param {boolean} [autoSkipEmpty=true] - Skip to next chapter if empty
@@ -742,6 +797,9 @@ class ReadingPartnerApp {
 
         // Update audio controller
         this._audioController.setSentences(sentences, 0);
+
+        // Update Media Session metadata for headset controls
+        this._updateMediaSessionMetadata();
     }
 
     /**
@@ -923,6 +981,9 @@ class ReadingPartnerApp {
         this._qaOverlay.setHistory(this._qaController.getHistory());
         this._qaOverlay.show();
 
+        // Set Q&A mode active for Media Session (headset controls)
+        mediaSessionManager.setQAModeActive(true);
+
         // Start voice Q&A
         if (this._qaController.isSTTSupported()) {
             this._qaController.startVoiceQA();
@@ -974,6 +1035,9 @@ class ReadingPartnerApp {
     _closeQAOverlay() {
         this._qaController?.stop();
         this._qaOverlay.hide();
+
+        // Exit Q&A mode for Media Session (headset controls)
+        mediaSessionManager.setQAModeActive(false);
     }
 
     /**
@@ -982,6 +1046,9 @@ class ReadingPartnerApp {
     _continueReadingFromQA() {
         this._qaController?.stop();
         this._qaOverlay.hide();
+
+        // Exit Q&A mode for Media Session (headset controls)
+        mediaSessionManager.setQAModeActive(false);
 
         // Resume playback if we were playing before
         if (this._wasPlayingBeforeQA) {
