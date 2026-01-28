@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Reading Partner - EPUB TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-W4mjY1Ce.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-Dfsg5FCy.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-CrAUmCF1.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-CcS7dYie.css">
 </head>
 <body>
     <div id="app">
@@ -57,6 +57,19 @@
                     <p>Drag & drop EPUB file here</p>
                     <p class="or">or</p>
                     <button class="btn btn-primary" id="browse-btn">Browse Files</button>
+                </div>
+
+                <div class="divider">
+                    <span>or</span>
+                </div>
+
+                <div class="gutenberg-area">
+                    <h3 class="gutenberg-title">Load from Project Gutenberg</h3>
+                    <p class="gutenberg-subtitle">Enter a book ID or URL (e.g., 1342 for Pride and Prejudice)</p>
+                    <div class="gutenberg-input-group">
+                        <input type="text" id="gutenberg-input" class="form-input" placeholder="Book ID or URL">
+                        <button class="btn btn-secondary" id="gutenberg-load-btn">Load Book</button>
+                    </div>
                 </div>
 
                 <div id="loading-indicator" class="loading hidden">
