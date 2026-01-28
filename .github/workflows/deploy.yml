@@ -16,9 +16,9 @@ permissions:
 
 # Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
 # However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
-# concurrency:
-#   group: 'pages'
-#   cancel-in-progress: false
+concurrency:
+  group: 'pages'
+  cancel-in-progress: false
 
 jobs:
   build-and-deploy:
@@ -39,6 +39,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Add .nojekyll file
+        run: touch dist/.nojekyll
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
@@ -47,3 +50,5 @@ jobs:
           # CRITICAL: Do NOT delete the pr-preview folder when deploying production
           keep_files: true
           allow_empty_commit: false
+          destination_dir: .
+          exclude_assets: 'pr-previews'
