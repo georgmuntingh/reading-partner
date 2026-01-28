@@ -39,13 +39,28 @@ export class ReadingStateController {
     /**
      * Load a book from file and save to storage
      * @param {File} file
+     * @param {Object} [source] - Source information for persistence
+     * @param {string} source.type - 'local' or 'gutenberg'
+     * @param {string} [source.filename] - Original filename (for local)
+     * @param {string} [source.bookId] - Gutenberg book ID (for gutenberg)
      * @returns {Promise<Object>} book
      */
-    async loadBook(file) {
+    async loadBook(file, source = null) {
         const book = await epubParser.loadFromFile(file);
 
         // Generate book ID from filename and timestamp
         book.id = this._generateBookId(file.name);
+
+        // Store source information for persistence
+        if (source) {
+            book.source = source;
+        } else {
+            // Default to local with filename
+            book.source = {
+                type: 'local',
+                filename: file.name
+            };
+        }
 
         // Save to storage
         await storage.saveBook(book);

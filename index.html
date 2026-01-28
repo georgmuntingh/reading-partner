@@ -50,27 +50,14 @@
                     <input type="file" id="file-input" accept=".epub" hidden>
                     <div class="upload-icon">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
                         </svg>
                     </div>
                     <p>Drag & drop EPUB file here</p>
                     <p class="or">or</p>
-                    <button class="btn btn-primary" id="browse-btn">Browse Files</button>
-                </div>
-
-                <div class="divider">
-                    <span>or</span>
-                </div>
-
-                <div class="gutenberg-area">
-                    <h3 class="gutenberg-title">Load from Project Gutenberg</h3>
-                    <p class="gutenberg-subtitle">Enter a book ID or URL (e.g., 1342 for Pride and Prejudice)</p>
-                    <div class="gutenberg-input-group">
-                        <input type="text" id="gutenberg-input" class="form-input" placeholder="Book ID or URL">
-                        <button class="btn btn-secondary" id="gutenberg-load-btn">Load Book</button>
-                    </div>
+                    <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select eBook</button>
+                    <p class="upload-hint">Load from your device or Project Gutenberg</p>
                 </div>
 
                 <div id="loading-indicator" class="loading hidden">
@@ -247,6 +234,11 @@
     <!-- Settings Modal -->
     <div id="settings-modal" class="modal-overlay hidden">
         <!-- Content will be rendered by SettingsModal component -->
+    </div>
+
+    <!-- Book Loader Modal -->
+    <div id="book-loader-modal" class="modal-overlay hidden">
+        <!-- Content will be rendered by BookLoaderModal component -->
     </div>
 
     <!-- Image Viewer Modal -->

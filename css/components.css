@@ -1133,3 +1133,154 @@
     margin: var(--spacing-md) 0;
     background: var(--bg-color);
 }
+
+/* Book Loader Modal */
+.book-loader-modal {
+    max-width: 520px;
+}
+
+.book-source-option {
+    padding: var(--spacing-lg);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    background-color: var(--bg-color);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.book-source-option:hover {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.book-source-header {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+}
+
+.book-source-icon {
+    flex-shrink: 0;
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(79, 70, 229, 0.1);
+    border-radius: var(--radius-md);
+    color: var(--primary-color);
+}
+
+.book-source-info h3 {
+    font-size: var(--font-size-base);
+    font-weight: 600;
+    margin: 0 0 var(--spacing-xs) 0;
+    color: var(--text-color);
+}
+
+.book-source-info p {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.book-source-btn {
+    width: 100%;
+}
+
+.book-source-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    margin: var(--spacing-lg) 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.book-source-divider::before,
+.book-source-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background-color: var(--border-color);
+}
+
+.gutenberg-input-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.gutenberg-input-row .form-input {
+    flex: 1;
+}
+
+.gutenberg-hint {
+    margin-top: var(--spacing-xs);
+}
+
+.gutenberg-hint a {
+    color: var(--primary-color);
+    text-decoration: none;
+}
+
+.gutenberg-hint a:hover {
+    text-decoration: underline;
+}
+
+.book-loader-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-lg);
+    margin-top: var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+}
+
+.book-loader-loading .spinner {
+    width: 24px;
+    height: 24px;
+}
+
+.book-loader-loading p {
+    margin: 0;
+    color: var(--text-secondary);
+}
+
+.book-loader-error {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    margin-top: var(--spacing-md);
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    border-radius: var(--radius-md);
+    color: #dc2626;
+    font-size: var(--font-size-sm);
+}
+
+.book-loader-error svg {
+    flex-shrink: 0;
+}
+
+/* Upload hint text */
+.upload-hint {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-sm);
+}
+
+/* Large button variant */
+.btn-lg {
+    padding: var(--spacing-md) var(--spacing-xl);
+    font-size: var(--font-size-base);
+}
+
+/* Resume source indicator */
+.resume-source {
+    color: var(--primary-color);
+    font-size: var(--font-size-xs);
+    font-weight: 500;
+}
