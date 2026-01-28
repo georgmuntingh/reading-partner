@@ -8,7 +8,10 @@ on:
       - synchronize
       - closed
 
-concurrency: preview-${{ github.ref }}
+# concurrency: preview-${{ github.ref }}
+concurrency:
+  group: 'gh-pages-shared'
+  cancel-in-progress: false
 
 jobs:
   deploy-preview:
