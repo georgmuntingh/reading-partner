@@ -75,6 +75,26 @@ export class BookLoaderModal {
                                 <p>Free public domain books</p>
                             </div>
                         </div>
+
+                        <!-- Search Section -->
+                        <div class="gutenberg-search-section">
+                            <div class="gutenberg-input-row">
+                                <input type="text" id="gutenberg-search-input" class="form-input" placeholder="Search books (e.g., Frankenstein)">
+                                <button class="btn btn-primary" id="gutenberg-search-btn">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="11" cy="11" r="8"/>
+                                        <path d="m21 21-4.35-4.35"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div id="gutenberg-search-results" class="gutenberg-search-results hidden"></div>
+                        </div>
+
+                        <div class="gutenberg-or-divider">
+                            <span>or enter book ID directly</span>
+                        </div>
+
+                        <!-- Direct ID Input -->
                         <div class="gutenberg-input-row">
                             <input type="text" id="book-loader-gutenberg-input" class="form-input" placeholder="Book ID or URL (e.g., 1342)">
                             <button class="btn btn-primary" id="load-gutenberg-btn">Load</button>
@@ -110,6 +130,11 @@ export class BookLoaderModal {
             closeBtn: this._container.querySelector('.modal-close-btn'),
             fileInput: this._container.querySelector('#book-loader-file-input'),
             browseLocalBtn: this._container.querySelector('#browse-local-btn'),
+            // Search elements
+            searchInput: this._container.querySelector('#gutenberg-search-input'),
+            searchBtn: this._container.querySelector('#gutenberg-search-btn'),
+            searchResults: this._container.querySelector('#gutenberg-search-results'),
+            // Direct ID input elements
             gutenbergInput: this._container.querySelector('#book-loader-gutenberg-input'),
             loadGutenbergBtn: this._container.querySelector('#load-gutenberg-btn'),
             loading: this._container.querySelector('#book-loader-loading'),
@@ -117,6 +142,9 @@ export class BookLoaderModal {
             error: this._container.querySelector('#book-loader-error'),
             errorText: this._container.querySelector('#book-loader-error-text')
         };
+
+        // Track search state
+        this._isSearching = false;
     }
 
     /**
@@ -175,6 +203,31 @@ export class BookLoaderModal {
                 this._loadFromGutenberg();
             }
         });
+
+        // Search button
+        this._elements.searchBtn.addEventListener('click', () => {
+            this._searchGutenberg();
+        });
+
+        // Enter key in search input
+        this._elements.searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this._searchGutenberg();
+            }
+        });
+
+        // Click on search results
+        this._elements.searchResults.addEventListener('click', (e) => {
+            const resultItem = e.target.closest('.gutenberg-search-result');
+            if (resultItem) {
+                const bookId = resultItem.dataset.bookId;
+                if (bookId) {
+                    this._hideError();
+                    this._clearSearchResults();
+                    this._callbacks.onGutenbergLoad?.(bookId);
+                }
+            }
+        });
     }
 
     /**
@@ -214,11 +267,167 @@ export class BookLoaderModal {
     }
 
     /**
+     * Search Project Gutenberg using CORS proxy
+     */
+    async _searchGutenberg() {
+        const query = this._elements.searchInput.value.trim();
+        if (!query) {
+            this._showError('Please enter a search term');
+            return;
+        }
+
+        if (this._isSearching) {
+            return;
+        }
+
+        this._isSearching = true;
+        this._hideError();
+        this._showSearchLoading();
+
+        try {
+            // Step 1: Construct the target URL
+            const gutenbergUrl = `https://www.gutenberg.org/ebooks/search/?query=${encodeURIComponent(query)}`;
+
+            // Step 2: Bypass CORS with AllOrigins proxy
+            const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(gutenbergUrl)}`;
+
+            const response = await fetch(proxyUrl);
+            if (!response.ok) {
+                throw new Error('Failed to fetch search results');
+            }
+
+            const data = await response.json();
+            if (!data.contents) {
+                throw new Error('No content received from proxy');
+            }
+
+            // Step 3: Parse the HTML with DOMParser
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(data.contents, 'text/html');
+
+            // Step 4: Extract data using query selection
+            const bookLinks = doc.querySelectorAll('.booklink');
+            const results = [];
+
+            bookLinks.forEach((bookLink) => {
+                const titleEl = bookLink.querySelector('.title');
+                const subtitleEl = bookLink.querySelector('.subtitle');
+                const linkEl = bookLink.querySelector('a.link');
+
+                if (titleEl && linkEl) {
+                    const href = linkEl.getAttribute('href') || '';
+                    // Extract book ID from href (e.g., /ebooks/84 -> 84)
+                    const idMatch = href.match(/\/ebooks\/(\d+)/);
+                    const bookId = idMatch ? idMatch[1] : null;
+
+                    if (bookId) {
+                        results.push({
+                            id: bookId,
+                            title: titleEl.textContent?.trim() || 'Unknown Title',
+                            author: subtitleEl?.textContent?.trim() || 'Unknown Author'
+                        });
+                    }
+                }
+            });
+
+            this._displaySearchResults(results, query);
+
+        } catch (error) {
+            console.error('Gutenberg search error:', error);
+            this._showError(`Search failed: ${error.message}`);
+            this._clearSearchResults();
+        } finally {
+            this._isSearching = false;
+        }
+    }
+
+    /**
+     * Show loading state in search results
+     */
+    _showSearchLoading() {
+        this._elements.searchResults.classList.remove('hidden');
+        this._elements.searchResults.innerHTML = `
+            <div class="gutenberg-search-loading">
+                <div class="spinner"></div>
+                <span>Searching Project Gutenberg...</span>
+            </div>
+        `;
+    }
+
+    /**
+     * Display search results
+     * @param {Array} results - Array of book results
+     * @param {string} query - Original search query
+     */
+    _displaySearchResults(results, query) {
+        this._elements.searchResults.classList.remove('hidden');
+
+        if (results.length === 0) {
+            this._elements.searchResults.innerHTML = `
+                <div class="gutenberg-search-empty">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="m21 21-4.35-4.35"/>
+                    </svg>
+                    <p>No books found for "${this._escapeHtml(query)}"</p>
+                </div>
+            `;
+            return;
+        }
+
+        const resultsHtml = results.map(book => `
+            <div class="gutenberg-search-result" data-book-id="${book.id}">
+                <div class="result-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                </div>
+                <div class="result-info">
+                    <div class="result-title">${this._escapeHtml(book.title)}</div>
+                    <div class="result-author">${this._escapeHtml(book.author)}</div>
+                </div>
+                <div class="result-id">#${book.id}</div>
+            </div>
+        `).join('');
+
+        this._elements.searchResults.innerHTML = `
+            <div class="gutenberg-search-header">
+                <span>${results.length} result${results.length !== 1 ? 's' : ''} for "${this._escapeHtml(query)}"</span>
+            </div>
+            <div class="gutenberg-search-list">
+                ${resultsHtml}
+            </div>
+        `;
+    }
+
+    /**
+     * Clear search results
+     */
+    _clearSearchResults() {
+        this._elements.searchResults.classList.add('hidden');
+        this._elements.searchResults.innerHTML = '';
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     * @param {string} str
+     * @returns {string}
+     */
+    _escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+    /**
      * Show the modal
      */
     show() {
         // Reset state
         this._elements.gutenbergInput.value = '';
+        this._elements.searchInput.value = '';
+        this._clearSearchResults();
         this._hideLoading();
         this._hideError();
 

@@ -450,6 +450,17 @@ class ReadingPartnerApp {
                 return;
             }
 
+            // Don't handle shortcuts when typing in input fields
+            const activeElement = document.activeElement;
+            const isTyping = activeElement && (
+                activeElement.tagName === 'INPUT' ||
+                activeElement.tagName === 'TEXTAREA' ||
+                activeElement.isContentEditable
+            );
+            if (isTyping) {
+                return;
+            }
+
             switch (e.code) {
                 case 'Space':
                     e.preventDefault();
