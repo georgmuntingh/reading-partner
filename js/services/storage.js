@@ -25,15 +25,67 @@ export class StorageService {
      * @returns {Promise<void>}
      */
     async init() {
+        try {
+            await this._openDatabase();
+        } catch (error) {
+            console.warn('Database init failed, deleting and retrying:', error.message);
+            // If upgrade fails (e.g. blocked by old connection), delete and recreate
+            await this._deleteDatabase();
+            await this._openDatabase();
+        }
+    }
+
+    /**
+     * Delete the database
+     * @returns {Promise<void>}
+     */
+    _deleteDatabase() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(DB_NAME);
+            request.onsuccess = () => {
+                console.log('Database deleted for fresh creation');
+                resolve();
+            };
+            request.onerror = () => reject(new Error('Failed to delete database'));
+            request.onblocked = () => {
+                console.warn('Database delete blocked, resolving anyway');
+                resolve();
+            };
+        });
+    }
+
+    /**
+     * Open the IndexedDB database
+     * @returns {Promise<void>}
+     */
+    _openDatabase() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION);
 
+            let blocked = false;
+
             request.onerror = () => {
-                reject(new Error('Failed to open database'));
+                console.error('Database open error:', request.error);
+                reject(new Error('Failed to open database: ' + (request.error?.message || 'unknown error')));
+            };
+
+            request.onblocked = () => {
+                blocked = true;
+                console.warn('Database upgrade blocked by another connection');
+                reject(new Error('Database upgrade blocked'));
             };
 
             request.onsuccess = () => {
+                if (blocked) return;
                 this._db = request.result;
+
+                // Handle version change from other tabs
+                this._db.onversionchange = () => {
+                    this._db.close();
+                    this._db = null;
+                    console.log('Database version changed in another tab, connection closed');
+                };
+
                 console.log('Storage service initialized');
                 resolve();
             };
@@ -69,7 +121,7 @@ export class StorageService {
                     highlightStore.createIndex('bookId', 'bookId', { unique: false });
                 }
 
-                console.log('Database schema created');
+                console.log('Database schema created/upgraded to version', DB_VERSION);
             };
         });
     }
