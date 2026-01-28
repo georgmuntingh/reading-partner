@@ -66,6 +66,9 @@ class ReadingPartnerApp {
             },
             onBookmarksChange: () => {
                 this._onBookmarksChange();
+            },
+            onHighlightsChange: () => {
+                this._onHighlightsChange();
             }
         });
 
@@ -86,7 +89,9 @@ class ReadingPartnerApp {
                 onChapterSelect: (index) => this._navigateToChapter(index),
                 onBookmarkSelect: (bookmark) => this._navigateToBookmark(bookmark),
                 onBookmarkDelete: (id) => this._deleteBookmark(id),
-                onAddBookmark: () => this._addBookmark()
+                onAddBookmark: () => this._addBookmark(),
+                onHighlightSelect: (highlight) => this._navigateToHighlight(highlight),
+                onHighlightDelete: (id) => this._deleteHighlight(id)
             }
         );
 
@@ -137,6 +142,9 @@ class ReadingPartnerApp {
 
         // Load saved settings first so we know the preferred backend
         await this._loadSettings();
+
+        // Check for saved reading state via cookie and show resume option
+        this._checkResumeState();
 
         // Show TTS loading status
         this._showTTSStatus('Detecting TTS backends...');
@@ -441,6 +449,7 @@ class ReadingPartnerApp {
             // Update navigation
             this._navigation.setBook(this._currentBook, position.chapterIndex);
             this._navigation.setBookmarks(this._readingState.getBookmarks());
+            this._navigation.setHighlights(this._readingState.getHighlights());
 
             // Restore sentence position
             if (position.sentenceIndex > 0) {
@@ -450,6 +459,9 @@ class ReadingPartnerApp {
 
             // Switch to reader screen
             this._showScreen('reader');
+
+            // Save cookie state for resume functionality
+            this._saveCookieState();
 
             if (isFromReader) {
                 this._hideTTSStatus();
@@ -488,6 +500,9 @@ class ReadingPartnerApp {
             },
             onImageClick: (src, alt) => {
                 this._imageViewerModal?.show(src, alt);
+            },
+            onHighlight: (startIndex, endIndex, text, color) => {
+                this._addHighlight(startIndex, endIndex, text, color);
             }
         });
 
@@ -623,6 +638,12 @@ class ReadingPartnerApp {
         // Update UI with loaded content - pass HTML for full rendering
         this._readerView.renderSentences(sentences, 0, html);
         this._readerView.scrollToTop();
+
+        // Apply highlights for this chapter
+        if (this._readingState) {
+            const chapterHighlights = this._readingState.getHighlightsForChapter(chapterIndex);
+            this._readerView.setHighlights(chapterHighlights);
+        }
 
         // Update audio controller
         this._audioController.setSentences(sentences, 0);
@@ -1294,14 +1315,84 @@ class ReadingPartnerApp {
         }
     }
 
+    // ========== Highlight Management ==========
+
+    /**
+     * Add a highlight
+     * @param {number} startIndex - Start sentence index
+     * @param {number} endIndex - End sentence index
+     * @param {string} text - Highlighted text
+     * @param {string} color - Highlight color
+     */
+    async _addHighlight(startIndex, endIndex, text, color) {
+        if (!this._readingState) return;
+
+        try {
+            await this._readingState.addHighlight(
+                this._currentChapterIndex,
+                startIndex,
+                endIndex,
+                text,
+                '',
+                color
+            );
+            this._showToast('Highlight added');
+            this._saveCookieState();
+        } catch (error) {
+            console.error('Failed to add highlight:', error);
+            this._showToast('Failed to add highlight');
+        }
+    }
+
+    /**
+     * Delete a highlight
+     * @param {string} highlightId
+     */
+    async _deleteHighlight(highlightId) {
+        try {
+            await this._readingState.deleteHighlight(highlightId);
+            this._showToast('Highlight deleted');
+
+            // Re-apply highlights for current chapter
+            if (this._readerView && this._readingState) {
+                const chapterHighlights = this._readingState.getHighlightsForChapter(this._currentChapterIndex);
+                this._readerView.setHighlights(chapterHighlights);
+            }
+
+            this._saveCookieState();
+        } catch (error) {
+            console.error('Failed to delete highlight:', error);
+        }
+    }
+
+    /**
+     * Navigate to a highlight
+     * @param {Object} highlight
+     */
+    async _navigateToHighlight(highlight) {
+        // Pause playback
+        this._pause();
+
+        // Load chapter if different
+        if (highlight.chapterIndex !== this._currentChapterIndex) {
+            this._readingState.goToChapter(highlight.chapterIndex, highlight.startSentenceIndex);
+            await this._loadChapter(highlight.chapterIndex, false);
+            this._navigation.setCurrentChapter(highlight.chapterIndex);
+        }
+
+        // Go to the highlighted sentence
+        this._audioController.goToSentence(highlight.startSentenceIndex);
+        this._readerView.highlightSentence(highlight.startSentenceIndex);
+    }
+
     /**
      * Handle position change
      * @param {number} chapterIndex
      * @param {number} sentenceIndex
      */
     _onPositionChange(chapterIndex, sentenceIndex) {
-        // This is called when position changes programmatically
-        // Could be used for UI updates if needed
+        // Save position to cookie for quick restoration
+        this._saveCookieState();
     }
 
     /**
@@ -1311,6 +1402,17 @@ class ReadingPartnerApp {
         // Update navigation if it exists
         if (this._navigation && this._readingState) {
             this._navigation.setBookmarks(this._readingState.getBookmarks());
+        }
+        this._saveCookieState();
+    }
+
+    /**
+     * Handle highlights change
+     */
+    _onHighlightsChange() {
+        // Update navigation if it exists
+        if (this._navigation && this._readingState) {
+            this._navigation.setHighlights(this._readingState.getHighlights());
         }
     }
 
@@ -1380,6 +1482,192 @@ class ReadingPartnerApp {
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
+    }
+
+    // ========== Cookie-based State Persistence ==========
+
+    /**
+     * Save current reading state to a cookie for quick restoration
+     * Stores book ID, chapter, sentence position, and counts of bookmarks/highlights
+     */
+    _saveCookieState() {
+        if (!this._currentBook || !this._readingState) return;
+
+        const position = this._readingState.getCurrentPosition();
+        const state = {
+            bookId: this._currentBook.id,
+            bookTitle: this._currentBook.title,
+            chapterIndex: position.chapterIndex,
+            sentenceIndex: position.sentenceIndex,
+            bookmarkCount: this._readingState.getBookmarks().length,
+            highlightCount: this._readingState.getHighlights().length,
+            timestamp: Date.now()
+        };
+
+        try {
+            const stateJson = JSON.stringify(state);
+            // Set cookie with 365-day expiry
+            const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
+            document.cookie = `readingPartnerState=${encodeURIComponent(stateJson)};expires=${expires};path=/;SameSite=Lax`;
+        } catch (error) {
+            console.error('Failed to save cookie state:', error);
+        }
+    }
+
+    /**
+     * Load reading state from cookie
+     * @returns {Object|null} Saved state or null
+     */
+    _loadCookieState() {
+        try {
+            const cookies = document.cookie.split(';');
+            for (const cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'readingPartnerState' && value) {
+                    return JSON.parse(decodeURIComponent(value));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load cookie state:', error);
+        }
+        return null;
+    }
+
+    /**
+     * Check if there's a saved reading state and show resume option
+     */
+    _checkResumeState() {
+        const savedState = this._loadCookieState();
+        if (!savedState || !savedState.bookId) return;
+
+        // Show a resume banner on the upload screen
+        const uploadContainer = this._elements.uploadScreen?.querySelector('.upload-container');
+        if (!uploadContainer) return;
+
+        // Remove any existing resume banner
+        const existing = uploadContainer.querySelector('.resume-banner');
+        if (existing) existing.remove();
+
+        const banner = document.createElement('div');
+        banner.className = 'resume-banner';
+
+        const timeAgo = this._formatTimeAgo(savedState.timestamp);
+        const stats = [];
+        if (savedState.bookmarkCount > 0) {
+            stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
+        }
+        if (savedState.highlightCount > 0) {
+            stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
+        }
+        const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
+
+        banner.innerHTML = `
+            <div class="resume-info">
+                <div class="resume-title">Continue reading</div>
+                <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}" - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                <div class="resume-time">Last read ${timeAgo}</div>
+            </div>
+            <button class="btn btn-primary btn-sm resume-btn">Resume</button>
+        `;
+
+        const resumeBtn = banner.querySelector('.resume-btn');
+        resumeBtn.addEventListener('click', () => {
+            this._resumeLastBook(savedState.bookId);
+        });
+
+        // Insert before the upload area
+        const uploadArea = uploadContainer.querySelector('.upload-area');
+        if (uploadArea) {
+            uploadContainer.insertBefore(banner, uploadArea);
+        } else {
+            uploadContainer.appendChild(banner);
+        }
+    }
+
+    /**
+     * Resume reading the last book from saved state
+     * @param {string} bookId
+     */
+    async _resumeLastBook(bookId) {
+        const { loadingIndicator, loadingText } = this._elements;
+
+        try {
+            loadingIndicator.classList.remove('hidden');
+            loadingText.textContent = 'Resuming book...';
+
+            // Open the book from storage
+            this._currentBook = await this._readingState.openBook(bookId);
+
+            if (!this._currentBook.chapters.length) {
+                throw new Error('No readable content found');
+            }
+
+            loadingText.textContent = 'Preparing reader...';
+
+            // Initialize reader components (only once)
+            if (!this._controls) {
+                this._initializeReader();
+            } else {
+                this._readerView.setBookTitle(this._currentBook.title);
+                this._controls.setEnabled(true);
+                this._controls.setAskDisabled(!this._qaSettings.apiKey);
+            }
+
+            // Get saved position
+            const position = this._readingState.getCurrentPosition();
+
+            // Load chapter at saved position
+            await this._loadChapter(position.chapterIndex, false);
+
+            // Update navigation
+            this._navigation.setBook(this._currentBook, position.chapterIndex);
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+            this._navigation.setHighlights(this._readingState.getHighlights());
+
+            // Restore sentence position
+            if (position.sentenceIndex > 0) {
+                this._audioController.goToSentence(position.sentenceIndex);
+                this._readerView.highlightSentence(position.sentenceIndex);
+            }
+
+            // Switch to reader screen
+            this._showScreen('reader');
+
+        } catch (error) {
+            console.error('Failed to resume book:', error);
+            this._showUploadError('Could not resume: ' + error.message + '. Please load the EPUB file again.');
+        } finally {
+            loadingIndicator.classList.add('hidden');
+        }
+    }
+
+    /**
+     * Format a timestamp as a relative time string
+     * @param {number} timestamp
+     * @returns {string}
+     */
+    _formatTimeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
+        const months = Math.floor(days / 30);
+        return `${months} month${months > 1 ? 's' : ''} ago`;
+    }
+
+    /**
+     * Escape HTML to prevent XSS
+     * @param {string} text
+     * @returns {string}
+     */
+    _escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
 
     /**
