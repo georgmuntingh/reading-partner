@@ -361,7 +361,7 @@ class ReadingPartnerApp {
             let bookId;
             if (input.includes('gutenberg.org')) {
                 // Extract ID from URL
-                const match = input.match(/\/ebooks\/(\d+)/);
+                const match = input.match(/\/(?:ebooks|files)\/(\d+)/);
                 if (match) {
                     bookId = match[1];
                 } else {
@@ -377,29 +377,47 @@ class ReadingPartnerApp {
                 throw new Error('Please enter a valid book ID (numbers only) or URL');
             }
 
-            // Fetch the EPUB file from Project Gutenberg
-            // Try .epub.noimages first as it's smaller and faster
-            const epubUrl = `https://www.gutenberg.org/ebooks/${bookId}.epub.noimages`;
-
             loadingText.textContent = 'Downloading EPUB...';
-            const response = await fetch(epubUrl);
 
-            if (!response.ok) {
-                // If noimages fails, try with images
-                const epubUrlWithImages = `https://www.gutenberg.org/ebooks/${bookId}.epub.images`;
-                const response2 = await fetch(epubUrlWithImages);
+            // Try multiple URL formats to avoid CORS issues
+            // Project Gutenberg's direct file URLs work better than redirect URLs
+            const urlsToTry = [
+                // UTF-8 version (preferred)
+                `https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
+                // Standard version
+                `https://www.gutenberg.org/files/${bookId}/${bookId}.epub`,
+                // Try cache mirror which may have better CORS support
+                `https://gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`
+            ];
 
-                if (!response2.ok) {
-                    throw new Error(`Book ${bookId} not found or not available as EPUB`);
+            let lastError = null;
+            let success = false;
+
+            for (const url of urlsToTry) {
+                try {
+                    const response = await fetch(url, {
+                        mode: 'cors',
+                        credentials: 'omit'
+                    });
+
+                    if (response.ok) {
+                        const blob = await response.blob();
+                        const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
+                        await this._loadBook(file);
+                        success = true;
+                        break;
+                    }
+                } catch (error) {
+                    lastError = error;
+                    // Continue to next URL
                 }
+            }
 
-                const blob = await response2.blob();
-                const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
-                await this._loadBook(file);
-            } else {
-                const blob = await response.blob();
-                const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
-                await this._loadBook(file);
+            if (!success) {
+                throw new Error(
+                    `Book ${bookId} could not be loaded. This may be due to CORS restrictions or the book might not be available as EPUB. ` +
+                    `Try downloading manually from https://www.gutenberg.org/ebooks/${bookId} and uploading the EPUB file.`
+                );
             }
 
         } catch (error) {
