@@ -19,5 +19,8 @@
   "bugs": {
     "url": "https://github.com/georgmuntingh/reading-partner/issues"
   },
-  "homepage": "https://github.com/georgmuntingh/reading-partner#readme"
+  "homepage": "https://github.com/georgmuntingh/reading-partner#readme",
+  "devDependencies": {
+    "vite": "^6.4.1"
+  }
 }
