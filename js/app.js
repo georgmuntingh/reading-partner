@@ -16,6 +16,7 @@ import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
+import { BookLoaderModal } from './ui/book-loader-modal.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -48,6 +49,7 @@ class ReadingPartnerApp {
         this._qaOverlay = null;
         this._settingsModal = null;
         this._imageViewerModal = null;
+        this._bookLoaderModal = null;
     }
 
     /**
@@ -56,7 +58,6 @@ class ReadingPartnerApp {
     async init() {
         this._cacheElements();
         this._setupUploadHandlers();
-        this._setupGutenbergHandlers();
         this._setupKeyboardShortcuts();
         this._setupQASetup();
 
@@ -136,9 +137,24 @@ class ReadingPartnerApp {
             }
         );
 
-        // Setup load book button
+        // Initialize Book Loader Modal
+        this._bookLoaderModal = new BookLoaderModal(
+            { container: document.getElementById('book-loader-modal') },
+            {
+                onClose: () => this._bookLoaderModal.hide(),
+                onFileSelect: (file, source) => this._handleFileSelect(file, source),
+                onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId)
+            }
+        );
+
+        // Setup load book button (header button in reader)
         this._elements.loadBookBtn?.addEventListener('click', () => {
-            this._triggerLoadNewBook();
+            this._bookLoaderModal.show();
+        });
+
+        // Setup select ebook button (start screen)
+        this._elements.selectEbookBtn?.addEventListener('click', () => {
+            this._bookLoaderModal.show();
         });
 
         // Load saved settings first so we know the preferred backend
@@ -222,13 +238,9 @@ class ReadingPartnerApp {
             // Upload
             uploadArea: document.getElementById('upload-area'),
             fileInput: document.getElementById('file-input'),
-            browseBtn: document.getElementById('browse-btn'),
+            selectEbookBtn: document.getElementById('select-ebook-btn'),
             loadingIndicator: document.getElementById('loading-indicator'),
             loadingText: document.getElementById('loading-text'),
-
-            // Gutenberg
-            gutenbergInput: document.getElementById('gutenberg-input'),
-            gutenbergLoadBtn: document.getElementById('gutenberg-load-btn'),
 
             // Q&A Setup on welcome screen
             qaSetupDetails: document.getElementById('qa-setup-details'),
@@ -274,22 +286,20 @@ class ReadingPartnerApp {
     }
 
     /**
-     * Setup file upload handlers
+     * Setup file upload handlers (drag-and-drop on start screen)
      */
     _setupUploadHandlers() {
-        const { uploadArea, fileInput, browseBtn } = this._elements;
+        const { uploadArea, fileInput } = this._elements;
 
-        // Browse button
-        browseBtn.addEventListener('click', () => {
-            fileInput.click();
-        });
-
-        // File input change
+        // File input change (used by drag-drop)
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files?.[0];
             if (file) {
-                this._loadBook(file);
+                const source = { type: 'local', filename: file.name };
+                this._loadBook(file, source);
             }
+            // Reset file input
+            e.target.value = '';
         });
 
         // Drag and drop
@@ -308,87 +318,81 @@ class ReadingPartnerApp {
 
             const file = e.dataTransfer?.files?.[0];
             if (file) {
-                this._loadBook(file);
-            }
-        });
-
-        // Click on upload area
-        uploadArea.addEventListener('click', (e) => {
-            if (e.target === uploadArea || e.target.closest('.upload-icon')) {
-                fileInput.click();
+                const source = { type: 'local', filename: file.name };
+                this._loadBook(file, source);
             }
         });
     }
 
     /**
-     * Setup Project Gutenberg handlers
+     * Handle file selection from the book loader modal
+     * @param {File} file
+     * @param {Object} source
      */
-    _setupGutenbergHandlers() {
-        const { gutenbergInput, gutenbergLoadBtn } = this._elements;
+    async _handleFileSelect(file, source) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
 
-        // Load button click
-        gutenbergLoadBtn.addEventListener('click', () => {
-            const input = gutenbergInput.value.trim();
-            if (input) {
-                this._loadFromGutenberg(input);
-            }
-        });
+        if (isFromReader) {
+            // Stop any current playback
+            this._pause();
 
-        // Enter key in input
-        gutenbergInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                const input = gutenbergInput.value.trim();
-                if (input) {
-                    this._loadFromGutenberg(input);
-                }
+            // Stop Q&A if active
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+
+            // Reset Q&A controller book metadata
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
             }
-        });
+
+            // Reset chapter index
+            this._currentChapterIndex = 0;
+        }
+
+        // Hide the modal
+        this._bookLoaderModal.hide();
+
+        // Load the book
+        await this._loadBook(file, source);
     }
 
     /**
-     * Load a book from Project Gutenberg
-     * @param {string} input - Book ID or URL
+     * Handle Gutenberg load from the book loader modal
+     * @param {string} bookId
      */
-    async _loadFromGutenberg(input) {
-        const { loadingIndicator, loadingText } = this._elements;
+    async _handleGutenbergLoad(bookId) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+
+        if (isFromReader) {
+            // Stop any current playback
+            this._pause();
+
+            // Stop Q&A if active
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+
+            // Reset Q&A controller book metadata
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
+            }
+
+            // Reset chapter index
+            this._currentChapterIndex = 0;
+        }
+
+        // Show loading in modal
+        this._bookLoaderModal.showLoading('Fetching from Project Gutenberg...');
 
         try {
-            // Show loading
-            loadingIndicator.classList.remove('hidden');
-            loadingText.textContent = 'Fetching from Project Gutenberg...';
+            // Download the book
+            this._bookLoaderModal.showLoading('Downloading EPUB...');
 
-            // Extract book ID from input
-            let bookId;
-            if (input.includes('gutenberg.org')) {
-                // Extract ID from URL
-                const match = input.match(/\/(?:ebooks|files|cache\/epub)\/(\d+)/);
-                if (match) {
-                    bookId = match[1];
-                } else {
-                    throw new Error('Invalid Project Gutenberg URL');
-                }
-            } else {
-                // Assume it's a book ID
-                bookId = input;
-            }
-
-            // Validate book ID is a number
-            if (!/^\d+$/.test(bookId)) {
-                throw new Error('Please enter a valid book ID (numbers only) or URL');
-            }
-
-            loadingText.textContent = 'Downloading EPUB...';
-
-            // Project Gutenberg doesn't support CORS, so we need to use a CORS proxy
-            // The cache mirror is most reliable
             const corsProxy = 'https://corsproxy.io/?';
-
             const urlsToTry = [
-                // Cache mirror (most reliable)
                 `${corsProxy}https://gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`,
-                // UTF-8 version
                 `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
-                // Standard version
                 `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}.epub`
             ];
 
@@ -402,34 +406,37 @@ class ReadingPartnerApp {
                     if (response.ok) {
                         const blob = await response.blob();
 
-                        // Verify it's actually an EPUB file
                         if (blob.size < 100) {
                             throw new Error('Downloaded file is too small to be an EPUB');
                         }
 
                         const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
-                        await this._loadBook(file);
+                        const source = { type: 'gutenberg', bookId };
+
+                        // Hide modal
+                        this._bookLoaderModal.hide();
+
+                        // Load the book
+                        await this._loadBook(file, source);
                         success = true;
                         break;
                     }
                 } catch (error) {
                     lastError = error;
                     console.log(`Failed to load from ${url}:`, error.message);
-                    // Continue to next URL
                 }
             }
 
             if (!success) {
                 throw new Error(
-                    `Book ${bookId} could not be loaded. The book might not be available as EPUB, or there may be network issues. ` +
-                    `Try downloading manually from https://www.gutenberg.org/ebooks/${bookId} and uploading the EPUB file.`
+                    `Book ${bookId} could not be loaded. The book might not be available as EPUB. ` +
+                    `Try downloading manually from https://www.gutenberg.org/ebooks/${bookId}`
                 );
             }
 
         } catch (error) {
             console.error('Failed to load from Gutenberg:', error);
-            this._showUploadError(error.message);
-            loadingIndicator.classList.add('hidden');
+            this._bookLoaderModal.showError(error.message);
         }
     }
 
@@ -477,52 +484,11 @@ class ReadingPartnerApp {
     }
 
     /**
-     * Trigger file picker to load a new book from the reader screen
-     */
-    _triggerLoadNewBook() {
-        // Create a temporary file input (reuse won't work if same file is selected)
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.epub';
-        input.addEventListener('change', (e) => {
-            const file = e.target.files?.[0];
-            if (file) {
-                this._loadNewBook(file);
-            }
-        });
-        input.click();
-    }
-
-    /**
-     * Load a new book while already in the reader screen
-     * @param {File} file
-     */
-    async _loadNewBook(file) {
-        // Stop any current playback
-        this._pause();
-
-        // Stop Q&A if active
-        this._qaController?.stop();
-        this._qaOverlay?.hide();
-
-        // Reset Q&A controller book metadata
-        if (this._qaController) {
-            this._qaController.setBookMeta(null);
-            this._qaController.clearHistory();
-        }
-
-        // Reset chapter index
-        this._currentChapterIndex = 0;
-
-        // Load the book using the existing _loadBook flow
-        await this._loadBook(file);
-    }
-
-    /**
      * Load a book from file
      * @param {File} file
+     * @param {Object} [source] - Source information for persistence
      */
-    async _loadBook(file) {
+    async _loadBook(file, source = null) {
         const { loadingIndicator, loadingText } = this._elements;
         const isFromReader = this._elements.readerScreen.classList.contains('active');
 
@@ -536,7 +502,7 @@ class ReadingPartnerApp {
             }
 
             // Parse EPUB and save to storage
-            this._currentBook = await this._readingState.loadBook(file);
+            this._currentBook = await this._readingState.loadBook(file, source);
 
             if (!this._currentBook.chapters.length) {
                 throw new Error('No readable content found in this EPUB');
@@ -1619,6 +1585,7 @@ class ReadingPartnerApp {
             sentenceIndex: position.sentenceIndex,
             bookmarkCount: this._readingState.getBookmarks().length,
             highlightCount: this._readingState.getHighlights().length,
+            source: this._currentBook.source || null,
             timestamp: Date.now()
         };
 
@@ -1679,10 +1646,16 @@ class ReadingPartnerApp {
         }
         const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
 
+        // Show source info
+        let sourceText = '';
+        if (savedState.source?.type === 'gutenberg') {
+            sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
+        }
+
         banner.innerHTML = `
             <div class="resume-info">
                 <div class="resume-title">Continue reading</div>
-                <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}" - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
                 <div class="resume-time">Last read ${timeAgo}</div>
             </div>
             <button class="btn btn-primary btn-sm resume-btn">Resume</button>
