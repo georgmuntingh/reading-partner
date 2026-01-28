@@ -4,14 +4,15 @@
  */
 
 const DB_NAME = 'reading-partner-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 // Store names
 const STORES = {
     BOOKS: 'books',
     POSITIONS: 'positions',
     BOOKMARKS: 'bookmarks',
-    SETTINGS: 'settings'
+    SETTINGS: 'settings',
+    HIGHLIGHTS: 'highlights'
 };
 
 export class StorageService {
@@ -24,15 +25,67 @@ export class StorageService {
      * @returns {Promise<void>}
      */
     async init() {
+        try {
+            await this._openDatabase();
+        } catch (error) {
+            console.warn('Database init failed, deleting and retrying:', error.message);
+            // If upgrade fails (e.g. blocked by old connection), delete and recreate
+            await this._deleteDatabase();
+            await this._openDatabase();
+        }
+    }
+
+    /**
+     * Delete the database
+     * @returns {Promise<void>}
+     */
+    _deleteDatabase() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.deleteDatabase(DB_NAME);
+            request.onsuccess = () => {
+                console.log('Database deleted for fresh creation');
+                resolve();
+            };
+            request.onerror = () => reject(new Error('Failed to delete database'));
+            request.onblocked = () => {
+                console.warn('Database delete blocked, resolving anyway');
+                resolve();
+            };
+        });
+    }
+
+    /**
+     * Open the IndexedDB database
+     * @returns {Promise<void>}
+     */
+    _openDatabase() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(DB_NAME, DB_VERSION);
 
+            let blocked = false;
+
             request.onerror = () => {
-                reject(new Error('Failed to open database'));
+                console.error('Database open error:', request.error);
+                reject(new Error('Failed to open database: ' + (request.error?.message || 'unknown error')));
+            };
+
+            request.onblocked = () => {
+                blocked = true;
+                console.warn('Database upgrade blocked by another connection');
+                reject(new Error('Database upgrade blocked'));
             };
 
             request.onsuccess = () => {
+                if (blocked) return;
                 this._db = request.result;
+
+                // Handle version change from other tabs
+                this._db.onversionchange = () => {
+                    this._db.close();
+                    this._db = null;
+                    console.log('Database version changed in another tab, connection closed');
+                };
+
                 console.log('Storage service initialized');
                 resolve();
             };
@@ -62,7 +115,13 @@ export class StorageService {
                     db.createObjectStore(STORES.SETTINGS, { keyPath: 'key' });
                 }
 
-                console.log('Database schema created');
+                // Highlights store
+                if (!db.objectStoreNames.contains(STORES.HIGHLIGHTS)) {
+                    const highlightStore = db.createObjectStore(STORES.HIGHLIGHTS, { keyPath: 'id' });
+                    highlightStore.createIndex('bookId', 'bookId', { unique: false });
+                }
+
+                console.log('Database schema created/upgraded to version', DB_VERSION);
             };
         });
     }
@@ -243,6 +302,59 @@ export class StorageService {
     async deleteBookmark(id) {
         const transaction = this._db.transaction([STORES.BOOKMARKS], 'readwrite');
         const store = transaction.objectStore(STORES.BOOKMARKS);
+
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // ========== Highlights ==========
+
+    /**
+     * Add a highlight
+     * @param {Object} highlight - { id, bookId, chapterIndex, startSentenceIndex, endSentenceIndex, text, note, color, createdAt }
+     * @returns {Promise<void>}
+     */
+    async addHighlight(highlight) {
+        const transaction = this._db.transaction([STORES.HIGHLIGHTS], 'readwrite');
+        const store = transaction.objectStore(STORES.HIGHLIGHTS);
+
+        highlight.createdAt = highlight.createdAt || Date.now();
+
+        return new Promise((resolve, reject) => {
+            const request = store.put(highlight);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all highlights for a book
+     * @param {string} bookId
+     * @returns {Promise<Object[]>}
+     */
+    async getHighlights(bookId) {
+        const transaction = this._db.transaction([STORES.HIGHLIGHTS], 'readonly');
+        const store = transaction.objectStore(STORES.HIGHLIGHTS);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(bookId);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete a highlight
+     * @param {string} id
+     * @returns {Promise<void>}
+     */
+    async deleteHighlight(id) {
+        const transaction = this._db.transaction([STORES.HIGHLIGHTS], 'readwrite');
+        const store = transaction.objectStore(STORES.HIGHLIGHTS);
 
         return new Promise((resolve, reject) => {
             const request = store.delete(id);

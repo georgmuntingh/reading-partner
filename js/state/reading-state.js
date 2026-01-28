@@ -11,17 +11,20 @@ export class ReadingStateController {
      * @param {Object} options
      * @param {(chapterIndex: number, sentenceIndex: number) => void} options.onPositionChange
      * @param {() => void} options.onBookmarksChange
+     * @param {() => void} options.onHighlightsChange
      */
-    constructor({ onPositionChange, onBookmarksChange } = {}) {
+    constructor({ onPositionChange, onBookmarksChange, onHighlightsChange } = {}) {
         this._currentBook = null;
         this._position = {
             chapterIndex: 0,
             sentenceIndex: 0
         };
         this._bookmarks = [];
+        this._highlights = [];
         this._saveTimeout = null;
         this._onPositionChange = onPositionChange;
         this._onBookmarksChange = onBookmarksChange;
+        this._onHighlightsChange = onHighlightsChange;
     }
 
     /**
@@ -64,6 +67,9 @@ export class ReadingStateController {
         // Load bookmarks
         this._bookmarks = await storage.getBookmarks(book.id);
 
+        // Load highlights
+        this._highlights = await storage.getHighlights(book.id);
+
         return book;
     }
 
@@ -94,6 +100,9 @@ export class ReadingStateController {
         // Load bookmarks
         this._bookmarks = await storage.getBookmarks(bookId);
 
+        // Load highlights
+        this._highlights = await storage.getHighlights(bookId);
+
         // Update last opened
         await storage.saveBook(book);
 
@@ -121,6 +130,12 @@ export class ReadingStateController {
         const bookmarks = await storage.getBookmarks(bookId);
         for (const bookmark of bookmarks) {
             await storage.deleteBookmark(bookmark.id);
+        }
+
+        // Delete all highlights for this book
+        const highlights = await storage.getHighlights(bookId);
+        for (const highlight of highlights) {
+            await storage.deleteHighlight(highlight.id);
         }
     }
 
@@ -248,6 +263,91 @@ export class ReadingStateController {
      */
     getBookmarks() {
         return [...this._bookmarks];
+    }
+
+    // ========== Highlights ==========
+
+    /**
+     * Add a highlight
+     * @param {number} chapterIndex
+     * @param {number} startSentenceIndex
+     * @param {number} endSentenceIndex
+     * @param {string} text - The highlighted text
+     * @param {string} [note='']
+     * @param {string} [color='yellow']
+     * @returns {Promise<Object>} highlight
+     */
+    async addHighlight(chapterIndex, startSentenceIndex, endSentenceIndex, text, note = '', color = 'yellow') {
+        if (!this._currentBook) {
+            throw new Error('No book loaded');
+        }
+
+        const highlight = {
+            id: this._generateHighlightId(),
+            bookId: this._currentBook.id,
+            chapterIndex,
+            startSentenceIndex,
+            endSentenceIndex,
+            text,
+            note,
+            color,
+            createdAt: Date.now()
+        };
+
+        await storage.addHighlight(highlight);
+        this._highlights.push(highlight);
+        this._highlights.sort((a, b) => {
+            if (a.chapterIndex !== b.chapterIndex) {
+                return a.chapterIndex - b.chapterIndex;
+            }
+            return a.startSentenceIndex - b.startSentenceIndex;
+        });
+
+        this._notifyHighlightsChange();
+        return highlight;
+    }
+
+    /**
+     * Delete a highlight
+     * @param {string} highlightId
+     * @returns {Promise<void>}
+     */
+    async deleteHighlight(highlightId) {
+        await storage.deleteHighlight(highlightId);
+        this._highlights = this._highlights.filter(h => h.id !== highlightId);
+        this._notifyHighlightsChange();
+    }
+
+    /**
+     * Get all highlights for current book
+     * @returns {Object[]}
+     */
+    getHighlights() {
+        return [...this._highlights];
+    }
+
+    /**
+     * Get highlights for a specific chapter
+     * @param {number} chapterIndex
+     * @returns {Object[]}
+     */
+    getHighlightsForChapter(chapterIndex) {
+        return this._highlights.filter(h => h.chapterIndex === chapterIndex);
+    }
+
+    /**
+     * Generate highlight ID
+     * @returns {string}
+     */
+    _generateHighlightId() {
+        return `highlight_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+
+    /**
+     * Notify highlights change
+     */
+    _notifyHighlightsChange() {
+        this._onHighlightsChange?.();
     }
 
     /**

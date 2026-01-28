@@ -14,6 +14,8 @@ export class NavigationPanel {
      * @param {(bookmark: Object) => void} callbacks.onBookmarkSelect
      * @param {(bookmarkId: string) => void} callbacks.onBookmarkDelete
      * @param {() => void} callbacks.onAddBookmark
+     * @param {(highlight: Object) => void} callbacks.onHighlightSelect
+     * @param {(highlightId: string) => void} callbacks.onHighlightDelete
      */
     constructor(options, callbacks) {
         this._panel = options.panel;
@@ -24,6 +26,7 @@ export class NavigationPanel {
         this._currentBook = null;
         this._currentChapterIndex = 0;
         this._bookmarks = [];
+        this._highlights = [];
 
         this._setupEventListeners();
     }
@@ -89,6 +92,15 @@ export class NavigationPanel {
     }
 
     /**
+     * Set highlights
+     * @param {Object[]} highlights
+     */
+    setHighlights(highlights) {
+        this._highlights = highlights;
+        this._renderHighlights();
+    }
+
+    /**
      * Render the navigation panel
      */
     render() {
@@ -98,6 +110,7 @@ export class NavigationPanel {
 
         this._renderChapters();
         this._renderBookmarks();
+        this._renderHighlights();
     }
 
     /**
@@ -187,6 +200,68 @@ export class NavigationPanel {
             });
 
             bookmarksList.appendChild(item);
+        });
+    }
+
+    /**
+     * Render highlights list
+     */
+    _renderHighlights() {
+        const highlightsList = this._panel.querySelector('#highlights-list');
+        if (!highlightsList) {
+            return;
+        }
+
+        if (this._highlights.length === 0) {
+            highlightsList.innerHTML = '<div class="nav-empty">No highlights yet</div>';
+            return;
+        }
+
+        highlightsList.innerHTML = '';
+
+        this._highlights.forEach(highlight => {
+            const item = document.createElement('div');
+            item.className = 'nav-item highlight-item';
+
+            const chapterTitle = this._currentBook?.chapters[highlight.chapterIndex]?.title || 'Unknown';
+            const colorClass = `highlight-color-${highlight.color || 'yellow'}`;
+            const truncatedText = highlight.text.length > 80
+                ? highlight.text.substring(0, 80) + '...'
+                : highlight.text;
+
+            item.innerHTML = `
+                <div class="highlight-nav-content">
+                    <div class="highlight-color-indicator ${colorClass}"></div>
+                    <div class="highlight-nav-details">
+                        <div class="highlight-nav-chapter">Ch. ${highlight.chapterIndex + 1}: ${this._escapeHtml(chapterTitle)}</div>
+                        <div class="highlight-nav-text">"${this._escapeHtml(truncatedText)}"</div>
+                    </div>
+                </div>
+                <button class="highlight-delete-btn" aria-label="Delete highlight">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            `;
+
+            // Click on highlight - navigate
+            const content = item.querySelector('.highlight-nav-content');
+            content.addEventListener('click', () => {
+                this._callbacks.onHighlightSelect?.(highlight);
+                this.close();
+            });
+
+            // Delete button
+            const deleteBtn = item.querySelector('.highlight-delete-btn');
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (confirm('Delete this highlight?')) {
+                    this._callbacks.onHighlightDelete?.(highlight.id);
+                }
+            });
+
+            highlightsList.appendChild(item);
         });
     }
 
