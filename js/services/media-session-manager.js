@@ -9,18 +9,65 @@
  *
  * IMPORTANT: The Media Session API requires an active <audio> element to work
  * properly with system media controls and Bluetooth headsets. We use a silent
- * audio loop to keep the session active while our actual TTS plays via Web Audio API.
+ * audio loop that plays CONTINUOUSLY to keep the session active. The audio
+ * element never pauses - only the playbackState changes to reflect TTS state.
  */
 
-// Silent audio: 1 second of silence encoded as MP3
-// This keeps the Media Session active without producing any sound
-const SILENT_AUDIO_BASE64 = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYYoRwmHAAAAAAD/+1DEAAAGAAGn9AAAIAAANIKQAABEqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//tQxBaAAADSAAAAAAAAANIAAAAASqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+// Silent audio: ~2 seconds of silence as WAV
+// Base64 encoded minimal WAV file (44 bytes header + silence)
+// This keeps the Media Session active without producing any audible sound
+const SILENT_WAV = (() => {
+    // Create a valid WAV file with 2 seconds of silence at 8kHz mono 8-bit
+    const sampleRate = 8000;
+    const duration = 2; // seconds
+    const numSamples = sampleRate * duration;
+    const dataSize = numSamples;
+    const fileSize = 44 + dataSize;
+
+    const buffer = new ArrayBuffer(fileSize);
+    const view = new DataView(buffer);
+
+    // WAV header
+    const writeString = (offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+            view.setUint8(offset + i, string.charCodeAt(i));
+        }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, fileSize - 8, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt chunk size
+    view.setUint16(20, 1, true); // PCM format
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate, true); // byte rate
+    view.setUint16(32, 1, true); // block align
+    view.setUint16(34, 8, true); // bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    // Fill with silence (128 = silence for 8-bit PCM)
+    for (let i = 44; i < fileSize; i++) {
+        view.setUint8(i, 128);
+    }
+
+    // Convert to base64
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return 'data:audio/wav;base64,' + btoa(binary);
+})();
 
 class MediaSessionManager {
     constructor() {
         this._isSupported = 'mediaSession' in navigator;
         this._isInitialized = false;
         this._isQAModeActive = false;
+        this._isTTSPlaying = false; // Track TTS state separately
 
         // Callbacks
         this._onPlay = null;
@@ -33,12 +80,9 @@ class MediaSessionManager {
         this._chapterTitle = '';
         this._author = '';
 
-        // Playback state
-        this._playbackState = 'paused'; // 'playing', 'paused', 'none'
-
         // Silent audio element to keep Media Session active
         this._silentAudio = null;
-        this._isAudioActive = false;
+        this._isSessionActive = false;
     }
 
     /**
@@ -79,22 +123,38 @@ class MediaSessionManager {
      * Create a silent audio element to keep Media Session active
      * This is required because the Media Session API needs an active <audio>
      * element to receive media key events, especially on mobile devices.
+     *
+     * IMPORTANT: This audio element plays CONTINUOUSLY and never pauses.
+     * Only the playbackState is updated to reflect TTS state.
      */
     _createSilentAudio() {
         if (this._silentAudio) return;
 
         this._silentAudio = document.createElement('audio');
-        this._silentAudio.src = SILENT_AUDIO_BASE64;
+        this._silentAudio.src = SILENT_WAV;
         this._silentAudio.loop = true;
-        this._silentAudio.volume = 0.01; // Nearly silent but not muted (muted audio doesn't activate Media Session)
+        // Use a very low but non-zero volume (muted audio doesn't activate Media Session on some browsers)
+        this._silentAudio.volume = 0.001;
 
-        // Handle audio element events
+        // Prevent the audio from being visible in picture-in-picture or similar
+        this._silentAudio.disablePictureInPicture = true;
+
+        // Handle audio element events for debugging
         this._silentAudio.addEventListener('play', () => {
-            console.log('Media Session: Silent audio playing');
+            console.log('Media Session: Silent audio started playing');
+            this._isSessionActive = true;
         });
 
         this._silentAudio.addEventListener('pause', () => {
-            console.log('Media Session: Silent audio paused');
+            console.log('Media Session: Silent audio paused (unexpected!)');
+            this._isSessionActive = false;
+            // Try to resume if paused unexpectedly
+            this._ensureAudioPlaying();
+        });
+
+        this._silentAudio.addEventListener('ended', () => {
+            console.log('Media Session: Silent audio ended (should not happen with loop)');
+            this._ensureAudioPlaying();
         });
 
         this._silentAudio.addEventListener('error', (e) => {
@@ -103,43 +163,36 @@ class MediaSessionManager {
     }
 
     /**
-     * Activate the Media Session by playing silent audio
-     * Call this when TTS playback starts
+     * Ensure the silent audio is playing (call this on user interaction)
      */
-    async activateSession() {
-        if (!this._silentAudio || this._isAudioActive) return;
+    async _ensureAudioPlaying() {
+        if (!this._silentAudio) return;
 
-        try {
-            await this._silentAudio.play();
-            this._isAudioActive = true;
-            console.log('Media Session activated');
-        } catch (error) {
-            // Autoplay might be blocked - this is fine, user interaction will enable it
-            console.log('Media Session activation pending user interaction:', error.message);
+        if (this._silentAudio.paused) {
+            try {
+                await this._silentAudio.play();
+                console.log('Media Session: Silent audio resumed');
+            } catch (error) {
+                console.log('Media Session: Could not play silent audio:', error.message);
+            }
         }
     }
 
     /**
-     * Pause the silent audio (keeps session but shows paused state)
+     * Activate the Media Session by starting silent audio playback
+     * Call this on user interaction (e.g., when user clicks play)
      */
-    pauseSession() {
-        if (!this._silentAudio) return;
-
-        this._silentAudio.pause();
-        this._isAudioActive = false;
-    }
-
-    /**
-     * Resume the silent audio
-     */
-    async resumeSession() {
+    async activateSession() {
         if (!this._silentAudio) return;
 
         try {
+            // Start the silent audio - it will loop forever
             await this._silentAudio.play();
-            this._isAudioActive = true;
+            this._isSessionActive = true;
+            console.log('Media Session activated');
         } catch (error) {
-            console.warn('Failed to resume Media Session:', error.message);
+            // Autoplay might be blocked - this is fine, user interaction will enable it
+            console.log('Media Session activation pending user interaction:', error.message);
         }
     }
 
@@ -151,11 +204,10 @@ class MediaSessionManager {
         navigator.mediaSession.setActionHandler('play', () => {
             console.log('Media Session: play action received');
             if (this._isQAModeActive) {
-                // If in Q&A mode, ignore play - Q&A has its own flow
                 return;
             }
-            // Resume our silent audio to keep session active
-            this.resumeSession();
+            this._isTTSPlaying = true;
+            navigator.mediaSession.playbackState = 'playing';
             this._onPlay?.();
         });
 
@@ -163,11 +215,10 @@ class MediaSessionManager {
         navigator.mediaSession.setActionHandler('pause', () => {
             console.log('Media Session: pause action received');
             if (this._isQAModeActive) {
-                // If in Q&A mode, ignore pause - Q&A has its own flow
                 return;
             }
-            // Pause our silent audio
-            this.pauseSession();
+            this._isTTSPlaying = false;
+            navigator.mediaSession.playbackState = 'paused';
             this._onPause?.();
         });
 
@@ -190,11 +241,12 @@ class MediaSessionManager {
         // Stop action (long press on some devices)
         navigator.mediaSession.setActionHandler('stop', () => {
             console.log('Media Session: stop action received');
-            this.pauseSession();
+            this._isTTSPlaying = false;
+            navigator.mediaSession.playbackState = 'paused';
             this._onPause?.();
         });
 
-        // Seek actions are not applicable for TTS, but we should handle them gracefully
+        // Seek actions are not applicable for TTS
         try {
             navigator.mediaSession.setActionHandler('seekbackward', null);
             navigator.mediaSession.setActionHandler('seekforward', null);
@@ -229,44 +281,42 @@ class MediaSessionManager {
             title: title,
             artist: this._author || 'Reading Partner',
             album: this._bookTitle || '',
-            artwork: [
-                // Could add book cover here if available
-                // { src: '/icons/icon-96.png', sizes: '96x96', type: 'image/png' },
-                // { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-            ]
+            artwork: []
         });
     }
 
     /**
      * Update the playback state
-     * This should be called when TTS playback state changes
+     * This should be called when TTS playback state changes.
+     * IMPORTANT: This only updates the playbackState - the silent audio keeps playing.
      * @param {'playing'|'paused'|'stopped'|'buffering'} state
      */
     setPlaybackState(state) {
         if (!this._isSupported) return;
 
+        // On any state change, ensure the silent audio is playing
+        // This handles the case where it was blocked initially
+        this._ensureAudioPlaying();
+
         // Map our states to Media Session states
-        let mediaState = 'none';
         if (state === 'playing') {
-            mediaState = 'playing';
-            // Activate the silent audio to keep Media Session engaged
-            this.activateSession();
-        } else if (state === 'paused') {
-            mediaState = 'paused';
-            this.pauseSession();
+            this._isTTSPlaying = true;
+            navigator.mediaSession.playbackState = 'playing';
+            // Activate session if not already (handles first play)
+            if (!this._isSessionActive) {
+                this.activateSession();
+            }
+        } else if (state === 'paused' || state === 'stopped') {
+            this._isTTSPlaying = false;
+            navigator.mediaSession.playbackState = 'paused';
         } else if (state === 'buffering') {
-            mediaState = 'paused'; // Show as paused during buffering
-            // Keep audio active during buffering so we can receive controls
-            this.activateSession();
-        } else {
-            mediaState = 'none';
-            this.pauseSession();
+            // Keep current state during buffering, but ensure session is active
+            if (!this._isSessionActive) {
+                this.activateSession();
+            }
         }
 
-        this._playbackState = mediaState;
-        navigator.mediaSession.playbackState = mediaState;
-
-        console.log(`Media Session playback state: ${mediaState}`);
+        console.log(`Media Session playback state: ${navigator.mediaSession.playbackState} (TTS: ${state})`);
     }
 
     /**
@@ -284,8 +334,8 @@ class MediaSessionManager {
                 artist: this._bookTitle || 'Reading Partner',
                 album: ''
             });
-            // Keep session active during Q&A
-            this.activateSession();
+            // Ensure session stays active during Q&A
+            this._ensureAudioPlaying();
         } else {
             // Restore normal metadata
             this.updateMetadata({});
@@ -305,7 +355,7 @@ class MediaSessionManager {
      * @returns {boolean}
      */
     isActive() {
-        return this._isAudioActive;
+        return this._isSessionActive;
     }
 
     /**
@@ -320,7 +370,7 @@ class MediaSessionManager {
             this._silentAudio.src = '';
             this._silentAudio = null;
         }
-        this._isAudioActive = false;
+        this._isSessionActive = false;
 
         // Clear action handlers
         try {
