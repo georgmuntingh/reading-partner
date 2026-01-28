@@ -249,7 +249,11 @@ export class SettingsModal {
      */
     async _loadBuildInfo() {
         try {
-            const response = await fetch('/build-info.json');
+            // Try both paths (dev uses /public/, production uses root)
+            let response = await fetch('/public/build-info.json');
+            if (!response.ok) {
+                response = await fetch('/build-info.json');
+            }
             const info = await response.json();
 
             const buildDate = new Date(info.buildTime);
