@@ -16,8 +16,9 @@ export class ReaderView {
      * @param {() => void} [options.onPageChange] - Callback when page changes
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
      * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
+     * @param {(startIndex: number, endIndex: number, text: string) => void} [options.onHighlight] - Callback when user highlights text
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
@@ -25,6 +26,7 @@ export class ReaderView {
         this._onPageChange = onPageChange;
         this._onLinkClick = onLinkClick;
         this._onImageClick = onImageClick;
+        this._onHighlight = onHighlight;
 
         this._textContent = container.querySelector('#text-content') || container;
         this._pageContainer = container.querySelector('#page-container');
@@ -38,6 +40,7 @@ export class ReaderView {
         this._sentences = [];
         this._currentIndex = -1;
         this._html = null; // Full HTML content
+        this._highlights = []; // Stored highlights for current chapter
 
         // Pagination state
         this._currentPage = 0;
@@ -47,10 +50,15 @@ export class ReaderView {
         this._pageToSentences = new Map(); // Maps page number to array of sentence indices
         this._isCalculatingPages = false;
 
+        // Highlight toolbar
+        this._highlightToolbar = null;
+        this._createHighlightToolbar();
+
         // Use event delegation for click handling
         this._setupEventDelegation();
         this._setupPageNavigation();
         this._setupResizeHandler();
+        this._setupTextSelection();
     }
 
     /**
@@ -641,10 +649,258 @@ export class ReaderView {
         return false;
     }
 
+    // ========== Highlight Support ==========
+
+    /**
+     * Create the floating highlight toolbar element
+     */
+    _createHighlightToolbar() {
+        this._highlightToolbar = document.createElement('div');
+        this._highlightToolbar.className = 'highlight-toolbar hidden';
+        this._highlightToolbar.innerHTML = `
+            <button class="highlight-btn highlight-btn-yellow" data-color="yellow" title="Highlight yellow">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
+                </svg>
+            </button>
+            <button class="highlight-btn highlight-btn-green" data-color="green" title="Highlight green">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
+                </svg>
+            </button>
+            <button class="highlight-btn highlight-btn-blue" data-color="blue" title="Highlight blue">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
+                </svg>
+            </button>
+            <button class="highlight-btn highlight-btn-pink" data-color="pink" title="Highlight pink">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
+                </svg>
+            </button>
+        `;
+        document.body.appendChild(this._highlightToolbar);
+
+        // Handle highlight button clicks
+        this._highlightToolbar.addEventListener('mousedown', (e) => {
+            // Prevent text deselection
+            e.preventDefault();
+        });
+        this._highlightToolbar.addEventListener('click', (e) => {
+            const btn = e.target.closest('.highlight-btn');
+            if (btn) {
+                const color = btn.dataset.color;
+                this._createHighlightFromSelection(color);
+            }
+        });
+    }
+
+    /**
+     * Setup text selection handler for highlighting
+     */
+    _setupTextSelection() {
+        document.addEventListener('selectionchange', () => {
+            this._handleSelectionChange();
+        });
+
+        // Hide toolbar when clicking outside
+        document.addEventListener('mousedown', (e) => {
+            if (!this._highlightToolbar.contains(e.target) && !this._textContent.contains(e.target)) {
+                this._hideHighlightToolbar();
+            }
+        });
+    }
+
+    /**
+     * Handle text selection changes
+     */
+    _handleSelectionChange() {
+        const selection = window.getSelection();
+
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            // Delay hiding to allow toolbar button clicks
+            this._hideToolbarTimeout = setTimeout(() => {
+                this._hideHighlightToolbar();
+            }, 200);
+            return;
+        }
+
+        // Check if selection is within our text content
+        const range = selection.getRangeAt(0);
+        if (!this._textContent.contains(range.startContainer) || !this._textContent.contains(range.endContainer)) {
+            return;
+        }
+
+        // Find sentence elements in the selection
+        const startSentence = this._findSentenceElement(range.startContainer);
+        const endSentence = this._findSentenceElement(range.endContainer);
+
+        if (!startSentence || !endSentence) {
+            return;
+        }
+
+        // Clear any pending hide
+        if (this._hideToolbarTimeout) {
+            clearTimeout(this._hideToolbarTimeout);
+            this._hideToolbarTimeout = null;
+        }
+
+        // Position and show the toolbar
+        const rect = range.getBoundingClientRect();
+        this._showHighlightToolbar(rect);
+    }
+
+    /**
+     * Find the parent sentence element for a node
+     * @param {Node} node
+     * @returns {HTMLElement|null}
+     */
+    _findSentenceElement(node) {
+        let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+        while (el && el !== this._textContent) {
+            if (el.classList && el.classList.contains('sentence') && el.dataset.index !== undefined) {
+                return el;
+            }
+            el = el.parentElement;
+        }
+        return null;
+    }
+
+    /**
+     * Show the highlight toolbar near the selection
+     * @param {DOMRect} selectionRect
+     */
+    _showHighlightToolbar(selectionRect) {
+        const toolbar = this._highlightToolbar;
+        toolbar.classList.remove('hidden');
+
+        // Position above the selection
+        const toolbarHeight = toolbar.offsetHeight;
+        const toolbarWidth = toolbar.offsetWidth;
+
+        let top = selectionRect.top - toolbarHeight - 8 + window.scrollY;
+        let left = selectionRect.left + (selectionRect.width / 2) - (toolbarWidth / 2) + window.scrollX;
+
+        // Keep within viewport
+        if (top < window.scrollY + 4) {
+            top = selectionRect.bottom + 8 + window.scrollY;
+        }
+        left = Math.max(4, Math.min(left, window.innerWidth - toolbarWidth - 4));
+
+        toolbar.style.top = `${top}px`;
+        toolbar.style.left = `${left}px`;
+    }
+
+    /**
+     * Hide the highlight toolbar
+     */
+    _hideHighlightToolbar() {
+        this._highlightToolbar.classList.add('hidden');
+    }
+
+    /**
+     * Create a highlight from the current text selection
+     * @param {string} color
+     */
+    _createHighlightFromSelection(color = 'yellow') {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const startSentence = this._findSentenceElement(range.startContainer);
+        const endSentence = this._findSentenceElement(range.endContainer);
+
+        if (!startSentence || !endSentence) {
+            return;
+        }
+
+        const startIndex = parseInt(startSentence.dataset.index, 10);
+        const endIndex = parseInt(endSentence.dataset.index, 10);
+        const text = selection.toString().trim();
+
+        if (!text) return;
+
+        // Apply visual highlight immediately
+        this._applyHighlightToSentences(startIndex, endIndex, color);
+
+        // Clear selection and hide toolbar
+        selection.removeAllRanges();
+        this._hideHighlightToolbar();
+
+        // Notify callback
+        this._onHighlight?.(startIndex, endIndex, text, color);
+    }
+
+    /**
+     * Apply visual highlight to sentence elements
+     * @param {number} startIndex
+     * @param {number} endIndex
+     * @param {string} color
+     */
+    _applyHighlightToSentences(startIndex, endIndex, color = 'yellow') {
+        for (let i = startIndex; i <= endIndex; i++) {
+            const el = this._textContent.querySelector(`.sentence[data-index="${i}"]`);
+            if (el) {
+                el.classList.add('user-highlight', `highlight-${color}`);
+            }
+        }
+    }
+
+    /**
+     * Remove visual highlight from sentence elements
+     * @param {number} startIndex
+     * @param {number} endIndex
+     */
+    _removeHighlightFromSentences(startIndex, endIndex) {
+        for (let i = startIndex; i <= endIndex; i++) {
+            const el = this._textContent.querySelector(`.sentence[data-index="${i}"]`);
+            if (el) {
+                el.classList.remove('user-highlight', 'highlight-yellow', 'highlight-green', 'highlight-blue', 'highlight-pink');
+            }
+        }
+    }
+
+    /**
+     * Set highlights for the current chapter and apply them visually
+     * @param {Object[]} highlights - Array of highlight objects
+     */
+    setHighlights(highlights) {
+        this._highlights = highlights;
+        this._applyAllHighlights();
+    }
+
+    /**
+     * Apply all stored highlights to the rendered content
+     */
+    _applyAllHighlights() {
+        // Remove any existing user highlights
+        const existingHighlights = this._textContent.querySelectorAll('.user-highlight');
+        existingHighlights.forEach(el => {
+            el.classList.remove('user-highlight', 'highlight-yellow', 'highlight-green', 'highlight-blue', 'highlight-pink');
+        });
+
+        // Apply stored highlights
+        for (const highlight of this._highlights) {
+            this._applyHighlightToSentences(
+                highlight.startSentenceIndex,
+                highlight.endSentenceIndex,
+                highlight.color || 'yellow'
+            );
+        }
+    }
+
     /**
      * Cleanup event listeners
      */
     destroy() {
         window.removeEventListener('resize', this._debouncedRecalculate);
+        if (this._highlightToolbar) {
+            this._highlightToolbar.remove();
+        }
+        if (this._hideToolbarTimeout) {
+            clearTimeout(this._hideToolbarTimeout);
+        }
     }
 }
