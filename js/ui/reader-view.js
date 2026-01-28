@@ -316,7 +316,11 @@ export class ReaderView {
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
             // Still calculate total pages from scroll height for image-only chapters
-            this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
+            // Add tolerance: if content is within 20px of page boundary, don't count extra page
+            const pageRatio = scrollHeight / pageHeight;
+            const fractionalPart = pageRatio % 1;
+            this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
+            this._totalPages = Math.max(1, this._totalPages);
             this._updatePageIndicator();
             this._updatePageButtons();
             this._isCalculatingPages = false;
@@ -325,8 +329,12 @@ export class ReaderView {
             return;
         }
 
-        // Calculate total pages
-        this._totalPages = Math.max(1, Math.ceil(scrollHeight / pageHeight));
+        // Calculate total pages with tolerance for small overflow
+        // If content is within 5% of a page boundary, don't count it as an extra page
+        const pageRatio = scrollHeight / pageHeight;
+        const fractionalPart = pageRatio % 1;
+        this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
+        this._totalPages = Math.max(1, this._totalPages);
 
         // Map each sentence to a page based on its position
         sentenceElements.forEach(el => {
