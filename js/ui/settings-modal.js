@@ -249,7 +249,7 @@ export class SettingsModal {
      */
     async _loadBuildInfo() {
         try {
-            const response = await fetch('./build-info.json');
+            const response = await fetch('/build-info.json');
             const info = await response.json();
 
             const buildDate = new Date(info.buildTime);

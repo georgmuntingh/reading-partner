@@ -33,6 +33,7 @@ export class ReaderView {
         this._pageCurrentEl = container.querySelector('#page-current');
         this._pageTotalEl = container.querySelector('#page-total');
         this._pageCurrentOverlayEl = container.querySelector('#page-current-overlay');
+        this._pageTotalOverlayEl = container.querySelector('#page-total-overlay');
 
         this._sentences = [];
         this._currentIndex = -1;
@@ -456,6 +457,9 @@ export class ReaderView {
         }
         if (this._pageCurrentOverlayEl) {
             this._pageCurrentOverlayEl.textContent = (this._currentPage + 1).toString();
+        }
+        if (this._pageTotalOverlayEl) {
+            this._pageTotalOverlayEl.textContent = this._totalPages.toString();
         }
     }
 
