@@ -219,8 +219,14 @@ export class PlaybackControls {
     /**
      * Temporarily disable Ask button (during Q&A mode)
      * @param {boolean} disabled
+     * @param {string} [reason] - Optional reason for disabling (shown as tooltip)
      */
-    setAskDisabled(disabled) {
+    setAskDisabled(disabled, reason) {
         this._askBtn.disabled = disabled;
+        if (disabled && reason) {
+            this._askBtn.title = reason;
+        } else {
+            this._askBtn.title = 'Ask a question';
+        }
     }
 }
