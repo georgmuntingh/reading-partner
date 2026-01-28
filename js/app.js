@@ -56,6 +56,7 @@ class ReadingPartnerApp {
     async init() {
         this._cacheElements();
         this._setupUploadHandlers();
+        this._setupGutenbergHandlers();
         this._setupKeyboardShortcuts();
         this._setupQASetup();
 
@@ -225,6 +226,10 @@ class ReadingPartnerApp {
             loadingIndicator: document.getElementById('loading-indicator'),
             loadingText: document.getElementById('loading-text'),
 
+            // Gutenberg
+            gutenbergInput: document.getElementById('gutenberg-input'),
+            gutenbergLoadBtn: document.getElementById('gutenberg-load-btn'),
+
             // Q&A Setup on welcome screen
             qaSetupDetails: document.getElementById('qa-setup-details'),
             qaSetupStatus: document.getElementById('qa-setup-status'),
@@ -313,6 +318,95 @@ class ReadingPartnerApp {
                 fileInput.click();
             }
         });
+    }
+
+    /**
+     * Setup Project Gutenberg handlers
+     */
+    _setupGutenbergHandlers() {
+        const { gutenbergInput, gutenbergLoadBtn } = this._elements;
+
+        // Load button click
+        gutenbergLoadBtn.addEventListener('click', () => {
+            const input = gutenbergInput.value.trim();
+            if (input) {
+                this._loadFromGutenberg(input);
+            }
+        });
+
+        // Enter key in input
+        gutenbergInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const input = gutenbergInput.value.trim();
+                if (input) {
+                    this._loadFromGutenberg(input);
+                }
+            }
+        });
+    }
+
+    /**
+     * Load a book from Project Gutenberg
+     * @param {string} input - Book ID or URL
+     */
+    async _loadFromGutenberg(input) {
+        const { loadingIndicator, loadingText } = this._elements;
+
+        try {
+            // Show loading
+            loadingIndicator.classList.remove('hidden');
+            loadingText.textContent = 'Fetching from Project Gutenberg...';
+
+            // Extract book ID from input
+            let bookId;
+            if (input.includes('gutenberg.org')) {
+                // Extract ID from URL
+                const match = input.match(/\/ebooks\/(\d+)/);
+                if (match) {
+                    bookId = match[1];
+                } else {
+                    throw new Error('Invalid Project Gutenberg URL');
+                }
+            } else {
+                // Assume it's a book ID
+                bookId = input;
+            }
+
+            // Validate book ID is a number
+            if (!/^\d+$/.test(bookId)) {
+                throw new Error('Please enter a valid book ID (numbers only) or URL');
+            }
+
+            // Fetch the EPUB file from Project Gutenberg
+            // Try .epub.noimages first as it's smaller and faster
+            const epubUrl = `https://www.gutenberg.org/ebooks/${bookId}.epub.noimages`;
+
+            loadingText.textContent = 'Downloading EPUB...';
+            const response = await fetch(epubUrl);
+
+            if (!response.ok) {
+                // If noimages fails, try with images
+                const epubUrlWithImages = `https://www.gutenberg.org/ebooks/${bookId}.epub.images`;
+                const response2 = await fetch(epubUrlWithImages);
+
+                if (!response2.ok) {
+                    throw new Error(`Book ${bookId} not found or not available as EPUB`);
+                }
+
+                const blob = await response2.blob();
+                const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
+                await this._loadBook(file);
+            } else {
+                const blob = await response.blob();
+                const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
+                await this._loadBook(file);
+            }
+
+        } catch (error) {
+            console.error('Failed to load from Gutenberg:', error);
+            this._showUploadError(error.message);
+            loadingIndicator.classList.add('hidden');
+        }
     }
 
     /**
