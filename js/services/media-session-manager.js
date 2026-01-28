@@ -7,19 +7,15 @@
  * - Double tap / Next track: Enter Q&A mode
  * - Double tap back / Previous track: Exit Q&A mode and continue reading
  *
- * IMPORTANT: The Media Session API requires an active <audio> element to work
- * properly with system media controls and Bluetooth headsets. We use a silent
- * audio loop that plays CONTINUOUSLY to keep the session active. The audio
- * element never pauses - only the playbackState changes to reflect TTS state.
+ * IMPORTANT: The browser determines which action (play/pause) to send based on
+ * the actual audio element state, NOT the playbackState property. So we must
+ * keep the silent audio element's play/pause state in sync with TTS state.
  */
 
-// Silent audio: ~2 seconds of silence as WAV
-// Base64 encoded minimal WAV file (44 bytes header + silence)
-// This keeps the Media Session active without producing any audible sound
+// Generate silent WAV audio programmatically
 const SILENT_WAV = (() => {
-    // Create a valid WAV file with 2 seconds of silence at 8kHz mono 8-bit
     const sampleRate = 8000;
-    const duration = 2; // seconds
+    const duration = 2;
     const numSamples = sampleRate * duration;
     const dataSize = numSamples;
     const fileSize = 44 + dataSize;
@@ -27,7 +23,6 @@ const SILENT_WAV = (() => {
     const buffer = new ArrayBuffer(fileSize);
     const view = new DataView(buffer);
 
-    // WAV header
     const writeString = (offset, string) => {
         for (let i = 0; i < string.length; i++) {
             view.setUint8(offset + i, string.charCodeAt(i));
@@ -38,22 +33,20 @@ const SILENT_WAV = (() => {
     view.setUint32(4, fileSize - 8, true);
     writeString(8, 'WAVE');
     writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // fmt chunk size
-    view.setUint16(20, 1, true); // PCM format
-    view.setUint16(22, 1, true); // mono
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
     view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate, true); // byte rate
-    view.setUint16(32, 1, true); // block align
-    view.setUint16(34, 8, true); // bits per sample
+    view.setUint32(28, sampleRate, true);
+    view.setUint16(32, 1, true);
+    view.setUint16(34, 8, true);
     writeString(36, 'data');
     view.setUint32(40, dataSize, true);
 
-    // Fill with silence (128 = silence for 8-bit PCM)
     for (let i = 44; i < fileSize; i++) {
         view.setUint8(i, 128);
     }
 
-    // Convert to base64
     const bytes = new Uint8Array(buffer);
     let binary = '';
     for (let i = 0; i < bytes.length; i++) {
@@ -67,7 +60,6 @@ class MediaSessionManager {
         this._isSupported = 'mediaSession' in navigator;
         this._isInitialized = false;
         this._isQAModeActive = false;
-        this._isTTSPlaying = false; // Track TTS state separately
 
         // Callbacks
         this._onPlay = null;
@@ -80,26 +72,17 @@ class MediaSessionManager {
         this._chapterTitle = '';
         this._author = '';
 
-        // Silent audio element to keep Media Session active
+        // Silent audio element
         this._silentAudio = null;
-        this._isSessionActive = false;
+        this._hasUserInteraction = false;
     }
 
-    /**
-     * Check if Media Session API is supported
-     * @returns {boolean}
-     */
     isSupported() {
         return this._isSupported;
     }
 
     /**
-     * Initialize the Media Session manager with callbacks
-     * @param {Object} options
-     * @param {() => void} options.onPlay - Called when play is triggered
-     * @param {() => void} options.onPause - Called when pause is triggered
-     * @param {() => void} options.onEnterQAMode - Called when Q&A mode should start (double tap / next track)
-     * @param {() => void} options.onExitQAMode - Called when Q&A mode should end (previous track)
+     * Initialize the Media Session manager
      */
     initialize({ onPlay, onPause, onEnterQAMode, onExitQAMode }) {
         if (!this._isSupported) {
@@ -117,15 +100,13 @@ class MediaSessionManager {
         this._isInitialized = true;
 
         console.log('Media Session Manager initialized');
+        console.log('Media Session debug: Call mediaSessionManager.diagnose() for diagnostic info');
     }
 
     /**
-     * Create a silent audio element to keep Media Session active
-     * This is required because the Media Session API needs an active <audio>
-     * element to receive media key events, especially on mobile devices.
-     *
-     * IMPORTANT: This audio element plays CONTINUOUSLY and never pauses.
-     * Only the playbackState is updated to reflect TTS state.
+     * Create silent audio element
+     * The audio element state (playing/paused) MUST match the TTS state
+     * because the browser uses it to determine which action to send.
      */
     _createSilentAudio() {
         if (this._silentAudio) return;
@@ -133,135 +114,97 @@ class MediaSessionManager {
         this._silentAudio = document.createElement('audio');
         this._silentAudio.src = SILENT_WAV;
         this._silentAudio.loop = true;
-        // Use a very low but non-zero volume (muted audio doesn't activate Media Session on some browsers)
         this._silentAudio.volume = 0.001;
+        this._silentAudio.preload = 'auto';
 
-        // Prevent the audio from being visible in picture-in-picture or similar
-        this._silentAudio.disablePictureInPicture = true;
-
-        // Handle audio element events for debugging
         this._silentAudio.addEventListener('play', () => {
-            console.log('Media Session: Silent audio started playing');
-            this._isSessionActive = true;
+            console.log('Media Session: Audio element started PLAYING');
         });
 
         this._silentAudio.addEventListener('pause', () => {
-            console.log('Media Session: Silent audio paused (unexpected!)');
-            this._isSessionActive = false;
-            // Try to resume if paused unexpectedly
-            this._ensureAudioPlaying();
-        });
-
-        this._silentAudio.addEventListener('ended', () => {
-            console.log('Media Session: Silent audio ended (should not happen with loop)');
-            this._ensureAudioPlaying();
+            console.log('Media Session: Audio element PAUSED');
         });
 
         this._silentAudio.addEventListener('error', (e) => {
-            console.warn('Media Session: Silent audio error', e);
+            console.error('Media Session: Audio error', e.target.error);
         });
-    }
 
-    /**
-     * Ensure the silent audio is playing (call this on user interaction)
-     */
-    async _ensureAudioPlaying() {
-        if (!this._silentAudio) return;
-
-        if (this._silentAudio.paused) {
-            try {
-                await this._silentAudio.play();
-                console.log('Media Session: Silent audio resumed');
-            } catch (error) {
-                console.log('Media Session: Could not play silent audio:', error.message);
-            }
-        }
-    }
-
-    /**
-     * Activate the Media Session by starting silent audio playback
-     * Call this on user interaction (e.g., when user clicks play)
-     */
-    async activateSession() {
-        if (!this._silentAudio) return;
-
-        try {
-            // Start the silent audio - it will loop forever
-            await this._silentAudio.play();
-            this._isSessionActive = true;
-            console.log('Media Session activated');
-        } catch (error) {
-            // Autoplay might be blocked - this is fine, user interaction will enable it
-            console.log('Media Session activation pending user interaction:', error.message);
-        }
+        // Preload the audio
+        this._silentAudio.load();
     }
 
     /**
      * Setup Media Session action handlers
      */
     _setupActionHandlers() {
-        // Play action (single tap when paused)
-        navigator.mediaSession.setActionHandler('play', () => {
-            console.log('Media Session: play action received');
+        // PLAY action - browser sends this when audio is PAUSED
+        navigator.mediaSession.setActionHandler('play', async () => {
+            console.log('Media Session: PLAY action received');
             if (this._isQAModeActive) {
+                console.log('Media Session: Ignoring play - Q&A mode active');
                 return;
             }
-            this._isTTSPlaying = true;
+
+            // Start the silent audio to keep session active
+            try {
+                await this._silentAudio.play();
+            } catch (e) {
+                console.warn('Media Session: Could not play audio:', e.message);
+            }
+
             navigator.mediaSession.playbackState = 'playing';
             this._onPlay?.();
         });
 
-        // Pause action (single tap when playing)
+        // PAUSE action - browser sends this when audio is PLAYING
         navigator.mediaSession.setActionHandler('pause', () => {
-            console.log('Media Session: pause action received');
+            console.log('Media Session: PAUSE action received');
             if (this._isQAModeActive) {
+                console.log('Media Session: Ignoring pause - Q&A mode active');
                 return;
             }
-            this._isTTSPlaying = false;
+
+            // Pause the silent audio so next button press sends "play"
+            this._silentAudio.pause();
+
             navigator.mediaSession.playbackState = 'paused';
             this._onPause?.();
         });
 
-        // Next track (double tap on most headsets) - Enter Q&A mode
+        // Next track (double tap on headsets) - Enter Q&A mode
         navigator.mediaSession.setActionHandler('nexttrack', () => {
-            console.log('Media Session: nexttrack action received -> Enter Q&A mode');
+            console.log('Media Session: NEXTTRACK action received');
             if (!this._isQAModeActive) {
                 this._onEnterQAMode?.();
             }
         });
 
-        // Previous track - Exit Q&A mode and continue reading
+        // Previous track - Exit Q&A mode
         navigator.mediaSession.setActionHandler('previoustrack', () => {
-            console.log('Media Session: previoustrack action received -> Exit Q&A mode');
+            console.log('Media Session: PREVIOUSTRACK action received');
             if (this._isQAModeActive) {
                 this._onExitQAMode?.();
             }
         });
 
-        // Stop action (long press on some devices)
         navigator.mediaSession.setActionHandler('stop', () => {
-            console.log('Media Session: stop action received');
-            this._isTTSPlaying = false;
+            console.log('Media Session: STOP action received');
+            this._silentAudio.pause();
             navigator.mediaSession.playbackState = 'paused';
             this._onPause?.();
         });
 
-        // Seek actions are not applicable for TTS
         try {
             navigator.mediaSession.setActionHandler('seekbackward', null);
             navigator.mediaSession.setActionHandler('seekforward', null);
             navigator.mediaSession.setActionHandler('seekto', null);
         } catch {
-            // Some browsers may not support these handlers
+            // Not supported
         }
     }
 
     /**
-     * Update the Media Session metadata
-     * @param {Object} metadata
-     * @param {string} [metadata.bookTitle] - Book title
-     * @param {string} [metadata.chapterTitle] - Current chapter title
-     * @param {string} [metadata.author] - Book author
+     * Update metadata
      */
     updateMetadata({ bookTitle, chapterTitle, author } = {}) {
         if (!this._isSupported) return;
@@ -270,109 +213,155 @@ class MediaSessionManager {
         if (chapterTitle !== undefined) this._chapterTitle = chapterTitle;
         if (author !== undefined) this._author = author;
 
-        // Build the title string
         let title = this._bookTitle || 'Reading Partner';
         if (this._chapterTitle) {
             title = this._chapterTitle;
         }
 
-        // Set the Media Session metadata
         navigator.mediaSession.metadata = new MediaMetadata({
             title: title,
             artist: this._author || 'Reading Partner',
             album: this._bookTitle || '',
             artwork: []
         });
+
+        console.log('Media Session: Metadata updated -', title);
     }
 
     /**
-     * Update the playback state
-     * This should be called when TTS playback state changes.
-     * IMPORTANT: This only updates the playbackState - the silent audio keeps playing.
-     * @param {'playing'|'paused'|'stopped'|'buffering'} state
+     * Update playback state - MUST sync audio element state with TTS state
+     * This is critical: browser uses audio.paused to decide play vs pause action
      */
-    setPlaybackState(state) {
+    async setPlaybackState(state) {
         if (!this._isSupported) return;
 
-        // On any state change, ensure the silent audio is playing
-        // This handles the case where it was blocked initially
-        this._ensureAudioPlaying();
+        console.log(`Media Session: setPlaybackState(${state})`);
 
-        // Map our states to Media Session states
         if (state === 'playing') {
-            this._isTTSPlaying = true;
+            // TTS is playing - audio element must also be playing
+            try {
+                await this._silentAudio.play();
+                this._hasUserInteraction = true;
+            } catch (e) {
+                console.warn('Media Session: Could not start audio:', e.message);
+            }
             navigator.mediaSession.playbackState = 'playing';
-            // Activate session if not already (handles first play)
-            if (!this._isSessionActive) {
-                this.activateSession();
-            }
+
         } else if (state === 'paused' || state === 'stopped') {
-            this._isTTSPlaying = false;
+            // TTS is paused - audio element must also be paused
+            // This way, next button press will send "play" action
+            this._silentAudio.pause();
             navigator.mediaSession.playbackState = 'paused';
+
         } else if (state === 'buffering') {
-            // Keep current state during buffering, but ensure session is active
-            if (!this._isSessionActive) {
-                this.activateSession();
-            }
+            // During buffering, keep current state
+            // Don't change audio element state during buffering
         }
 
-        console.log(`Media Session playback state: ${navigator.mediaSession.playbackState} (TTS: ${state})`);
+        console.log(`Media Session: playbackState=${navigator.mediaSession.playbackState}, audio.paused=${this._silentAudio.paused}`);
     }
 
     /**
-     * Set Q&A mode active state
-     * When in Q&A mode, play/pause actions are ignored
-     * @param {boolean} active
+     * Set Q&A mode active
      */
     setQAModeActive(active) {
         this._isQAModeActive = active;
+        console.log(`Media Session: Q&A mode ${active ? 'ACTIVE' : 'INACTIVE'}`);
 
         if (active) {
-            // Update metadata to show Q&A mode
             navigator.mediaSession.metadata = new MediaMetadata({
                 title: 'Q&A Mode - Ask a question',
                 artist: this._bookTitle || 'Reading Partner',
                 album: ''
             });
-            // Ensure session stays active during Q&A
-            this._ensureAudioPlaying();
+            // Keep audio playing during Q&A so we can receive controls
+            if (this._hasUserInteraction) {
+                this._silentAudio.play().catch(() => {});
+            }
         } else {
-            // Restore normal metadata
             this.updateMetadata({});
         }
     }
 
-    /**
-     * Check if Q&A mode is active
-     * @returns {boolean}
-     */
     isQAModeActive() {
         return this._isQAModeActive;
     }
 
     /**
-     * Check if Media Session is currently active
-     * @returns {boolean}
+     * Diagnostic function - call from console: mediaSessionManager.diagnose()
      */
-    isActive() {
-        return this._isSessionActive;
+    diagnose() {
+        const info = {
+            supported: this._isSupported,
+            initialized: this._isInitialized,
+            hasUserInteraction: this._hasUserInteraction,
+            audioElement: this._silentAudio ? {
+                paused: this._silentAudio.paused,
+                currentTime: this._silentAudio.currentTime,
+                duration: this._silentAudio.duration,
+                readyState: this._silentAudio.readyState,
+                volume: this._silentAudio.volume,
+                src: this._silentAudio.src ? 'set' : 'not set'
+            } : 'not created',
+            mediaSession: {
+                playbackState: navigator.mediaSession?.playbackState,
+                metadata: navigator.mediaSession?.metadata ? {
+                    title: navigator.mediaSession.metadata.title,
+                    artist: navigator.mediaSession.metadata.artist
+                } : 'not set'
+            },
+            qaMode: this._isQAModeActive
+        };
+
+        console.log('=== Media Session Diagnostic ===');
+        console.log(JSON.stringify(info, null, 2));
+        console.log('================================');
+
+        // Android-specific tips
+        console.log('\n📱 Android Troubleshooting:');
+        console.log('1. Check notification shade - do you see Reading Partner media controls?');
+        console.log('2. Is another app (Spotify, YouTube) controlling media?');
+        console.log('3. Try: Tap play button in app first, then use headset');
+        console.log('4. Make sure page is served over HTTPS');
+        console.log('5. Try locking/unlocking phone to refresh media session');
+
+        return info;
     }
 
     /**
-     * Cleanup and release Media Session
+     * Force start - call this from a user click to initialize on Android
      */
+    async forceStart() {
+        console.log('Media Session: Force starting...');
+        try {
+            await this._silentAudio.play();
+            this._hasUserInteraction = true;
+            navigator.mediaSession.playbackState = 'playing';
+            console.log('Media Session: Force start successful');
+
+            // Pause after a moment so next button press sends "play"
+            setTimeout(() => {
+                this._silentAudio.pause();
+                navigator.mediaSession.playbackState = 'paused';
+                console.log('Media Session: Ready for headset controls');
+            }, 500);
+
+            return true;
+        } catch (e) {
+            console.error('Media Session: Force start failed:', e);
+            return false;
+        }
+    }
+
     destroy() {
         if (!this._isSupported) return;
 
-        // Stop and cleanup silent audio
         if (this._silentAudio) {
             this._silentAudio.pause();
             this._silentAudio.src = '';
             this._silentAudio = null;
         }
-        this._isSessionActive = false;
 
-        // Clear action handlers
         try {
             navigator.mediaSession.setActionHandler('play', null);
             navigator.mediaSession.setActionHandler('pause', null);
@@ -380,15 +369,19 @@ class MediaSessionManager {
             navigator.mediaSession.setActionHandler('previoustrack', null);
             navigator.mediaSession.setActionHandler('stop', null);
         } catch {
-            // Ignore errors during cleanup
+            // Ignore
         }
 
         navigator.mediaSession.metadata = null;
         navigator.mediaSession.playbackState = 'none';
-
         this._isInitialized = false;
     }
 }
 
 // Export singleton instance
 export const mediaSessionManager = new MediaSessionManager();
+
+// Expose for debugging in console
+if (typeof window !== 'undefined') {
+    window.mediaSessionManager = mediaSessionManager;
+}
