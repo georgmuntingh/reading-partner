@@ -25,7 +25,13 @@ export class SettingsModal {
             contextBefore: 20,
             contextAfter: 5,
             ttsBackend: 'kokoro-js',
-            fastApiUrl: 'http://localhost:8880'
+            fastApiUrl: 'http://localhost:8880',
+            voice: 'af_bella',
+            speed: 1.0,
+            font: 'default',
+            fontSize: 16,
+            marginSize: 'medium',
+            lineSpacing: 1.8
         };
 
         this._buildUI();
@@ -49,6 +55,58 @@ export class SettingsModal {
                 </div>
 
                 <div class="modal-content">
+                    <div class="settings-section">
+                        <h3>Voice & Speed</h3>
+
+                        <div class="form-group">
+                            <label for="settings-voice">Voice</label>
+                            <select id="settings-voice" class="form-select">
+                                <option value="af_bella">Bella (American Female)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-speed">Speed: <span id="settings-speed-value">1.0x</span></label>
+                            <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>Typography</h3>
+
+                        <div class="form-group">
+                            <label for="settings-font">Font</label>
+                            <select id="settings-font" class="form-select">
+                                <option value="default">Default (System)</option>
+                                <option value="serif">Serif</option>
+                                <option value="sans-serif">Sans Serif</option>
+                                <option value="georgia">Georgia</option>
+                                <option value="times">Times New Roman</option>
+                                <option value="palatino">Palatino</option>
+                                <option value="bookerly">Bookerly</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-font-size">Font Size: <span id="settings-font-size-value">16px</span></label>
+                            <input type="range" id="settings-font-size" class="form-input" min="12" max="24" step="1" value="16">
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-margin">Page Margins</label>
+                            <select id="settings-margin" class="form-select">
+                                <option value="narrow">Narrow</option>
+                                <option value="medium">Medium</option>
+                                <option value="wide">Wide</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-line-spacing">Line Spacing: <span id="settings-line-spacing-value">1.8</span></label>
+                            <input type="range" id="settings-line-spacing" class="form-input" min="1.0" max="2.5" step="0.1" value="1.8">
+                        </div>
+                    </div>
+
                     <div class="settings-section">
                         <h3>TTS Backend</h3>
 
@@ -130,6 +188,15 @@ export class SettingsModal {
         this._elements = {
             modal: this._container.querySelector('.modal'),
             closeBtn: this._container.querySelector('.modal-close-btn'),
+            voice: this._container.querySelector('#settings-voice'),
+            speed: this._container.querySelector('#settings-speed'),
+            speedValue: this._container.querySelector('#settings-speed-value'),
+            font: this._container.querySelector('#settings-font'),
+            fontSize: this._container.querySelector('#settings-font-size'),
+            fontSizeValue: this._container.querySelector('#settings-font-size-value'),
+            margin: this._container.querySelector('#settings-margin'),
+            lineSpacing: this._container.querySelector('#settings-line-spacing'),
+            lineSpacingValue: this._container.querySelector('#settings-line-spacing-value'),
             ttsBackend: this._container.querySelector('#settings-tts-backend'),
             fastApiUrl: this._container.querySelector('#settings-fastapi-url'),
             fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
@@ -167,6 +234,24 @@ export class SettingsModal {
         // TTS backend change - toggle FastAPI URL visibility
         this._elements.ttsBackend.addEventListener('change', () => {
             this._updateBackendUI();
+        });
+
+        // Speed slider
+        this._elements.speed.addEventListener('input', () => {
+            const speed = parseFloat(this._elements.speed.value);
+            this._elements.speedValue.textContent = `${speed.toFixed(1)}x`;
+        });
+
+        // Font size slider
+        this._elements.fontSize.addEventListener('input', () => {
+            const size = parseInt(this._elements.fontSize.value);
+            this._elements.fontSizeValue.textContent = `${size}px`;
+        });
+
+        // Line spacing slider
+        this._elements.lineSpacing.addEventListener('input', () => {
+            const spacing = parseFloat(this._elements.lineSpacing.value);
+            this._elements.lineSpacingValue.textContent = spacing.toFixed(1);
         });
 
         // Click outside to close
@@ -221,7 +306,13 @@ export class SettingsModal {
             contextBefore: parseInt(this._elements.contextBefore.value) || 20,
             contextAfter: parseInt(this._elements.contextAfter.value) || 5,
             ttsBackend: this._elements.ttsBackend.value,
-            fastApiUrl: this._elements.fastApiUrl.value.trim() || 'http://localhost:8880'
+            fastApiUrl: this._elements.fastApiUrl.value.trim() || 'http://localhost:8880',
+            voice: this._elements.voice.value,
+            speed: parseFloat(this._elements.speed.value),
+            font: this._elements.font.value,
+            fontSize: parseInt(this._elements.fontSize.value),
+            marginSize: this._elements.margin.value,
+            lineSpacing: parseFloat(this._elements.lineSpacing.value)
         };
 
         // Validate
@@ -234,11 +325,23 @@ export class SettingsModal {
         const backendChanged = settings.ttsBackend !== this._settings.ttsBackend ||
             settings.fastApiUrl !== this._settings.fastApiUrl;
 
+        // Detect voice/speed change
+        const voiceChanged = settings.voice !== this._settings.voice;
+        const speedChanged = settings.speed !== this._settings.speed;
+
         this._settings = settings;
         this._callbacks.onSave?.(settings);
 
         if (backendChanged) {
             this._callbacks.onBackendChange?.(settings.ttsBackend);
+        }
+
+        if (voiceChanged) {
+            this._callbacks.onVoiceChange?.(settings.voice);
+        }
+
+        if (speedChanged) {
+            this._callbacks.onSpeedChange?.(settings.speed);
         }
 
         this._callbacks.onClose?.();
@@ -317,6 +420,20 @@ export class SettingsModal {
         this._elements.contextAfter.value = this._settings.contextAfter || 5;
         this._elements.ttsBackend.value = this._settings.ttsBackend || 'kokoro-js';
         this._elements.fastApiUrl.value = this._settings.fastApiUrl || 'http://localhost:8880';
+
+        // Load voice & speed settings
+        this._elements.voice.value = this._settings.voice || 'af_bella';
+        this._elements.speed.value = this._settings.speed || 1.0;
+        this._elements.speedValue.textContent = `${(this._settings.speed || 1.0).toFixed(1)}x`;
+
+        // Load typography settings
+        this._elements.font.value = this._settings.font || 'default';
+        this._elements.fontSize.value = this._settings.fontSize || 16;
+        this._elements.fontSizeValue.textContent = `${this._settings.fontSize || 16}px`;
+        this._elements.margin.value = this._settings.marginSize || 'medium';
+        this._elements.lineSpacing.value = this._settings.lineSpacing || 1.8;
+        this._elements.lineSpacingValue.textContent = (this._settings.lineSpacing || 1.8).toFixed(1);
+
         this._updateBackendUI();
     }
 
@@ -353,5 +470,47 @@ export class SettingsModal {
      */
     setFastApiAvailable(available) {
         this._fastApiAvailable = available;
+    }
+
+    /**
+     * Set available voices for the voice dropdown
+     * @param {{ id: string, name: string }[]} voices
+     */
+    setVoices(voices) {
+        if (!this._elements.voice) return;
+
+        const currentValue = this._elements.voice.value;
+
+        // Clear existing options
+        this._elements.voice.innerHTML = '';
+
+        // Add new options
+        voices.forEach(voice => {
+            const option = document.createElement('option');
+            option.value = voice.id;
+            option.textContent = voice.name;
+            this._elements.voice.appendChild(option);
+        });
+
+        // Restore previous selection if it exists
+        if (voices.some(v => v.id === currentValue)) {
+            this._elements.voice.value = currentValue;
+        }
+    }
+
+    /**
+     * Get current voice ID
+     * @returns {string}
+     */
+    getVoice() {
+        return this._settings.voice || 'af_bella';
+    }
+
+    /**
+     * Get current speed
+     * @returns {number}
+     */
+    getSpeed() {
+        return this._settings.speed || 1.0;
     }
 }

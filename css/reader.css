@@ -121,7 +121,7 @@
 /* Page number overlay - appears on each page like a book */
 .page-number-overlay {
     position: absolute;
-    bottom: 20px;
+    top: 10px;
     right: 30px;
     font-size: var(--font-size-sm);
     color: var(--text-secondary);

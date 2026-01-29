@@ -13,9 +13,9 @@ export class PlaybackControls {
      * @param {HTMLElement} options.prevChapterBtn
      * @param {HTMLElement} options.nextChapterBtn
      * @param {HTMLElement} options.askBtn
-     * @param {HTMLInputElement} options.speedSlider
-     * @param {HTMLElement} options.speedValue
-     * @param {HTMLSelectElement} options.voiceSelect
+     * @param {HTMLInputElement} [options.speedSlider] - Optional, for backward compatibility
+     * @param {HTMLElement} [options.speedValue] - Optional, for backward compatibility
+     * @param {HTMLSelectElement} [options.voiceSelect] - Optional, for backward compatibility
      * @param {Object} callbacks
      * @param {() => void} callbacks.onPlay
      * @param {() => void} callbacks.onPause
@@ -24,8 +24,8 @@ export class PlaybackControls {
      * @param {() => void} callbacks.onPrevChapter
      * @param {() => void} callbacks.onNextChapter
      * @param {() => void} callbacks.onAsk
-     * @param {(speed: number) => void} callbacks.onSpeedChange
-     * @param {(voiceId: string) => void} callbacks.onVoiceChange
+     * @param {(speed: number) => void} [callbacks.onSpeedChange] - Optional, for backward compatibility
+     * @param {(voiceId: string) => void} [callbacks.onVoiceChange] - Optional, for backward compatibility
      */
     constructor(options, callbacks) {
         this._playBtn = options.playBtn;
@@ -36,9 +36,9 @@ export class PlaybackControls {
         this._prevChapterBtn = options.prevChapterBtn;
         this._nextChapterBtn = options.nextChapterBtn;
         this._askBtn = options.askBtn;
-        this._speedSlider = options.speedSlider;
-        this._speedValue = options.speedValue;
-        this._voiceSelect = options.voiceSelect;
+        this._speedSlider = options.speedSlider || null;
+        this._speedValue = options.speedValue || null;
+        this._voiceSelect = options.voiceSelect || null;
 
         this._callbacks = callbacks;
         this._isPlaying = false;
@@ -82,18 +82,22 @@ export class PlaybackControls {
             this._callbacks.onAsk?.();
         });
 
-        // Speed slider
-        this._speedSlider.addEventListener('input', () => {
-            const speed = parseFloat(this._speedSlider.value);
-            this._updateSpeedDisplay(speed);
-            this._callbacks.onSpeedChange?.(speed);
-        });
+        // Speed slider (optional)
+        if (this._speedSlider) {
+            this._speedSlider.addEventListener('input', () => {
+                const speed = parseFloat(this._speedSlider.value);
+                this._updateSpeedDisplay(speed);
+                this._callbacks.onSpeedChange?.(speed);
+            });
+        }
 
-        // Voice selector
-        this._voiceSelect.addEventListener('change', () => {
-            const voiceId = this._voiceSelect.value;
-            this._callbacks.onVoiceChange?.(voiceId);
-        });
+        // Voice selector (optional)
+        if (this._voiceSelect) {
+            this._voiceSelect.addEventListener('change', () => {
+                const voiceId = this._voiceSelect.value;
+                this._callbacks.onVoiceChange?.(voiceId);
+            });
+        }
     }
 
     /**
@@ -101,7 +105,9 @@ export class PlaybackControls {
      * @param {number} speed
      */
     _updateSpeedDisplay(speed) {
-        this._speedValue.textContent = `${speed.toFixed(1)}x`;
+        if (this._speedValue) {
+            this._speedValue.textContent = `${speed.toFixed(1)}x`;
+        }
     }
 
     /**
@@ -156,7 +162,9 @@ export class PlaybackControls {
         this._prevChapterBtn.disabled = !enabled;
         this._nextChapterBtn.disabled = !enabled;
         this._askBtn.disabled = !enabled;
-        this._speedSlider.disabled = !enabled;
+        if (this._speedSlider) {
+            this._speedSlider.disabled = !enabled;
+        }
     }
 
     /**
@@ -164,8 +172,10 @@ export class PlaybackControls {
      * @param {number} speed
      */
     setSpeed(speed) {
-        this._speedSlider.value = speed.toString();
-        this._updateSpeedDisplay(speed);
+        if (this._speedSlider) {
+            this._speedSlider.value = speed.toString();
+            this._updateSpeedDisplay(speed);
+        }
     }
 
     /**
@@ -173,7 +183,7 @@ export class PlaybackControls {
      * @returns {number}
      */
     getSpeed() {
-        return parseFloat(this._speedSlider.value);
+        return this._speedSlider ? parseFloat(this._speedSlider.value) : 1.0;
     }
 
     /**
@@ -181,6 +191,8 @@ export class PlaybackControls {
      * @param {{ id: string, name: string }[]} voices
      */
     setVoices(voices) {
+        if (!this._voiceSelect) return;
+
         const currentValue = this._voiceSelect.value;
 
         // Clear existing options
@@ -205,7 +217,9 @@ export class PlaybackControls {
      * @param {string} voiceId
      */
     setVoice(voiceId) {
-        this._voiceSelect.value = voiceId;
+        if (this._voiceSelect) {
+            this._voiceSelect.value = voiceId;
+        }
     }
 
     /**
@@ -213,7 +227,7 @@ export class PlaybackControls {
      * @returns {string}
      */
     getVoice() {
-        return this._voiceSelect.value;
+        return this._voiceSelect ? this._voiceSelect.value : 'af_bella';
     }
 
     /**

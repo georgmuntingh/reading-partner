@@ -119,7 +119,9 @@ class ReadingPartnerApp {
             {
                 onClose: () => this._settingsModal.hide(),
                 onSave: (settings) => this._saveQASettings(settings),
-                onBackendChange: (backend) => this._onTTSBackendChange(backend)
+                onBackendChange: (backend) => this._onTTSBackendChange(backend),
+                onVoiceChange: (voiceId) => this._onVoiceChange(voiceId),
+                onSpeedChange: (speed) => this._onSpeedChange(speed)
             }
         );
 
@@ -274,9 +276,6 @@ class ReadingPartnerApp {
             prevChapterBtn: document.getElementById('prev-chapter-btn'),
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
-            speedSlider: document.getElementById('speed-slider'),
-            speedValue: document.getElementById('speed-value'),
-            voiceSelect: document.getElementById('voice-select'),
 
             // Header actions
             loadBookBtn: document.getElementById('load-book-btn'),
@@ -638,10 +637,7 @@ class ReadingPartnerApp {
                 nextBtn: this._elements.nextBtn,
                 prevChapterBtn: this._elements.prevChapterBtn,
                 nextChapterBtn: this._elements.nextChapterBtn,
-                askBtn: this._elements.askBtn,
-                speedSlider: this._elements.speedSlider,
-                speedValue: this._elements.speedValue,
-                voiceSelect: this._elements.voiceSelect
+                askBtn: this._elements.askBtn
             },
             {
                 onPlay: () => this._play(),
@@ -650,33 +646,26 @@ class ReadingPartnerApp {
                 onNext: () => this._audioController.skipForward(),
                 onPrevChapter: () => this._navigateToPrevChapter(),
                 onNextChapter: () => this._navigateToNextChapter(),
-                onAsk: () => this._startQA(),
-                onSpeedChange: (speed) => {
-                    this._audioController.setSpeed(speed);
-                    this._saveSettings(); // Auto-save speed setting
-                },
-                onVoiceChange: (voiceId) => {
-                    ttsEngine.setVoice(voiceId);
-                    this._saveSettings(); // Auto-save voice setting
-                }
+                onAsk: () => this._startQA()
             }
         );
 
-        // Populate available voices
+        // Populate available voices in settings modal
         const voices = ttsEngine.getAvailableVoices();
-        this._controls.setVoices(voices);
+        this._settingsModal.setVoices(voices);
 
         // Restore saved voice
         if (this._savedVoice) {
-            this._controls.setVoice(this._savedVoice);
             ttsEngine.setVoice(this._savedVoice);
         }
 
         // Restore saved speed
         if (this._savedSpeed !== undefined) {
-            this._controls.setSpeed(this._savedSpeed);
             this._audioController.setSpeed(this._savedSpeed);
         }
+
+        // Apply typography settings
+        this._applyTypographySettings();
 
         // Set book title
         this._readerView.setBookTitle(this._currentBook.title);
@@ -966,7 +955,9 @@ class ReadingPartnerApp {
             this._qaSettings.contextBefore,
             this._qaSettings.contextAfter
         );
-        this._qaController.setPlaybackSpeed(this._controls?.getSpeed() || 1.0);
+        // Get speed from saved value or settings modal
+        const speed = this._savedSpeed || this._settingsModal?.getSpeed() || 1.0;
+        this._qaController.setPlaybackSpeed(speed);
 
         // Provide book metadata for LLM context
         if (this._currentBook) {
@@ -1151,6 +1142,63 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Handle voice change from settings
+     * @param {string} voiceId
+     */
+    _onVoiceChange(voiceId) {
+        ttsEngine.setVoice(voiceId);
+        this._savedVoice = voiceId;
+        this._saveSettings();
+    }
+
+    /**
+     * Handle speed change from settings
+     * @param {number} speed
+     */
+    _onSpeedChange(speed) {
+        this._audioController?.setSpeed(speed);
+        this._savedSpeed = speed;
+        this._saveSettings();
+    }
+
+    /**
+     * Apply typography settings to the reader
+     */
+    _applyTypographySettings() {
+        const settings = this._settingsModal?.getSettings();
+        if (!settings) return;
+
+        const textContent = this._elements.textContent;
+        if (!textContent) return;
+
+        // Apply font
+        const fontMap = {
+            'default': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+            'serif': 'Georgia, "Times New Roman", Times, serif',
+            'sans-serif': 'Arial, Helvetica, sans-serif',
+            'georgia': 'Georgia, serif',
+            'times': '"Times New Roman", Times, serif',
+            'palatino': '"Palatino Linotype", "Book Antiqua", Palatino, serif',
+            'bookerly': 'Bookerly, Georgia, serif'
+        };
+        textContent.style.fontFamily = fontMap[settings.font] || fontMap['default'];
+
+        // Apply font size
+        textContent.style.fontSize = `${settings.fontSize}px`;
+
+        // Apply line spacing
+        textContent.style.lineHeight = settings.lineSpacing;
+
+        // Apply margins
+        const marginMap = {
+            'narrow': '0 30px',
+            'medium': '0 50px',
+            'wide': '0 80px'
+        };
+        textContent.style.padding = marginMap[settings.marginSize] || marginMap['medium'];
+    }
+
+    /**
      * Save Q&A settings
      * @param {Object} settings
      */
@@ -1183,9 +1231,36 @@ class ReadingPartnerApp {
             if (settings.fastApiUrl) {
                 await storage.saveSetting('fastApiUrl', settings.fastApiUrl);
             }
+
+            // Save voice and speed settings
+            if (settings.voice) {
+                await storage.saveSetting('voice', settings.voice);
+                this._savedVoice = settings.voice;
+            }
+            if (settings.speed !== undefined) {
+                await storage.saveSetting('playbackSpeed', settings.speed);
+                this._savedSpeed = settings.speed;
+            }
+
+            // Save typography settings
+            if (settings.font) {
+                await storage.saveSetting('font', settings.font);
+            }
+            if (settings.fontSize) {
+                await storage.saveSetting('fontSize', settings.fontSize);
+            }
+            if (settings.marginSize) {
+                await storage.saveSetting('marginSize', settings.marginSize);
+            }
+            if (settings.lineSpacing) {
+                await storage.saveSetting('lineSpacing', settings.lineSpacing);
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
+
+        // Apply typography settings immediately
+        this._applyTypographySettings();
 
         // Update UI
         this._updateQASetupStatus();
@@ -1618,11 +1693,28 @@ class ReadingPartnerApp {
                 this._qaSettings.contextAfter = contextAfter;
             }
 
+            // Load typography settings
+            const font = await storage.getSetting('font');
+            const fontSize = await storage.getSetting('fontSize');
+            const marginSize = await storage.getSetting('marginSize');
+            const lineSpacing = await storage.getSetting('lineSpacing');
+
+            const typographySettings = {};
+            if (font !== null) typographySettings.font = font;
+            if (fontSize !== null) typographySettings.fontSize = fontSize;
+            if (marginSize !== null) typographySettings.marginSize = marginSize;
+            if (lineSpacing !== null) typographySettings.lineSpacing = lineSpacing;
+
             // Update Q&A setup UI
             this._updateQASetupStatus();
 
-            // Update settings modal
-            this._settingsModal?.setSettings(this._qaSettings);
+            // Update settings modal with all settings
+            this._settingsModal?.setSettings({
+                ...this._qaSettings,
+                voice: this._savedVoice,
+                speed: this._savedSpeed,
+                ...typographySettings
+            });
 
         } catch (error) {
             console.error('Failed to load settings:', error);
@@ -1634,12 +1726,12 @@ class ReadingPartnerApp {
      */
     async _saveSettings() {
         try {
-            if (this._controls) {
-                const speed = this._controls.getSpeed();
-                await storage.saveSetting('playbackSpeed', speed);
-
-                const voice = this._controls.getVoice();
-                await storage.saveSetting('voice', voice);
+            // Save voice and speed from saved values
+            if (this._savedSpeed !== undefined) {
+                await storage.saveSetting('playbackSpeed', this._savedSpeed);
+            }
+            if (this._savedVoice !== undefined) {
+                await storage.saveSetting('voice', this._savedVoice);
             }
         } catch (error) {
             console.error('Failed to save settings:', error);
