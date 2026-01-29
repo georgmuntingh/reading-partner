@@ -117,7 +117,7 @@ class MediaSessionManager {
         this._silentAudio = document.createElement('audio');
         this._silentAudio.src = SILENT_WAV;
         this._silentAudio.loop = true;
-        this._silentAudio.volume = 0.001;
+        this._silentAudio.volume = 0.05;
         this._silentAudio.preload = 'auto';
 
         this._silentAudio.addEventListener('play', () => {
@@ -258,11 +258,18 @@ class MediaSessionManager {
             title = this._chapterTitle;
         }
 
+        // Android requires artwork for proper notification display
+        const artwork = [{
+            src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>",
+            sizes: '512x512',
+            type: 'image/svg+xml'
+        }];
+
         navigator.mediaSession.metadata = new MediaMetadata({
             title: title,
             artist: this._author || 'Reading Partner',
             album: this._bookTitle || '',
-            artwork: []
+            artwork: artwork
         });
 
         console.log('Media Session: Metadata updated -', title);
@@ -327,10 +334,18 @@ class MediaSessionManager {
         console.log(`Media Session: Q&A mode ${active ? 'ACTIVE' : 'INACTIVE'}`);
 
         if (active) {
+            // Android requires artwork for proper notification display
+            const artwork = [{
+                src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>",
+                sizes: '512x512',
+                type: 'image/svg+xml'
+            }];
+
             navigator.mediaSession.metadata = new MediaMetadata({
                 title: 'Q&A Mode - Ask a question',
                 artist: this._bookTitle || 'Reading Partner',
-                album: ''
+                album: '',
+                artwork: artwork
             });
             // Keep audio playing during Q&A so we can receive controls
             if (this._hasUserInteraction) {
