@@ -395,8 +395,11 @@ class MediaSessionManager {
         try {
             await this._silentAudio.play();
             this._hasUserInteraction = true;
-            navigator.mediaSession.playbackState = 'paused'; // Start as paused, ready for play
-            console.log('Media Session: Force start successful');
+
+            // On Android, set to 'playing' to trigger notification
+            // On desktop, set to 'paused' so first button press sends "play"
+            navigator.mediaSession.playbackState = this._isAndroid ? 'playing' : 'paused';
+            console.log(`Media Session: Force start successful, playbackState=${navigator.mediaSession.playbackState}`);
 
             if (this._isAndroid) {
                 // On Android, keep audio playing to maintain notification
