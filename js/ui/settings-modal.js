@@ -434,9 +434,19 @@ export class SettingsModal {
         // Audio Element
         if (info.audioElement !== 'not created') {
             html += '<strong>🔊 Audio Element:</strong><br>';
-            html += `${!info.audioElement.paused ? '✓' : '✗'} State: ${info.audioElement.paused ? 'Paused' : 'Playing'}<br>`;
+            const audioPlaying = !info.audioElement.paused;
+            html += `${audioPlaying ? '✓' : '✗'} State: ${info.audioElement.paused ? 'Paused' : 'Playing'}`;
+
+            // Explain Android behavior
+            if (info.isAndroid && audioPlaying) {
+                html += ' <span style="color: #059669;">(Good! Android needs this)</span>';
+            } else if (info.isAndroid && !audioPlaying) {
+                html += ' <span style="color: #dc2626;">(Issue! Should be playing on Android)</span>';
+            }
+            html += '<br>';
+
             html += `${info.audioElement.readyState >= 2 ? '✓' : '✗'} Ready State: ${info.audioElement.readyState}/4<br>`;
-            html += `Volume: ${(info.audioElement.volume * 1000).toFixed(1)}/1000<br><br>`;
+            html += `Volume: ${(info.audioElement.volume * 1000).toFixed(1)}/1000 (silent)<br><br>`;
         } else {
             html += '<strong>🔊 Audio Element:</strong> Not created<br><br>';
         }
@@ -469,6 +479,12 @@ export class SettingsModal {
         if (info.audioElement === 'not created') {
             issues.push('⚠️ Audio element not created - try loading a book');
         }
+
+        // Android-specific check: audio must be playing to show notification
+        if (isAndroid && info.audioElement !== 'not created' && info.audioElement.paused) {
+            issues.push('🚨 <strong>CRITICAL:</strong> Silent audio is paused on Android! This is why you don\'t see the notification. Click "Force Start Media Session" button above to fix this.');
+        }
+
         if (info.audioElement !== 'not created' && info.audioElement.paused && info.mediaSession.playbackState === 'playing') {
             issues.push('⚠️ State mismatch: Media Session says playing but audio is paused');
         }
@@ -477,10 +493,13 @@ export class SettingsModal {
         }
 
         if (issues.length === 0) {
-            html += '<span style="color: #059669;">✓ Everything looks good! If controls still don\'t work, try:<br>';
-            html += '  1. Lock and unlock your phone<br>';
-            html += '  2. Close other media apps (Spotify, YouTube)<br>';
-            html += '  3. Check notification shade for Reading Partner controls</span>';
+            html += '<span style="color: #059669;">✓ Everything looks good!<br><br>';
+            html += '<strong>On Android:</strong> Check notification shade - you should see "Reading Partner" media controls.<br><br>';
+            html += '<strong>If controls still don\'t work:</strong><br>';
+            html += '  1. Check if notification is visible in notification shade<br>';
+            html += '  2. Lock and unlock your phone<br>';
+            html += '  3. Close other media apps (Spotify, YouTube)<br>';
+            html += '  4. Try pressing play in the app, then use headphone controls</span>';
         } else {
             html += issues.join('<br>');
         }
