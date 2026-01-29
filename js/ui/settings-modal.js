@@ -4,6 +4,7 @@
  */
 
 import { OPENROUTER_MODELS, DEFAULT_MODEL } from '../services/llm-client.js';
+import { mediaSessionManager } from '../services/media-session-manager.js';
 
 export class SettingsModal {
     /**
@@ -31,7 +32,10 @@ export class SettingsModal {
             font: 'default',
             fontSize: 16,
             marginSize: 'medium',
-            lineSpacing: 1.8
+            lineSpacing: 1.8,
+            normalizeText: true,
+            normalizeNumbers: true,
+            normalizeAbbreviations: true
         };
 
         this._buildUI();
@@ -130,6 +134,37 @@ export class SettingsModal {
                     </div>
 
                     <div class="settings-section">
+                        <h3>Text Normalization (Kokoro)</h3>
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            Control how text is processed before being sent to Kokoro TTS.
+                        </p>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="settings-normalize-text" checked>
+                                Normalize Text
+                            </label>
+                            <p class="form-hint">Convert text to standard format (lowercase, remove extra spaces)</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="settings-normalize-numbers" checked>
+                                Normalize Numbers
+                            </label>
+                            <p class="form-hint">Convert numbers to words (e.g., "123" → "one hundred twenty-three")</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="settings-normalize-abbreviations" checked>
+                                Expand Abbreviations
+                            </label>
+                            <p class="form-hint">Expand common abbreviations (e.g., "Dr." → "Doctor", "St." → "Street")</p>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
                         <h3>Q&A Settings</h3>
 
                         <div class="form-group">
@@ -170,6 +205,50 @@ export class SettingsModal {
                     </div>
 
                     <div class="settings-section">
+                        <h3>Headset Controls Diagnostics</h3>
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            If headphone controls aren't working (especially on Android), use these tools to diagnose the issue.
+                        </p>
+
+                        <div id="diagnostic-status" class="form-hint" style="margin-bottom: var(--spacing-md); padding: var(--spacing-sm); background-color: var(--bg-color); border-radius: var(--radius-md);">
+                            Click "Run Diagnostics" to check your system.
+                        </div>
+
+                        <div style="display: flex; gap: var(--spacing-sm); flex-wrap: wrap;">
+                            <button class="btn btn-secondary btn-sm" id="run-diagnostics-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                    <path d="M9 12l2 2 4-4"/>
+                                    <circle cx="12" cy="12" r="10"/>
+                                </svg>
+                                Run Diagnostics
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="force-start-media-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polygon points="10 8 16 12 10 16 10 8"/>
+                                </svg>
+                                Force Start Media Session
+                            </button>
+                        </div>
+
+                        <details style="margin-top: var(--spacing-md);">
+                            <summary style="cursor: pointer; font-weight: 500; margin-bottom: var(--spacing-sm);">Android Troubleshooting Guide</summary>
+                            <div class="form-hint" style="line-height: 1.6;">
+                                <p><strong>Common issues on Android:</strong></p>
+                                <ol style="margin-left: 20px; margin-top: var(--spacing-xs);">
+                                    <li><strong>No notification:</strong> Make sure you've pressed play at least once in the app</li>
+                                    <li><strong>Controls not responding:</strong> Try locking and unlocking your phone</li>
+                                    <li><strong>Another app controlling media:</strong> Close Spotify, YouTube, etc.</li>
+                                    <li><strong>HTTPS required:</strong> Some Android versions require HTTPS for Media Session API</li>
+                                    <li><strong>Chrome flags:</strong> Visit chrome://flags and ensure "Hardware Media Key Handling" is enabled</li>
+                                    <li><strong>Reset:</strong> Click "Force Start Media Session" above, then try headphone controls</li>
+                                </ol>
+                                <p style="margin-top: var(--spacing-sm);"><strong>Testing:</strong> After pressing play in the app, check your notification shade. You should see "Reading Partner" media controls there.</p>
+                            </div>
+                        </details>
+                    </div>
+
+                    <div class="settings-section">
                         <h3>About</h3>
                         <div id="settings-about-content" class="about-content">
                             <p>Loading information...</p>
@@ -202,6 +281,12 @@ export class SettingsModal {
             fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
             fastApiStatus: this._container.querySelector('#settings-fastapi-status'),
             ttsBackendHint: this._container.querySelector('#settings-tts-backend-hint'),
+            normalizeText: this._container.querySelector('#settings-normalize-text'),
+            normalizeNumbers: this._container.querySelector('#settings-normalize-numbers'),
+            normalizeAbbreviations: this._container.querySelector('#settings-normalize-abbreviations'),
+            diagnosticStatus: this._container.querySelector('#diagnostic-status'),
+            runDiagnosticsBtn: this._container.querySelector('#run-diagnostics-btn'),
+            forceStartMediaBtn: this._container.querySelector('#force-start-media-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
             contextBefore: this._container.querySelector('#settings-context-before'),
@@ -254,6 +339,37 @@ export class SettingsModal {
             this._elements.lineSpacingValue.textContent = spacing.toFixed(1);
         });
 
+        // Diagnostic buttons
+        this._elements.runDiagnosticsBtn.addEventListener('click', () => {
+            this._runDiagnostics();
+        });
+
+        this._elements.forceStartMediaBtn.addEventListener('click', async () => {
+            const btn = this._elements.forceStartMediaBtn;
+            btn.disabled = true;
+            btn.textContent = 'Starting...';
+
+            const success = await mediaSessionManager.forceStart();
+
+            if (success) {
+                btn.textContent = '✓ Started Successfully';
+                btn.style.color = '#059669';
+                setTimeout(() => {
+                    btn.textContent = 'Force Start Media Session';
+                    btn.style.color = '';
+                    btn.disabled = false;
+                }, 3000);
+            } else {
+                btn.textContent = '✗ Failed to Start';
+                btn.style.color = '#dc2626';
+                setTimeout(() => {
+                    btn.textContent = 'Force Start Media Session';
+                    btn.style.color = '';
+                    btn.disabled = false;
+                }, 3000);
+            }
+        });
+
         // Click outside to close
         this._container.addEventListener('click', (e) => {
             if (e.target === this._container) {
@@ -297,6 +413,88 @@ export class SettingsModal {
     }
 
     /**
+     * Run Media Session diagnostics
+     */
+    _runDiagnostics() {
+        const statusEl = this._elements.diagnosticStatus;
+        statusEl.innerHTML = '<strong>Running diagnostics...</strong>';
+
+        // Get diagnostic info
+        const info = mediaSessionManager.diagnose();
+
+        // Format the results in a user-friendly way
+        let html = '<div style="font-family: monospace; font-size: 13px;">';
+        html += '<strong>📊 Diagnostic Results:</strong><br><br>';
+
+        // Media Session Support
+        html += `✓ Media Session API: ${info.supported ? '<span style="color: #059669;">Supported</span>' : '<span style="color: #dc2626;">Not Supported</span>'}<br>`;
+        html += `${info.initialized ? '✓' : '✗'} Initialized: ${info.initialized}<br>`;
+        html += `${info.hasUserInteraction ? '✓' : '✗'} User Interaction: ${info.hasUserInteraction}<br><br>`;
+
+        // Audio Element
+        if (info.audioElement !== 'not created') {
+            html += '<strong>🔊 Audio Element:</strong><br>';
+            html += `${!info.audioElement.paused ? '✓' : '✗'} State: ${info.audioElement.paused ? 'Paused' : 'Playing'}<br>`;
+            html += `${info.audioElement.readyState >= 2 ? '✓' : '✗'} Ready State: ${info.audioElement.readyState}/4<br>`;
+            html += `Volume: ${(info.audioElement.volume * 1000).toFixed(1)}/1000<br><br>`;
+        } else {
+            html += '<strong>🔊 Audio Element:</strong> Not created<br><br>';
+        }
+
+        // Media Session State
+        html += '<strong>📱 Media Session:</strong><br>';
+        html += `State: ${info.mediaSession.playbackState || 'none'}<br>`;
+        if (info.mediaSession.metadata) {
+            html += `Title: ${info.mediaSession.metadata.title}<br>`;
+        }
+        html += `Q&A Mode: ${info.qaMode ? 'Active' : 'Inactive'}<br><br>`;
+
+        // Platform detection
+        const isAndroid = /Android/i.test(navigator.userAgent);
+        const isHTTPS = location.protocol === 'https:';
+        html += '<strong>🌐 Environment:</strong><br>';
+        html += `Platform: ${isAndroid ? '<span style="color: #f59e0b;">Android</span>' : 'Other'}<br>`;
+        html += `Protocol: ${isHTTPS ? '<span style="color: #059669;">HTTPS</span>' : '<span style="color: #f59e0b;">HTTP</span>'}<br><br>`;
+
+        // Recommendations
+        html += '<strong>💡 Recommendations:</strong><br>';
+        const issues = [];
+
+        if (!info.supported) {
+            issues.push('⚠️ Media Session API not supported in this browser');
+        }
+        if (!info.hasUserInteraction) {
+            issues.push('⚠️ Click "Force Start Media Session" or press play in the app');
+        }
+        if (info.audioElement === 'not created') {
+            issues.push('⚠️ Audio element not created - try loading a book');
+        }
+        if (info.audioElement !== 'not created' && info.audioElement.paused && info.mediaSession.playbackState === 'playing') {
+            issues.push('⚠️ State mismatch: Media Session says playing but audio is paused');
+        }
+        if (isAndroid && !isHTTPS) {
+            issues.push('⚠️ Android + HTTP: Some devices require HTTPS for media controls');
+        }
+
+        if (issues.length === 0) {
+            html += '<span style="color: #059669;">✓ Everything looks good! If controls still don\'t work, try:<br>';
+            html += '  1. Lock and unlock your phone<br>';
+            html += '  2. Close other media apps (Spotify, YouTube)<br>';
+            html += '  3. Check notification shade for Reading Partner controls</span>';
+        } else {
+            html += issues.join('<br>');
+        }
+
+        html += '</div>';
+
+        statusEl.innerHTML = html;
+
+        // Also log to console for detailed debugging
+        console.log('=== Full Diagnostic Output ===');
+        console.log(JSON.stringify(info, null, 2));
+    }
+
+    /**
      * Save settings
      */
     _save() {
@@ -312,7 +510,10 @@ export class SettingsModal {
             font: this._elements.font.value,
             fontSize: parseInt(this._elements.fontSize.value),
             marginSize: this._elements.margin.value,
-            lineSpacing: parseFloat(this._elements.lineSpacing.value)
+            lineSpacing: parseFloat(this._elements.lineSpacing.value),
+            normalizeText: this._elements.normalizeText.checked,
+            normalizeNumbers: this._elements.normalizeNumbers.checked,
+            normalizeAbbreviations: this._elements.normalizeAbbreviations.checked
         };
 
         // Validate
@@ -433,6 +634,11 @@ export class SettingsModal {
         this._elements.margin.value = this._settings.marginSize || 'medium';
         this._elements.lineSpacing.value = this._settings.lineSpacing || 1.8;
         this._elements.lineSpacingValue.textContent = (this._settings.lineSpacing || 1.8).toFixed(1);
+
+        // Load normalization settings
+        this._elements.normalizeText.checked = this._settings.normalizeText !== false;
+        this._elements.normalizeNumbers.checked = this._settings.normalizeNumbers !== false;
+        this._elements.normalizeAbbreviations.checked = this._settings.normalizeAbbreviations !== false;
 
         this._updateBackendUI();
     }

@@ -1189,11 +1189,11 @@ class ReadingPartnerApp {
         // Apply line spacing
         textContent.style.lineHeight = settings.lineSpacing;
 
-        // Apply margins
+        // Apply margins (preserve top padding for page number)
         const marginMap = {
-            'narrow': '0 30px',
-            'medium': '0 50px',
-            'wide': '0 80px'
+            'narrow': '30px 30px 0 30px',
+            'medium': '30px 50px 0 50px',
+            'wide': '30px 80px 0 80px'
         };
         textContent.style.padding = marginMap[settings.marginSize] || marginMap['medium'];
     }
@@ -1254,6 +1254,17 @@ class ReadingPartnerApp {
             }
             if (settings.lineSpacing) {
                 await storage.saveSetting('lineSpacing', settings.lineSpacing);
+            }
+
+            // Save normalization settings
+            if (settings.normalizeText !== undefined) {
+                await storage.saveSetting('normalizeText', settings.normalizeText);
+            }
+            if (settings.normalizeNumbers !== undefined) {
+                await storage.saveSetting('normalizeNumbers', settings.normalizeNumbers);
+            }
+            if (settings.normalizeAbbreviations !== undefined) {
+                await storage.saveSetting('normalizeAbbreviations', settings.normalizeAbbreviations);
             }
         } catch (error) {
             console.error('Failed to save settings:', error);
@@ -1705,6 +1716,16 @@ class ReadingPartnerApp {
             if (marginSize !== null) typographySettings.marginSize = marginSize;
             if (lineSpacing !== null) typographySettings.lineSpacing = lineSpacing;
 
+            // Load normalization settings
+            const normalizeText = await storage.getSetting('normalizeText');
+            const normalizeNumbers = await storage.getSetting('normalizeNumbers');
+            const normalizeAbbreviations = await storage.getSetting('normalizeAbbreviations');
+
+            const normalizationSettings = {};
+            if (normalizeText !== null) normalizationSettings.normalizeText = normalizeText;
+            if (normalizeNumbers !== null) normalizationSettings.normalizeNumbers = normalizeNumbers;
+            if (normalizeAbbreviations !== null) normalizationSettings.normalizeAbbreviations = normalizeAbbreviations;
+
             // Update Q&A setup UI
             this._updateQASetupStatus();
 
@@ -1713,7 +1734,8 @@ class ReadingPartnerApp {
                 ...this._qaSettings,
                 voice: this._savedVoice,
                 speed: this._savedSpeed,
-                ...typographySettings
+                ...typographySettings,
+                ...normalizationSettings
             });
 
         } catch (error) {
