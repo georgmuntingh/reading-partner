@@ -60,6 +60,7 @@ class ReadingPartnerApp {
         this._cacheElements();
         this._setupUploadHandlers();
         this._setupKeyboardShortcuts();
+        this._setupFullscreen();
         this._setupQASetup();
 
         // Initialize storage and reading state
@@ -276,6 +277,9 @@ class ReadingPartnerApp {
             prevChapterBtn: document.getElementById('prev-chapter-btn'),
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
+            fullscreenBtn: document.getElementById('fullscreen-btn'),
+            fullscreenExpandIcon: document.getElementById('fullscreen-expand-icon'),
+            fullscreenCollapseIcon: document.getElementById('fullscreen-collapse-icon'),
 
             // Header actions
             loadBookBtn: document.getElementById('load-book-btn'),
@@ -389,12 +393,26 @@ class ReadingPartnerApp {
             // Download the book
             this._bookLoaderModal.showLoading('Downloading EPUB...');
 
-            const corsProxy = 'https://corsproxy.io/?';
-            const urlsToTry = [
-                `${corsProxy}https://gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`,
-                `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
-                `${corsProxy}https://www.gutenberg.org/files/${bookId}/${bookId}.epub`
+            // Gutenberg EPUB URL patterns (most common first)
+            const gutenbergEpubUrls = [
+                `https://www.gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`,
+                `https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
+                `https://www.gutenberg.org/files/${bookId}/${bookId}.epub`
             ];
+
+            // Multiple CORS proxies for reliability
+            const corsProxies = [
+                (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+                (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+            ];
+
+            // Build URL list: try each epub path with each proxy
+            const urlsToTry = [];
+            for (const epubUrl of gutenbergEpubUrls) {
+                for (const proxyFn of corsProxies) {
+                    urlsToTry.push(proxyFn(epubUrl));
+                }
+            }
 
             let lastError = null;
             let success = false;
@@ -490,8 +508,79 @@ class ReadingPartnerApp {
                     e.preventDefault();
                     this._readerView?.nextPage();
                     break;
+                case 'KeyF':
+                    e.preventDefault();
+                    this._toggleFullscreen();
+                    break;
             }
         });
+    }
+
+    /**
+     * Setup fullscreen toggle button and event listeners
+     */
+    _setupFullscreen() {
+        const { fullscreenBtn } = this._elements;
+        if (!fullscreenBtn) return;
+
+        // Hide button if Fullscreen API is not supported
+        const fsEnabled = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+        if (!fsEnabled) {
+            fullscreenBtn.style.display = 'none';
+            return;
+        }
+
+        fullscreenBtn.addEventListener('click', () => {
+            this._toggleFullscreen();
+        });
+
+        // Listen for fullscreen change to update icon
+        const updateIcon = () => this._updateFullscreenIcon();
+        document.addEventListener('fullscreenchange', updateIcon);
+        document.addEventListener('webkitfullscreenchange', updateIcon);
+    }
+
+    /**
+     * Toggle fullscreen mode
+     */
+    async _toggleFullscreen() {
+        const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+
+        try {
+            if (fsElement) {
+                if (document.exitFullscreen) {
+                    await document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) {
+                    await document.webkitExitFullscreen();
+                }
+            } else {
+                const el = document.documentElement;
+                if (el.requestFullscreen) {
+                    await el.requestFullscreen();
+                } else if (el.webkitRequestFullscreen) {
+                    await el.webkitRequestFullscreen();
+                }
+            }
+        } catch (error) {
+            console.warn('Fullscreen toggle failed:', error);
+        }
+    }
+
+    /**
+     * Update fullscreen button icon based on current state
+     */
+    _updateFullscreenIcon() {
+        const { fullscreenExpandIcon, fullscreenCollapseIcon } = this._elements;
+        if (!fullscreenExpandIcon || !fullscreenCollapseIcon) return;
+
+        const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsElement) {
+            fullscreenExpandIcon.classList.add('hidden');
+            fullscreenCollapseIcon.classList.remove('hidden');
+        } else {
+            fullscreenExpandIcon.classList.remove('hidden');
+            fullscreenCollapseIcon.classList.add('hidden');
+        }
     }
 
     /**
@@ -1189,7 +1278,7 @@ class ReadingPartnerApp {
         // Apply line spacing
         textContent.style.lineHeight = settings.lineSpacing;
 
-        // Apply margins (preserve top padding for page number)
+        // Apply margins
         const marginMap = {
             'narrow': '30px 30px 0 30px',
             'medium': '30px 50px 0 50px',

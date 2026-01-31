@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-01-28T10:07:36.791Z",
-  "commit": "7d65b2e43da78f7a783399730f9283056ecbc2d0",
-  "commitShort": "7d65b2e",
-  "branch": "claude/add-book-highlights-wu8ZW",
-  "lastCommitDate": "2026-01-28T10:53:39+01:00"
+  "buildTime": "2026-01-31T12:50:48.091Z",
+  "commit": "7903592d44b9e056fab67f6d36a7df55a2cad50d",
+  "commitShort": "7903592",
+  "branch": "claude/add-fullscreen-toggle-uqCdk",
+  "lastCommitDate": "2026-01-31T13:39:00+01:00"
 }

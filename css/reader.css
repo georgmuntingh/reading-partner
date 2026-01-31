@@ -37,11 +37,31 @@
     flex-direction: column;
 }
 
+.chapter-header-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+    flex-shrink: 0;
+}
+
 .chapter-title {
     font-size: var(--font-size-xl);
     font-weight: 600;
-    margin-bottom: var(--spacing-md);
     color: var(--text-color);
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.page-number {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    white-space: nowrap;
+    user-select: none;
     flex-shrink: 0;
 }
 
@@ -108,28 +128,9 @@
     right: 0;
 }
 
-/* Page indicator */
-.page-indicator {
-    text-align: center;
-    padding: var(--spacing-xs) 0;
-    font-size: var(--font-size-sm);
+/* Fullscreen button */
+.btn-icon#fullscreen-btn {
     color: var(--text-secondary);
-    user-select: none;
-    flex-shrink: 0;
-}
-
-/* Page number overlay - appears on each page like a book */
-.page-number-overlay {
-    position: absolute;
-    top: -5px;
-    right: 30px;
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    user-select: none;
-    pointer-events: none;
-    opacity: 0.7;
-    font-style: italic;
-    z-index: 10;
 }
 
 /* EPUB Content Container */
