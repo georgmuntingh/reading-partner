@@ -75,6 +75,9 @@ class MediaSessionManager {
         // Silent audio element
         this._silentAudio = null;
         this._hasUserInteraction = false;
+
+        // Android detection - needs continuous audio for notification
+        this._isAndroid = /Android/i.test(navigator.userAgent);
     }
 
     isSupported() {
@@ -114,7 +117,7 @@ class MediaSessionManager {
         this._silentAudio = document.createElement('audio');
         this._silentAudio.src = SILENT_WAV;
         this._silentAudio.loop = true;
-        this._silentAudio.volume = 0.001;
+        this._silentAudio.volume = 0.05;
         this._silentAudio.preload = 'auto';
 
         this._silentAudio.addEventListener('play', () => {
@@ -135,9 +138,13 @@ class MediaSessionManager {
 
     /**
      * Setup Media Session action handlers
+     *
+     * On Android, we keep audio continuously playing to maintain notification,
+     * so we use playbackState to determine actual state, not audio element.
      */
     _setupActionHandlers() {
         // PLAY action - browser sends this when audio is PAUSED
+        // On Android with continuous audio, we check playbackState instead
         navigator.mediaSession.setActionHandler('play', async () => {
             console.log('Media Session: PLAY action received');
             if (this._isQAModeActive) {
@@ -145,18 +152,30 @@ class MediaSessionManager {
                 return;
             }
 
-            // Start the silent audio to keep session active
-            try {
-                await this._silentAudio.play();
-            } catch (e) {
-                console.warn('Media Session: Could not play audio:', e.message);
-            }
+            // On Android, audio may already be playing, so check playbackState
+            const currentState = navigator.mediaSession.playbackState;
+            console.log(`Media Session: Current state is '${currentState}'`);
 
-            navigator.mediaSession.playbackState = 'playing';
-            this._onPlay?.();
+            if (currentState === 'paused' || currentState === 'none') {
+                // Start the silent audio to keep session active
+                try {
+                    if (this._silentAudio.paused) {
+                        await this._silentAudio.play();
+                    }
+                } catch (e) {
+                    console.warn('Media Session: Could not play audio:', e.message);
+                }
+
+                navigator.mediaSession.playbackState = 'playing';
+                this._onPlay?.();
+            } else {
+                // Already playing, maybe toggle to pause?
+                console.log('Media Session: Already playing, ignoring duplicate play');
+            }
         });
 
         // PAUSE action - browser sends this when audio is PLAYING
+        // On Android with continuous audio, we check playbackState instead
         navigator.mediaSession.setActionHandler('pause', () => {
             console.log('Media Session: PAUSE action received');
             if (this._isQAModeActive) {
@@ -164,11 +183,32 @@ class MediaSessionManager {
                 return;
             }
 
-            // Pause the silent audio so next button press sends "play"
-            this._silentAudio.pause();
+            // On Android, we might get pause actions even when logically paused
+            const currentState = navigator.mediaSession.playbackState;
+            console.log(`Media Session: Current state is '${currentState}'`);
 
-            navigator.mediaSession.playbackState = 'paused';
-            this._onPause?.();
+            if (currentState === 'playing') {
+                // On desktop, pause the silent audio so next button sends "play"
+                // On Android, keep audio playing but set state to paused
+                if (!this._isAndroid) {
+                    this._silentAudio.pause();
+                }
+
+                navigator.mediaSession.playbackState = 'paused';
+                this._onPause?.();
+            } else if (currentState === 'paused' || currentState === 'none') {
+                // Received pause but we're already paused - treat as toggle/play
+                console.log('Media Session: Received pause while paused, treating as play');
+                try {
+                    if (this._silentAudio.paused) {
+                        this._silentAudio.play();
+                    }
+                } catch (e) {
+                    console.warn('Media Session: Could not play audio:', e.message);
+                }
+                navigator.mediaSession.playbackState = 'playing';
+                this._onPlay?.();
+            }
         });
 
         // Next track (double tap on headsets) - Enter Q&A mode
@@ -218,11 +258,18 @@ class MediaSessionManager {
             title = this._chapterTitle;
         }
 
+        // Android requires artwork for proper notification display
+        const artwork = [{
+            src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>",
+            sizes: '512x512',
+            type: 'image/svg+xml'
+        }];
+
         navigator.mediaSession.metadata = new MediaMetadata({
             title: title,
             artist: this._author || 'Reading Partner',
             album: this._bookTitle || '',
-            artwork: []
+            artwork: artwork
         });
 
         console.log('Media Session: Metadata updated -', title);
@@ -231,16 +278,21 @@ class MediaSessionManager {
     /**
      * Update playback state - MUST sync audio element state with TTS state
      * This is critical: browser uses audio.paused to decide play vs pause action
+     *
+     * ANDROID EXCEPTION: On Android, we keep silent audio playing continuously
+     * to maintain the notification. We rely solely on playbackState for logic.
      */
     async setPlaybackState(state) {
         if (!this._isSupported) return;
 
-        console.log(`Media Session: setPlaybackState(${state})`);
+        console.log(`Media Session: setPlaybackState(${state}), Android=${this._isAndroid}`);
 
         if (state === 'playing') {
-            // TTS is playing - audio element must also be playing
+            // TTS is playing - ensure audio is playing
             try {
-                await this._silentAudio.play();
+                if (this._silentAudio.paused) {
+                    await this._silentAudio.play();
+                }
                 this._hasUserInteraction = true;
             } catch (e) {
                 console.warn('Media Session: Could not start audio:', e.message);
@@ -248,10 +300,23 @@ class MediaSessionManager {
             navigator.mediaSession.playbackState = 'playing';
 
         } else if (state === 'paused' || state === 'stopped') {
-            // TTS is paused - audio element must also be paused
-            // This way, next button press will send "play" action
-            this._silentAudio.pause();
             navigator.mediaSession.playbackState = 'paused';
+
+            // On Android, keep audio playing to maintain notification
+            // On other platforms, pause audio so next press sends "play"
+            if (this._isAndroid) {
+                // Keep silent audio playing to maintain Android notification
+                try {
+                    if (this._hasUserInteraction && this._silentAudio.paused) {
+                        await this._silentAudio.play();
+                    }
+                } catch (e) {
+                    console.warn('Media Session: Could not maintain audio:', e.message);
+                }
+            } else {
+                // Desktop: pause audio so next button press sends "play" action
+                this._silentAudio.pause();
+            }
 
         } else if (state === 'buffering') {
             // During buffering, keep current state
@@ -269,10 +334,18 @@ class MediaSessionManager {
         console.log(`Media Session: Q&A mode ${active ? 'ACTIVE' : 'INACTIVE'}`);
 
         if (active) {
+            // Android requires artwork for proper notification display
+            const artwork = [{
+                src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>",
+                sizes: '512x512',
+                type: 'image/svg+xml'
+            }];
+
             navigator.mediaSession.metadata = new MediaMetadata({
                 title: 'Q&A Mode - Ask a question',
                 artist: this._bookTitle || 'Reading Partner',
-                album: ''
+                album: '',
+                artwork: artwork
             });
             // Keep audio playing during Q&A so we can receive controls
             if (this._hasUserInteraction) {
@@ -295,6 +368,7 @@ class MediaSessionManager {
             supported: this._isSupported,
             initialized: this._isInitialized,
             hasUserInteraction: this._hasUserInteraction,
+            isAndroid: this._isAndroid,
             audioElement: this._silentAudio ? {
                 paused: this._silentAudio.paused,
                 currentTime: this._silentAudio.currentTime,
@@ -336,15 +410,22 @@ class MediaSessionManager {
         try {
             await this._silentAudio.play();
             this._hasUserInteraction = true;
-            navigator.mediaSession.playbackState = 'playing';
-            console.log('Media Session: Force start successful');
 
-            // Pause after a moment so next button press sends "play"
-            setTimeout(() => {
-                this._silentAudio.pause();
-                navigator.mediaSession.playbackState = 'paused';
-                console.log('Media Session: Ready for headset controls');
-            }, 500);
+            // On Android, set to 'playing' to trigger notification
+            // On desktop, set to 'paused' so first button press sends "play"
+            navigator.mediaSession.playbackState = this._isAndroid ? 'playing' : 'paused';
+            console.log(`Media Session: Force start successful, playbackState=${navigator.mediaSession.playbackState}`);
+
+            if (this._isAndroid) {
+                // On Android, keep audio playing to maintain notification
+                console.log('Media Session: Keeping silent audio playing for Android notification');
+            } else {
+                // On desktop, pause after a moment so next button press sends "play"
+                setTimeout(() => {
+                    this._silentAudio.pause();
+                    console.log('Media Session: Ready for headset controls');
+                }, 500);
+            }
 
             return true;
         } catch (e) {
