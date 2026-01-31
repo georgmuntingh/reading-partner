@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Reading Partner - EPUB TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-DF05FanJ.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-CiEd73nO.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-aFKk3E2H.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-BlVqv3kp.css">
 </head>
 <body>
     <div id="app">
@@ -94,7 +94,12 @@
             </header>
 
             <main class="reader-content" id="reader-content">
-                <div class="chapter-title" id="chapter-title">Chapter Title</div>
+                <div class="chapter-header-row">
+                    <div class="chapter-title" id="chapter-title">Chapter Title</div>
+                    <div class="page-number" id="page-number">
+                        <span id="page-current">1</span> / <span id="page-total">1</span>
+                    </div>
+                </div>
                 <div class="page-container" id="page-container">
                     <button class="page-nav-btn page-nav-prev" id="page-prev-btn" aria-label="Previous page">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -109,12 +114,6 @@
                             <polyline points="9 18 15 12 9 6"/>
                         </svg>
                     </button>
-                    <div class="page-number-overlay" id="page-number-overlay">
-                        Page <span id="page-current-overlay">1</span>/<span id="page-total-overlay">1</span>
-                    </div>
-                </div>
-                <div class="page-indicator" id="page-indicator">
-                    <span id="page-current">1</span> / <span id="page-total">1</span>
                 </div>
             </main>
 
@@ -157,6 +156,20 @@
                             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
                             <line x1="12" y1="19" x2="12" y2="23"/>
                             <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-expand-icon">
+                            <polyline points="15 3 21 3 21 9"/>
+                            <polyline points="9 21 3 21 3 15"/>
+                            <line x1="21" y1="3" x2="14" y2="10"/>
+                            <line x1="3" y1="21" x2="10" y2="14"/>
+                        </svg>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-collapse-icon" class="hidden">
+                            <polyline points="4 14 10 14 10 20"/>
+                            <polyline points="20 10 14 10 14 4"/>
+                            <line x1="14" y1="10" x2="21" y2="3"/>
+                            <line x1="3" y1="21" x2="10" y2="14"/>
                         </svg>
                     </button>
                 </div>
