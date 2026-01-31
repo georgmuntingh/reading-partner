@@ -390,72 +390,75 @@ class ReadingPartnerApp {
         this._bookLoaderModal.showLoading('Fetching from Project Gutenberg...');
 
         try {
-            // Download the book
             this._bookLoaderModal.showLoading('Downloading EPUB...');
+            const { file, source } = await this._downloadGutenbergEpub(bookId);
 
-            // Gutenberg EPUB URL patterns (most common first)
-            const gutenbergEpubUrls = [
-                `https://www.gutenberg.org/cache/epub/${bookId}/pg${bookId}.epub`,
-                `https://www.gutenberg.org/files/${bookId}/${bookId}-0.epub`,
-                `https://www.gutenberg.org/files/${bookId}/${bookId}.epub`
-            ];
+            // Hide modal
+            this._bookLoaderModal.hide();
 
-            // Multiple CORS proxies for reliability
-            const corsProxies = [
-                (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-                (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-            ];
-
-            // Build URL list: try each epub path with each proxy
-            const urlsToTry = [];
-            for (const epubUrl of gutenbergEpubUrls) {
-                for (const proxyFn of corsProxies) {
-                    urlsToTry.push(proxyFn(epubUrl));
-                }
-            }
-
-            let lastError = null;
-            let success = false;
-
-            for (const url of urlsToTry) {
-                try {
-                    const response = await fetch(url);
-
-                    if (response.ok) {
-                        const blob = await response.blob();
-
-                        if (blob.size < 100) {
-                            throw new Error('Downloaded file is too small to be an EPUB');
-                        }
-
-                        const file = new File([blob], `gutenberg-${bookId}.epub`, { type: 'application/epub+zip' });
-                        const source = { type: 'gutenberg', bookId };
-
-                        // Hide modal
-                        this._bookLoaderModal.hide();
-
-                        // Load the book
-                        await this._loadBook(file, source);
-                        success = true;
-                        break;
-                    }
-                } catch (error) {
-                    lastError = error;
-                    console.log(`Failed to load from ${url}:`, error.message);
-                }
-            }
-
-            if (!success) {
-                throw new Error(
-                    `Book ${bookId} could not be loaded. The book might not be available as EPUB. ` +
-                    `Try downloading manually from https://www.gutenberg.org/ebooks/${bookId}`
-                );
-            }
+            // Load the book
+            await this._loadBook(file, source);
 
         } catch (error) {
             console.error('Failed to load from Gutenberg:', error);
             this._bookLoaderModal.showError(error.message);
         }
+    }
+
+    /**
+     * Download an EPUB from Project Gutenberg
+     * @param {string} gutenbergBookId
+     * @returns {Promise<{file: File, source: Object}>}
+     */
+    async _downloadGutenbergEpub(gutenbergBookId) {
+        // Gutenberg EPUB URL patterns (most common first)
+        const gutenbergEpubUrls = [
+            `https://www.gutenberg.org/cache/epub/${gutenbergBookId}/pg${gutenbergBookId}.epub`,
+            `https://www.gutenberg.org/files/${gutenbergBookId}/${gutenbergBookId}-0.epub`,
+            `https://www.gutenberg.org/files/${gutenbergBookId}/${gutenbergBookId}.epub`
+        ];
+
+        // Multiple CORS proxies for reliability
+        const corsProxies = [
+            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+        ];
+
+        // Build URL list: try each epub path with each proxy
+        const urlsToTry = [];
+        for (const epubUrl of gutenbergEpubUrls) {
+            for (const proxyFn of corsProxies) {
+                urlsToTry.push(proxyFn(epubUrl));
+            }
+        }
+
+        let lastError = null;
+
+        for (const url of urlsToTry) {
+            try {
+                const response = await fetch(url);
+
+                if (response.ok) {
+                    const blob = await response.blob();
+
+                    if (blob.size < 100) {
+                        throw new Error('Downloaded file is too small to be an EPUB');
+                    }
+
+                    const file = new File([blob], `gutenberg-${gutenbergBookId}.epub`, { type: 'application/epub+zip' });
+                    const source = { type: 'gutenberg', bookId: gutenbergBookId };
+                    return { file, source };
+                }
+            } catch (error) {
+                lastError = error;
+                console.log(`Failed to load from ${url}:`, error.message);
+            }
+        }
+
+        throw new Error(
+            `Book ${gutenbergBookId} could not be loaded. The book might not be available as EPUB. ` +
+            `Try downloading manually from https://www.gutenberg.org/ebooks/${gutenbergBookId}`
+        );
     }
 
     /**
@@ -587,8 +590,9 @@ class ReadingPartnerApp {
      * Load a book from file
      * @param {File} file
      * @param {Object} [source] - Source information for persistence
+     * @param {string} [existingBookId] - Reuse an existing book ID (for re-downloads)
      */
-    async _loadBook(file, source = null) {
+    async _loadBook(file, source = null, existingBookId = null) {
         const { loadingIndicator, loadingText } = this._elements;
         const isFromReader = this._elements.readerScreen.classList.contains('active');
 
@@ -602,7 +606,7 @@ class ReadingPartnerApp {
             }
 
             // Parse EPUB and save to storage
-            this._currentBook = await this._readingState.loadBook(file, source);
+            this._currentBook = await this._readingState.loadBook(file, source, existingBookId);
 
             if (!this._currentBook.chapters.length) {
                 throw new Error('No readable content found in this EPUB');
@@ -1944,7 +1948,7 @@ class ReadingPartnerApp {
 
         const resumeBtn = banner.querySelector('.resume-btn');
         resumeBtn.addEventListener('click', () => {
-            this._resumeLastBook(savedState.bookId);
+            this._resumeLastBook(savedState);
         });
 
         // Insert before the upload area
@@ -1958,17 +1962,36 @@ class ReadingPartnerApp {
 
     /**
      * Resume reading the last book from saved state
-     * @param {string} bookId
+     * @param {Object} savedState - Cookie state with bookId, source, etc.
      */
-    async _resumeLastBook(bookId) {
+    async _resumeLastBook(savedState) {
         const { loadingIndicator, loadingText } = this._elements;
+        const bookId = savedState.bookId;
 
         try {
             loadingIndicator.classList.remove('hidden');
             loadingText.textContent = 'Resuming book...';
 
-            // Open the book from storage
-            this._currentBook = await this._readingState.openBook(bookId);
+            let openError = null;
+            try {
+                // Try to open the book from storage (includes EPUB data)
+                this._currentBook = await this._readingState.openBook(bookId);
+            } catch (error) {
+                openError = error;
+            }
+
+            // If opening failed, try re-downloading for Gutenberg books
+            if (openError) {
+                const source = savedState.source;
+                if (source?.type === 'gutenberg' && source.bookId) {
+                    console.log('EPUB data not in storage, re-downloading from Gutenberg...');
+                    loadingText.textContent = 'Re-downloading from Gutenberg...';
+                    const { file, source: dlSource } = await this._downloadGutenbergEpub(source.bookId);
+                    await this._loadBook(file, dlSource, bookId);
+                    return; // _loadBook handles everything including screen switch
+                }
+                throw new Error(openError.message + '. Please load the EPUB file again.');
+            }
 
             if (!this._currentBook.chapters.length) {
                 throw new Error('No readable content found');
@@ -2007,7 +2030,7 @@ class ReadingPartnerApp {
 
         } catch (error) {
             console.error('Failed to resume book:', error);
-            this._showUploadError('Could not resume: ' + error.message + '. Please load the EPUB file again.');
+            this._showUploadError('Could not resume: ' + error.message);
         } finally {
             loadingIndicator.classList.add('hidden');
         }

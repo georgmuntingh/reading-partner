@@ -43,13 +43,14 @@ export class ReadingStateController {
      * @param {string} source.type - 'local' or 'gutenberg'
      * @param {string} [source.filename] - Original filename (for local)
      * @param {string} [source.bookId] - Gutenberg book ID (for gutenberg)
+     * @param {string} [existingBookId] - Reuse an existing book ID (for re-downloads)
      * @returns {Promise<Object>} book
      */
-    async loadBook(file, source = null) {
+    async loadBook(file, source = null, existingBookId = null) {
         const book = await epubParser.loadFromFile(file);
 
-        // Generate book ID from filename and timestamp
-        book.id = this._generateBookId(file.name);
+        // Reuse existing ID (for re-downloads) or generate new one
+        book.id = existingBookId || this._generateBookId(file.name);
 
         // Store source information for persistence
         if (source) {
@@ -97,6 +98,13 @@ export class ReadingStateController {
         const book = await storage.getBook(bookId);
         if (!book) {
             throw new Error('Book not found');
+        }
+
+        // Reinitialize epub.js from stored EPUB data
+        if (book.epubData) {
+            await epubParser.initFromArrayBuffer(book.epubData);
+        } else {
+            throw new Error('EPUB data not available');
         }
 
         this._currentBook = book;
