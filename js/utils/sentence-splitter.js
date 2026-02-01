@@ -33,9 +33,10 @@ export function splitIntoSentences(text, lang = 'en') {
         try {
             const segmenter = new Intl.Segmenter(lang, { granularity: 'sentence' });
             const segments = [...segmenter.segment(text)];
-            return segments
+            const rawSentences = segments
                 .map(s => s.segment.trim())
                 .filter(s => s.length > 0);
+            return mergeAbbreviationSplits(rawSentences);
         } catch (e) {
             console.warn('Intl.Segmenter failed, using fallback:', e);
         }
@@ -43,6 +44,39 @@ export function splitIntoSentences(text, lang = 'en') {
 
     // Fallback: regex-based sentence splitting
     return splitSentencesFallback(text);
+}
+
+/**
+ * Common abbreviations that should not cause sentence splits.
+ * Matches the pattern: abbreviation followed by a period at the end of a segment.
+ */
+const ABBREVIATION_PATTERN = /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e|Inc|Ltd|Corp|St|Ave|Blvd|Rd|Mt|Ft|Gen|Gov|Sgt|Cpl|Pvt|Capt|Lt|Col|Maj|Rev|Hon|Pres|Dept|Assn|Bros|No|Vol|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.\s*$/i;
+
+/**
+ * Merge sentences that were incorrectly split on abbreviations.
+ * Intl.Segmenter sometimes treats "Dr. Smith" as two sentences.
+ * @param {string[]} sentences
+ * @returns {string[]}
+ */
+function mergeAbbreviationSplits(sentences) {
+    if (sentences.length <= 1) {
+        return sentences;
+    }
+
+    const merged = [sentences[0]];
+
+    for (let i = 1; i < sentences.length; i++) {
+        const prev = merged[merged.length - 1];
+
+        if (ABBREVIATION_PATTERN.test(prev)) {
+            // Merge with the next segment
+            merged[merged.length - 1] = prev + sentences[i];
+        } else {
+            merged.push(sentences[i]);
+        }
+    }
+
+    return merged;
 }
 
 /**

@@ -1283,12 +1283,14 @@ class ReadingPartnerApp {
         textContent.style.lineHeight = settings.lineSpacing;
 
         // Apply margins
-        const marginMap = {
-            'narrow': '30px 30px 0 30px',
-            'medium': '30px 50px 0 50px',
-            'wide': '30px 80px 0 80px'
+        const horizontalMap = {
+            'narrow': 30,
+            'medium': 50,
+            'wide': 80
         };
-        textContent.style.padding = marginMap[settings.marginSize] || marginMap['medium'];
+        const hMargin = horizontalMap[settings.marginSize] || 50;
+        const vMargin = settings.verticalMargin !== undefined ? settings.verticalMargin : 2;
+        textContent.style.padding = `${vMargin}px ${hMargin}px`;
     }
 
     /**
@@ -1344,6 +1346,9 @@ class ReadingPartnerApp {
             }
             if (settings.marginSize) {
                 await storage.saveSetting('marginSize', settings.marginSize);
+            }
+            if (settings.verticalMargin !== undefined) {
+                await storage.saveSetting('verticalMargin', settings.verticalMargin);
             }
             if (settings.lineSpacing) {
                 await storage.saveSetting('lineSpacing', settings.lineSpacing);
@@ -1801,12 +1806,14 @@ class ReadingPartnerApp {
             const font = await storage.getSetting('font');
             const fontSize = await storage.getSetting('fontSize');
             const marginSize = await storage.getSetting('marginSize');
+            const verticalMargin = await storage.getSetting('verticalMargin');
             const lineSpacing = await storage.getSetting('lineSpacing');
 
             const typographySettings = {};
             if (font !== null) typographySettings.font = font;
             if (fontSize !== null) typographySettings.fontSize = fontSize;
             if (marginSize !== null) typographySettings.marginSize = marginSize;
+            if (verticalMargin !== null) typographySettings.verticalMargin = verticalMargin;
             if (lineSpacing !== null) typographySettings.lineSpacing = lineSpacing;
 
             // Load normalization settings
