@@ -33,6 +33,7 @@ class ReadingPartnerApp {
         this._qaSettings = {
             apiKey: '',
             model: DEFAULT_MODEL,
+            fullChapterContext: false,
             contextBefore: 20,
             contextAfter: 5
         };
@@ -1046,7 +1047,8 @@ class ReadingPartnerApp {
         // Update Q&A controller settings
         this._qaController.setContextSettings(
             this._qaSettings.contextBefore,
-            this._qaSettings.contextAfter
+            this._qaSettings.contextAfter,
+            this._qaSettings.fullChapterContext
         );
         // Get speed from saved value or settings modal
         const speed = this._savedSpeed || this._settingsModal?.getSpeed() || 1.0;
@@ -1308,7 +1310,8 @@ class ReadingPartnerApp {
         if (this._qaController) {
             this._qaController.setContextSettings(
                 this._qaSettings.contextBefore,
-                this._qaSettings.contextAfter
+                this._qaSettings.contextAfter,
+                this._qaSettings.fullChapterContext
             );
         }
 
@@ -1316,6 +1319,7 @@ class ReadingPartnerApp {
         try {
             await storage.saveSetting('qaApiKey', this._qaSettings.apiKey);
             await storage.saveSetting('qaModel', this._qaSettings.model);
+            await storage.saveSetting('qaFullChapterContext', this._qaSettings.fullChapterContext);
             await storage.saveSetting('qaContextBefore', this._qaSettings.contextBefore);
             await storage.saveSetting('qaContextAfter', this._qaSettings.contextAfter);
 
@@ -1790,6 +1794,11 @@ class ReadingPartnerApp {
             if (model !== null) {
                 this._qaSettings.model = model;
                 llmClient.setModel(model);
+            }
+
+            const fullChapterContext = await storage.getSetting('qaFullChapterContext');
+            if (fullChapterContext !== null) {
+                this._qaSettings.fullChapterContext = fullChapterContext;
             }
 
             const contextBefore = await storage.getSetting('qaContextBefore');

@@ -23,6 +23,7 @@ export class SettingsModal {
         this._settings = {
             apiKey: '',
             model: DEFAULT_MODEL,
+            fullChapterContext: false,
             contextBefore: 20,
             contextAfter: 5,
             ttsBackend: 'kokoro-js',
@@ -199,9 +200,17 @@ export class SettingsModal {
 
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Context from the book is sent to the LLM along with your question.
-                            By default, 20 sentences before and 5 after your current reading position are included.
-                            For roughly an entire chapter of context, increase both values (e.g., 200+).
+                            You can either send the entire current chapter, or a configurable number
+                            of sentences around your reading position.
                         </p>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-full-chapter-context">
+                                Send entire chapter as context
+                            </label>
+                            <p class="form-hint">When enabled, all sentences in the current chapter are sent to the LLM instead of the counts below</p>
+                        </div>
 
                         <div class="form-group">
                             <label for="settings-context-before">Context Before (sentences)</label>
@@ -303,6 +312,7 @@ export class SettingsModal {
             forceStartMediaBtn: this._container.querySelector('#force-start-media-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
+            fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
             contextBefore: this._container.querySelector('#settings-context-before'),
             contextAfter: this._container.querySelector('#settings-context-after'),
             cancelBtn: this._container.querySelector('#settings-cancel-btn'),
@@ -540,6 +550,7 @@ export class SettingsModal {
         const settings = {
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
+            fullChapterContext: this._elements.fullChapterContext.checked,
             contextBefore: parseInt(this._elements.contextBefore.value) || 20,
             contextAfter: parseInt(this._elements.contextAfter.value) || 5,
             ttsBackend: this._elements.ttsBackend.value,
@@ -657,6 +668,7 @@ export class SettingsModal {
     _loadCurrentSettings() {
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
+        this._elements.fullChapterContext.checked = !!this._settings.fullChapterContext;
         this._elements.contextBefore.value = this._settings.contextBefore || 20;
         this._elements.contextAfter.value = this._settings.contextAfter || 5;
         this._elements.ttsBackend.value = this._settings.ttsBackend || 'kokoro-js';

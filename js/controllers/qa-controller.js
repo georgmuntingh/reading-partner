@@ -70,6 +70,7 @@ export class QAController {
         // Context settings (sentences before and after current position)
         this._contextBefore = 20;
         this._contextAfter = 5;
+        this._useFullChapter = false;
 
         // Setup STT callbacks
         sttService.onInterimResult = (text) => {
@@ -120,10 +121,12 @@ export class QAController {
      * Set context settings
      * @param {number} before - Sentences before current position
      * @param {number} after - Sentences after current position
+     * @param {boolean} [useFullChapter=false] - Send all chapter sentences
      */
-    setContextSettings(before, after) {
+    setContextSettings(before, after, useFullChapter = false) {
         this._contextBefore = before;
         this._contextAfter = after;
+        this._useFullChapter = useFullChapter;
     }
 
     /**
@@ -258,12 +261,17 @@ export class QAController {
     }
 
     /**
-     * Get context sentences (before and after current position)
+     * Get context sentences (before and after current position, or full chapter)
      * @returns {Promise<string[]>}
      */
     async _getContextSentences() {
         if (!this._readingState) {
             return [];
+        }
+
+        if (this._useFullChapter) {
+            const position = this._readingState.getCurrentPosition();
+            return await this._readingState.loadChapter(position.chapterIndex);
         }
 
         const beforeSentences = await this._readingState.getContextSentences(this._contextBefore);
