@@ -81,8 +81,24 @@ export class EPUBParser {
             author: metadata.author || 'Unknown Author',
             coverImage,
             chapters,
+            epubData: arrayBuffer, // Store for persistence across sessions
             lastOpened: Date.now()
         };
+    }
+
+    /**
+     * Initialize epub.js from a stored ArrayBuffer (for resuming sessions)
+     * @param {ArrayBuffer} arrayBuffer
+     * @returns {Promise<void>}
+     */
+    async initFromArrayBuffer(arrayBuffer) {
+        if (this._book) {
+            this._book.destroy();
+        }
+        // @ts-ignore - ePub is loaded globally
+        this._book = ePub(arrayBuffer);
+        await this._book.ready;
+        console.log('EPUBParser reinitialized from stored data');
     }
 
     /**
