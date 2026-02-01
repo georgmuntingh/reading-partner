@@ -159,6 +159,13 @@
                             <line x1="8" y1="23" x2="16" y2="23"/>
                         </svg>
                     </button>
+                    <button class="btn-icon btn-quiz" id="quiz-btn" aria-label="Start quiz" title="Start quiz">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+                            <rect x="9" y="3" width="6" height="4" rx="1"/>
+                            <path d="M9 14l2 2 4-4"/>
+                        </svg>
+                    </button>
                     <button class="btn-icon" id="fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-expand-icon">
                             <polyline points="15 3 21 3 21 9"/>
@@ -229,6 +236,11 @@
     <!-- Q&A Overlay -->
     <div id="qa-overlay" class="qa-overlay hidden">
         <!-- Content will be rendered by QAOverlay component -->
+    </div>
+
+    <!-- Quiz Overlay -->
+    <div id="quiz-overlay" class="quiz-overlay hidden">
+        <!-- Content will be rendered by QuizOverlay component -->
     </div>
 
     <!-- Settings Modal -->

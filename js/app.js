@@ -10,11 +10,13 @@ import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-clie
 import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
+import { QuizController, QuizState } from './controllers/quiz-controller.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
 import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
+import { QuizOverlay } from './ui/quiz-overlay.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
@@ -38,6 +40,21 @@ class ReadingPartnerApp {
             contextAfter: 5
         };
 
+        // Quiz Settings
+        this._quizSettings = {
+            quizMode: 'multiple-choice',
+            quizGuided: true,
+            quizChapterScope: 'full',
+            quizQuestionTypes: {
+                factual: true,
+                deeper_understanding: true,
+                vocabulary: false,
+                inference: false,
+                themes: false
+            },
+            quizSystemPrompt: ''
+        };
+
         // DOM Elements
         this._elements = {};
 
@@ -49,6 +66,8 @@ class ReadingPartnerApp {
         this._navigation = null;
         this._qaController = null;
         this._qaOverlay = null;
+        this._quizController = null;
+        this._quizOverlay = null;
         this._settingsModal = null;
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
@@ -115,6 +134,19 @@ class ReadingPartnerApp {
             }
         );
 
+        // Initialize Quiz Overlay
+        this._quizOverlay = new QuizOverlay(
+            { container: document.getElementById('quiz-overlay') },
+            {
+                onClose: () => this._closeQuizOverlay(),
+                onNextQuestion: () => this._quizController?.nextQuestion(),
+                onMCAnswer: (index) => this._quizController?.submitMCAnswer(index),
+                onTextAnswer: (text) => this._quizController?.submitFreeFormAnswer(text),
+                onVoiceAnswer: () => this._quizController?.submitVoiceAnswer(),
+                onSkipToAnswer: () => this._quizController?.skipToAnswer()
+            }
+        );
+
         // Initialize Settings Modal
         this._settingsModal = new SettingsModal(
             { container: document.getElementById('settings-modal') },
@@ -130,7 +162,7 @@ class ReadingPartnerApp {
         // Setup settings button
         this._elements.settingsBtn = document.getElementById('settings-btn');
         this._elements.settingsBtn?.addEventListener('click', () => {
-            this._settingsModal.setSettings(this._qaSettings);
+            this._settingsModal.setSettings({ ...this._qaSettings, ...this._quizSettings });
             this._settingsModal.show();
         });
 
@@ -278,6 +310,7 @@ class ReadingPartnerApp {
             prevChapterBtn: document.getElementById('prev-chapter-btn'),
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
+            quizBtn: document.getElementById('quiz-btn'),
             fullscreenBtn: document.getElementById('fullscreen-btn'),
             fullscreenExpandIcon: document.getElementById('fullscreen-expand-icon'),
             fullscreenCollapseIcon: document.getElementById('fullscreen-collapse-icon'),
@@ -345,11 +378,18 @@ class ReadingPartnerApp {
             this._qaController?.stop();
             this._qaOverlay?.hide();
 
+            // Stop Quiz if active
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+
             // Reset Q&A controller book metadata
             if (this._qaController) {
                 this._qaController.setBookMeta(null);
                 this._qaController.clearHistory();
             }
+
+            // Reset quiz session
+            this._quizController?.resetSession();
 
             // Reset chapter index
             this._currentChapterIndex = 0;
@@ -377,11 +417,18 @@ class ReadingPartnerApp {
             this._qaController?.stop();
             this._qaOverlay?.hide();
 
+            // Stop Quiz if active
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+
             // Reset Q&A controller book metadata
             if (this._qaController) {
                 this._qaController.setBookMeta(null);
                 this._qaController.clearHistory();
             }
+
+            // Reset quiz session
+            this._quizController?.resetSession();
 
             // Reset chapter index
             this._currentChapterIndex = 0;
@@ -731,7 +778,8 @@ class ReadingPartnerApp {
                 nextBtn: this._elements.nextBtn,
                 prevChapterBtn: this._elements.prevChapterBtn,
                 nextChapterBtn: this._elements.nextChapterBtn,
-                askBtn: this._elements.askBtn
+                askBtn: this._elements.askBtn,
+                quizBtn: this._elements.quizBtn
             },
             {
                 onPlay: () => this._play(),
@@ -740,7 +788,8 @@ class ReadingPartnerApp {
                 onNext: () => this._audioController.skipForward(),
                 onPrevChapter: () => this._navigateToPrevChapter(),
                 onNextChapter: () => this._navigateToNextChapter(),
-                onAsk: () => this._startQA()
+                onAsk: () => this._startQA(),
+                onQuiz: () => this._startQuiz()
             }
         );
 
@@ -767,8 +816,9 @@ class ReadingPartnerApp {
         // Enable controls
         this._controls.setEnabled(true);
 
-        // Enable/disable Ask button based on API key configuration
+        // Enable/disable Ask and Quiz buttons based on API key configuration
         this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
+        this._controls.setQuizDisabled(!this._qaSettings.apiKey, 'Configure API key in Settings to enable quiz mode');
     }
 
     /**
@@ -1189,6 +1239,93 @@ class ReadingPartnerApp {
         }
     }
 
+    // ========== Quiz Mode ==========
+
+    /**
+     * Start quiz mode
+     */
+    async _startQuiz() {
+        if (!this._qaSettings.apiKey) {
+            this._showToast('Please configure API key in Settings first');
+            this._settingsModal.setSettings({ ...this._qaSettings, ...this._quizSettings });
+            this._settingsModal.show();
+            return;
+        }
+
+        // Pause current playback
+        this._pause();
+
+        // Initialize quiz controller if needed
+        if (!this._quizController) {
+            this._initializeQuizController();
+        }
+
+        // Apply current quiz settings
+        const isMultipleChoice = this._quizSettings.quizMode === 'multiple-choice';
+        const questionTypes = Object.entries(this._quizSettings.quizQuestionTypes)
+            .filter(([, enabled]) => enabled)
+            .map(([type]) => type.replace(/_/g, ' '));
+        if (questionTypes.length === 0) questionTypes.push('factual');
+
+        this._quizController.setSettings({
+            isMultipleChoice,
+            isGuided: this._quizSettings.quizGuided,
+            questionTypes,
+            useFullChapter: this._quizSettings.quizChapterScope === 'full',
+            customSystemPrompt: this._quizSettings.quizSystemPrompt
+        });
+
+        const speed = this._savedSpeed || this._settingsModal?.getSpeed() || 1.0;
+        this._quizController.setPlaybackSpeed(speed);
+
+        if (this._currentBook) {
+            this._quizController.setBookMeta({
+                title: this._currentBook.title,
+                author: this._currentBook.author
+            });
+        }
+
+        // Setup overlay
+        this._quizOverlay.setMultipleChoice(isMultipleChoice);
+        this._quizOverlay.reset();
+        this._quizOverlay.show();
+    }
+
+    /**
+     * Initialize quiz controller
+     */
+    _initializeQuizController() {
+        llmClient.setApiKey(this._qaSettings.apiKey);
+        llmClient.setModel(this._qaSettings.model);
+
+        this._quizController = new QuizController({
+            readingState: this._readingState,
+            onStateChange: (state, data) => {
+                this._quizOverlay.setState(state, data);
+            },
+            onQuestionReady: (question) => {
+                this._quizOverlay.showQuestion(question);
+            },
+            onFeedbackChunk: (text) => {
+                this._quizOverlay.setFeedbackText(text);
+            },
+            onAnswerResult: (result) => {
+                this._quizOverlay.showAnswerResult(result);
+            },
+            onError: (message) => {
+                this._quizOverlay.showError(message);
+            }
+        });
+    }
+
+    /**
+     * Close quiz overlay
+     */
+    _closeQuizOverlay() {
+        this._quizController?.stop();
+        this._quizOverlay.hide();
+    }
+
     /**
      * Handle TTS backend change from settings
      * @param {string} backend
@@ -1368,6 +1505,28 @@ class ReadingPartnerApp {
             if (settings.normalizeAbbreviations !== undefined) {
                 await storage.saveSetting('normalizeAbbreviations', settings.normalizeAbbreviations);
             }
+
+            // Save quiz settings
+            if (settings.quizMode !== undefined) {
+                this._quizSettings.quizMode = settings.quizMode;
+                await storage.saveSetting('quizMode', settings.quizMode);
+            }
+            if (settings.quizGuided !== undefined) {
+                this._quizSettings.quizGuided = settings.quizGuided;
+                await storage.saveSetting('quizGuided', settings.quizGuided);
+            }
+            if (settings.quizChapterScope !== undefined) {
+                this._quizSettings.quizChapterScope = settings.quizChapterScope;
+                await storage.saveSetting('quizChapterScope', settings.quizChapterScope);
+            }
+            if (settings.quizQuestionTypes !== undefined) {
+                this._quizSettings.quizQuestionTypes = settings.quizQuestionTypes;
+                await storage.saveSetting('quizQuestionTypes', settings.quizQuestionTypes);
+            }
+            if (settings.quizSystemPrompt !== undefined) {
+                this._quizSettings.quizSystemPrompt = settings.quizSystemPrompt;
+                await storage.saveSetting('quizSystemPrompt', settings.quizSystemPrompt);
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -1379,11 +1538,12 @@ class ReadingPartnerApp {
         this._updateQASetupStatus();
 
         // Update settings modal
-        this._settingsModal.setSettings(this._qaSettings);
+        this._settingsModal.setSettings({ ...this._qaSettings, ...this._quizSettings });
 
-        // Enable/disable Ask button based on API key
+        // Enable/disable Ask and Quiz buttons based on API key
         if (this._controls) {
             this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
+            this._controls.setQuizDisabled(!this._qaSettings.apiKey, 'Configure API key in Settings to enable quiz mode');
         }
     }
 
@@ -1835,12 +1995,29 @@ class ReadingPartnerApp {
             if (normalizeNumbers !== null) normalizationSettings.normalizeNumbers = normalizeNumbers;
             if (normalizeAbbreviations !== null) normalizationSettings.normalizeAbbreviations = normalizeAbbreviations;
 
+            // Load quiz settings
+            const quizMode = await storage.getSetting('quizMode');
+            if (quizMode !== null) this._quizSettings.quizMode = quizMode;
+
+            const quizGuided = await storage.getSetting('quizGuided');
+            if (quizGuided !== null) this._quizSettings.quizGuided = quizGuided;
+
+            const quizChapterScope = await storage.getSetting('quizChapterScope');
+            if (quizChapterScope !== null) this._quizSettings.quizChapterScope = quizChapterScope;
+
+            const quizQuestionTypes = await storage.getSetting('quizQuestionTypes');
+            if (quizQuestionTypes !== null) this._quizSettings.quizQuestionTypes = quizQuestionTypes;
+
+            const quizSystemPrompt = await storage.getSetting('quizSystemPrompt');
+            if (quizSystemPrompt !== null) this._quizSettings.quizSystemPrompt = quizSystemPrompt;
+
             // Update Q&A setup UI
             this._updateQASetupStatus();
 
             // Update settings modal with all settings
             this._settingsModal?.setSettings({
                 ...this._qaSettings,
+                ...this._quizSettings,
                 voice: this._savedVoice,
                 speed: this._savedSpeed,
                 ...typographySettings,
