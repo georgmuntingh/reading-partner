@@ -33,6 +33,7 @@ class ReadingPartnerApp {
         this._qaSettings = {
             apiKey: '',
             model: DEFAULT_MODEL,
+            fullChapterContext: false,
             contextBefore: 20,
             contextAfter: 5
         };
@@ -1046,7 +1047,8 @@ class ReadingPartnerApp {
         // Update Q&A controller settings
         this._qaController.setContextSettings(
             this._qaSettings.contextBefore,
-            this._qaSettings.contextAfter
+            this._qaSettings.contextAfter,
+            this._qaSettings.fullChapterContext
         );
         // Get speed from saved value or settings modal
         const speed = this._savedSpeed || this._settingsModal?.getSpeed() || 1.0;
@@ -1283,12 +1285,14 @@ class ReadingPartnerApp {
         textContent.style.lineHeight = settings.lineSpacing;
 
         // Apply margins
-        const marginMap = {
-            'narrow': '30px 30px 0 30px',
-            'medium': '30px 50px 0 50px',
-            'wide': '30px 80px 0 80px'
+        const horizontalMap = {
+            'narrow': 30,
+            'medium': 50,
+            'wide': 80
         };
-        textContent.style.padding = marginMap[settings.marginSize] || marginMap['medium'];
+        const hMargin = horizontalMap[settings.marginSize] || 50;
+        const vMargin = settings.verticalMargin !== undefined ? settings.verticalMargin : 2;
+        textContent.style.padding = `${vMargin}px ${hMargin}px`;
     }
 
     /**
@@ -1306,7 +1310,8 @@ class ReadingPartnerApp {
         if (this._qaController) {
             this._qaController.setContextSettings(
                 this._qaSettings.contextBefore,
-                this._qaSettings.contextAfter
+                this._qaSettings.contextAfter,
+                this._qaSettings.fullChapterContext
             );
         }
 
@@ -1314,6 +1319,7 @@ class ReadingPartnerApp {
         try {
             await storage.saveSetting('qaApiKey', this._qaSettings.apiKey);
             await storage.saveSetting('qaModel', this._qaSettings.model);
+            await storage.saveSetting('qaFullChapterContext', this._qaSettings.fullChapterContext);
             await storage.saveSetting('qaContextBefore', this._qaSettings.contextBefore);
             await storage.saveSetting('qaContextAfter', this._qaSettings.contextAfter);
 
@@ -1344,6 +1350,9 @@ class ReadingPartnerApp {
             }
             if (settings.marginSize) {
                 await storage.saveSetting('marginSize', settings.marginSize);
+            }
+            if (settings.verticalMargin !== undefined) {
+                await storage.saveSetting('verticalMargin', settings.verticalMargin);
             }
             if (settings.lineSpacing) {
                 await storage.saveSetting('lineSpacing', settings.lineSpacing);
@@ -1787,6 +1796,11 @@ class ReadingPartnerApp {
                 llmClient.setModel(model);
             }
 
+            const fullChapterContext = await storage.getSetting('qaFullChapterContext');
+            if (fullChapterContext !== null) {
+                this._qaSettings.fullChapterContext = fullChapterContext;
+            }
+
             const contextBefore = await storage.getSetting('qaContextBefore');
             if (contextBefore !== null) {
                 this._qaSettings.contextBefore = contextBefore;
@@ -1801,12 +1815,14 @@ class ReadingPartnerApp {
             const font = await storage.getSetting('font');
             const fontSize = await storage.getSetting('fontSize');
             const marginSize = await storage.getSetting('marginSize');
+            const verticalMargin = await storage.getSetting('verticalMargin');
             const lineSpacing = await storage.getSetting('lineSpacing');
 
             const typographySettings = {};
             if (font !== null) typographySettings.font = font;
             if (fontSize !== null) typographySettings.fontSize = fontSize;
             if (marginSize !== null) typographySettings.marginSize = marginSize;
+            if (verticalMargin !== null) typographySettings.verticalMargin = verticalMargin;
             if (lineSpacing !== null) typographySettings.lineSpacing = lineSpacing;
 
             // Load normalization settings

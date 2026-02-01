@@ -23,6 +23,7 @@ export class SettingsModal {
         this._settings = {
             apiKey: '',
             model: DEFAULT_MODEL,
+            fullChapterContext: false,
             contextBefore: 20,
             contextAfter: 5,
             ttsBackend: 'kokoro-js',
@@ -32,6 +33,7 @@ export class SettingsModal {
             font: 'default',
             fontSize: 16,
             marginSize: 'medium',
+            verticalMargin: 2,
             lineSpacing: 1.8,
             normalizeText: true,
             normalizeNumbers: true,
@@ -97,12 +99,17 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
-                            <label for="settings-margin">Page Margins</label>
+                            <label for="settings-margin">Horizontal Margins</label>
                             <select id="settings-margin" class="form-select">
                                 <option value="narrow">Narrow</option>
                                 <option value="medium">Medium</option>
                                 <option value="wide">Wide</option>
                             </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-vertical-margin">Vertical Margins: <span id="settings-vertical-margin-value">2px</span></label>
+                            <input type="range" id="settings-vertical-margin" class="form-input" min="0" max="50" step="1" value="2">
                         </div>
 
                         <div class="form-group">
@@ -191,15 +198,29 @@ export class SettingsModal {
                             </select>
                         </div>
 
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            Context from the book is sent to the LLM along with your question.
+                            You can either send the entire current chapter, or a configurable number
+                            of sentences around your reading position.
+                        </p>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-full-chapter-context">
+                                Send entire chapter as context
+                            </label>
+                            <p class="form-hint">When enabled, all sentences in the current chapter are sent to the LLM instead of the counts below</p>
+                        </div>
+
                         <div class="form-group">
                             <label for="settings-context-before">Context Before (sentences)</label>
-                            <input type="number" id="settings-context-before" class="form-input" min="0" max="100" value="20">
+                            <input type="number" id="settings-context-before" class="form-input" min="0" max="500" value="20">
                             <p class="form-hint">Number of sentences before current position to include as context</p>
                         </div>
 
                         <div class="form-group">
                             <label for="settings-context-after">Context After (sentences)</label>
-                            <input type="number" id="settings-context-after" class="form-input" min="0" max="100" value="5">
+                            <input type="number" id="settings-context-after" class="form-input" min="0" max="500" value="5">
                             <p class="form-hint">Number of sentences after current position to include as context</p>
                         </div>
                     </div>
@@ -274,6 +295,8 @@ export class SettingsModal {
             fontSize: this._container.querySelector('#settings-font-size'),
             fontSizeValue: this._container.querySelector('#settings-font-size-value'),
             margin: this._container.querySelector('#settings-margin'),
+            verticalMargin: this._container.querySelector('#settings-vertical-margin'),
+            verticalMarginValue: this._container.querySelector('#settings-vertical-margin-value'),
             lineSpacing: this._container.querySelector('#settings-line-spacing'),
             lineSpacingValue: this._container.querySelector('#settings-line-spacing-value'),
             ttsBackend: this._container.querySelector('#settings-tts-backend'),
@@ -289,6 +312,7 @@ export class SettingsModal {
             forceStartMediaBtn: this._container.querySelector('#force-start-media-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
+            fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
             contextBefore: this._container.querySelector('#settings-context-before'),
             contextAfter: this._container.querySelector('#settings-context-after'),
             cancelBtn: this._container.querySelector('#settings-cancel-btn'),
@@ -331,6 +355,12 @@ export class SettingsModal {
         this._elements.fontSize.addEventListener('input', () => {
             const size = parseInt(this._elements.fontSize.value);
             this._elements.fontSizeValue.textContent = `${size}px`;
+        });
+
+        // Vertical margin slider
+        this._elements.verticalMargin.addEventListener('input', () => {
+            const margin = parseInt(this._elements.verticalMargin.value);
+            this._elements.verticalMarginValue.textContent = `${margin}px`;
         });
 
         // Line spacing slider
@@ -520,6 +550,7 @@ export class SettingsModal {
         const settings = {
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
+            fullChapterContext: this._elements.fullChapterContext.checked,
             contextBefore: parseInt(this._elements.contextBefore.value) || 20,
             contextAfter: parseInt(this._elements.contextAfter.value) || 5,
             ttsBackend: this._elements.ttsBackend.value,
@@ -529,6 +560,7 @@ export class SettingsModal {
             font: this._elements.font.value,
             fontSize: parseInt(this._elements.fontSize.value),
             marginSize: this._elements.margin.value,
+            verticalMargin: parseInt(this._elements.verticalMargin.value),
             lineSpacing: parseFloat(this._elements.lineSpacing.value),
             normalizeText: this._elements.normalizeText.checked,
             normalizeNumbers: this._elements.normalizeNumbers.checked,
@@ -537,9 +569,9 @@ export class SettingsModal {
 
         // Validate
         if (settings.contextBefore < 0) settings.contextBefore = 0;
-        if (settings.contextBefore > 100) settings.contextBefore = 100;
+        if (settings.contextBefore > 500) settings.contextBefore = 500;
         if (settings.contextAfter < 0) settings.contextAfter = 0;
-        if (settings.contextAfter > 100) settings.contextAfter = 100;
+        if (settings.contextAfter > 500) settings.contextAfter = 500;
 
         // Detect backend change
         const backendChanged = settings.ttsBackend !== this._settings.ttsBackend ||
@@ -636,6 +668,7 @@ export class SettingsModal {
     _loadCurrentSettings() {
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
+        this._elements.fullChapterContext.checked = !!this._settings.fullChapterContext;
         this._elements.contextBefore.value = this._settings.contextBefore || 20;
         this._elements.contextAfter.value = this._settings.contextAfter || 5;
         this._elements.ttsBackend.value = this._settings.ttsBackend || 'kokoro-js';
@@ -651,6 +684,8 @@ export class SettingsModal {
         this._elements.fontSize.value = this._settings.fontSize || 16;
         this._elements.fontSizeValue.textContent = `${this._settings.fontSize || 16}px`;
         this._elements.margin.value = this._settings.marginSize || 'medium';
+        this._elements.verticalMargin.value = this._settings.verticalMargin !== undefined ? this._settings.verticalMargin : 2;
+        this._elements.verticalMarginValue.textContent = `${this._elements.verticalMargin.value}px`;
         this._elements.lineSpacing.value = this._settings.lineSpacing || 1.8;
         this._elements.lineSpacingValue.textContent = (this._settings.lineSpacing || 1.8).toFixed(1);
 
