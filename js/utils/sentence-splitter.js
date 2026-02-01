@@ -31,12 +31,14 @@ export function splitIntoSentences(text, lang = 'en') {
     // Use Intl.Segmenter if available (Chrome 87+, Safari 14.1+)
     if ('Segmenter' in Intl) {
         try {
+            // Protect abbreviation periods so the segmenter doesn't split on them
+            const { processed, restore } = protectAbbreviations(text);
+
             const segmenter = new Intl.Segmenter(lang, { granularity: 'sentence' });
-            const segments = [...segmenter.segment(text)];
-            const rawSentences = segments
-                .map(s => s.segment.trim())
+            const segments = [...segmenter.segment(processed)];
+            return segments
+                .map(s => restore(s.segment).trim())
                 .filter(s => s.length > 0);
-            return mergeAbbreviationSplits(rawSentences);
         } catch (e) {
             console.warn('Intl.Segmenter failed, using fallback:', e);
         }
@@ -47,36 +49,39 @@ export function splitIntoSentences(text, lang = 'en') {
 }
 
 /**
- * Common abbreviations that should not cause sentence splits.
- * Matches the pattern: abbreviation followed by a period at the end of a segment.
+ * Abbreviations whose trailing period should not trigger a sentence break.
  */
-const ABBREVIATION_PATTERN = /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e|Inc|Ltd|Corp|St|Ave|Blvd|Rd|Mt|Ft|Gen|Gov|Sgt|Cpl|Pvt|Capt|Lt|Col|Maj|Rev|Hon|Pres|Dept|Assn|Bros|No|Vol|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.\s*$/i;
+const PROTECTED_ABBREVIATIONS = [
+    'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'Sr', 'Jr',
+    'vs', 'etc', 'approx', 'dept', 'est', 'govt',
+    'Inc', 'Ltd', 'Corp', 'Co',
+    'St', 'Ave', 'Blvd', 'Rd', 'Mt', 'Ft',
+    'Gen', 'Gov', 'Sgt', 'Cpl', 'Pvt', 'Capt', 'Lt', 'Col', 'Maj',
+    'Rev', 'Hon', 'Pres', 'Dept', 'Assn', 'Bros', 'No', 'Vol',
+    'Jan', 'Feb', 'Mar', 'Apr', 'Jun', 'Jul', 'Aug', 'Sep', 'Sept', 'Oct', 'Nov', 'Dec'
+];
+
+// Unicode private-use character as placeholder for protected periods
+const PERIOD_PLACEHOLDER = '\uE000';
 
 /**
- * Merge sentences that were incorrectly split on abbreviations.
- * Intl.Segmenter sometimes treats "Dr. Smith" as two sentences.
- * @param {string[]} sentences
- * @returns {string[]}
+ * Replace abbreviation periods with a placeholder so sentence segmenters
+ * don't treat them as sentence boundaries.
+ * @param {string} text
+ * @returns {{ processed: string, restore: (s: string) => string }}
  */
-function mergeAbbreviationSplits(sentences) {
-    if (sentences.length <= 1) {
-        return sentences;
+function protectAbbreviations(text) {
+    let processed = text;
+    for (const abbr of PROTECTED_ABBREVIATIONS) {
+        const regex = new RegExp(`\\b${abbr}\\.`, 'g');
+        processed = processed.replace(regex, `${abbr}${PERIOD_PLACEHOLDER}`);
     }
+    // Also protect "e.g." and "i.e." (internal periods)
+    processed = processed.replace(/\be\.g\./gi, `e${PERIOD_PLACEHOLDER}g${PERIOD_PLACEHOLDER}`);
+    processed = processed.replace(/\bi\.e\./gi, `i${PERIOD_PLACEHOLDER}e${PERIOD_PLACEHOLDER}`);
 
-    const merged = [sentences[0]];
-
-    for (let i = 1; i < sentences.length; i++) {
-        const prev = merged[merged.length - 1];
-
-        if (ABBREVIATION_PATTERN.test(prev)) {
-            // Merge with the next segment
-            merged[merged.length - 1] = prev + sentences[i];
-        } else {
-            merged.push(sentences[i]);
-        }
-    }
-
-    return merged;
+    const restore = (s) => s.replace(new RegExp(PERIOD_PLACEHOLDER, 'g'), '.');
+    return { processed, restore };
 }
 
 /**
