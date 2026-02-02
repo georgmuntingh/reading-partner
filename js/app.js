@@ -553,7 +553,7 @@ class ReadingPartnerApp {
                     break;
                 case 'PageUp':
                     e.preventDefault();
-                    if (e.ctrlKey) {
+                    if (e.shiftKey) {
                         this._navigateToPrevChapter();
                     } else {
                         this._readerView?.previousPage();
@@ -561,7 +561,7 @@ class ReadingPartnerApp {
                     break;
                 case 'PageDown':
                     e.preventDefault();
-                    if (e.ctrlKey) {
+                    if (e.shiftKey) {
                         this._navigateToNextChapter();
                     } else {
                         this._readerView?.nextPage();
@@ -569,11 +569,20 @@ class ReadingPartnerApp {
                     break;
                 case 'Home':
                     e.preventDefault();
-                    this._readerView?.firstPage();
+                    if (e.shiftKey) {
+                        this._navigateToChapter(0);
+                    } else {
+                        this._readerView?.firstPage();
+                    }
                     break;
                 case 'End':
                     e.preventDefault();
-                    this._readerView?.lastPage();
+                    if (e.shiftKey) {
+                        const lastChapter = (this._currentBook?.chapters?.length || 1) - 1;
+                        this._navigateToChapter(lastChapter);
+                    } else {
+                        this._readerView?.lastPage();
+                    }
                     break;
                 case 'KeyF':
                     e.preventDefault();
@@ -786,6 +795,15 @@ class ReadingPartnerApp {
 
         // Initialize Media Session for headset controls
         this._initializeMediaSession();
+
+        // Capture text selection on mousedown before the click clears it.
+        // This allows the quiz to use a user's text selection as context.
+        this._pendingQuizSelection = null;
+        if (this._elements.quizBtn) {
+            this._elements.quizBtn.addEventListener('mousedown', () => {
+                this._pendingQuizSelection = this._readerView?.getSelectedSentenceTexts() || null;
+            });
+        }
 
         // Initialize Controls
         this._controls = new PlaybackControls(
@@ -1304,8 +1322,9 @@ class ReadingPartnerApp {
             });
         }
 
-        // Check for text selection to use as quiz context
-        const selectedSentences = this._readerView?.getSelectedSentenceTexts();
+        // Use text selection captured on mousedown (before click cleared it)
+        const selectedSentences = this._pendingQuizSelection;
+        this._pendingQuizSelection = null;
         this._quizController.setSelectionContext(selectedSentences);
 
         // Setup overlay
