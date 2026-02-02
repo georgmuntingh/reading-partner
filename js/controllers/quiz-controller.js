@@ -25,6 +25,9 @@ export class QuizController {
      * @param {(question: Object) => void} options.onQuestionReady
      * @param {(text: string) => void} options.onFeedbackChunk - Streaming feedback text
      * @param {(result: Object) => void} options.onAnswerResult - { correct, feedback, done }
+     * @param {(text: string) => void} options.onTranscript - Live voice transcript
+     * @param {() => void} options.onVoiceStart - Voice recording started
+     * @param {() => void} options.onVoiceEnd - Voice recording ended
      * @param {(error: string) => void} options.onError
      */
     constructor(options) {
@@ -33,6 +36,9 @@ export class QuizController {
         this._onQuestionReady = options.onQuestionReady;
         this._onFeedbackChunk = options.onFeedbackChunk;
         this._onAnswerResult = options.onAnswerResult;
+        this._onTranscript = options.onTranscript;
+        this._onVoiceStart = options.onVoiceStart;
+        this._onVoiceEnd = options.onVoiceEnd;
         this._onError = options.onError;
 
         // State
@@ -342,8 +348,21 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
 
         this._stopTTS();
 
+        // Wire up live transcription
+        const prevOnInterim = sttService.onInterimResult;
+        sttService.onInterimResult = (text) => {
+            this._onTranscript?.(text);
+        };
+
+        this._onVoiceStart?.();
+
         try {
             const answer = await sttService.startListening();
+
+            // Restore previous callback and signal end
+            sttService.onInterimResult = prevOnInterim;
+            this._onVoiceEnd?.();
+
             if (answer && answer.trim()) {
                 if (this._isMultipleChoice) {
                     // Try to match voice answer to MC option
@@ -358,6 +377,10 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
                 }
             }
         } catch (error) {
+            // Restore previous callback and signal end
+            sttService.onInterimResult = prevOnInterim;
+            this._onVoiceEnd?.();
+
             if (error.message !== 'Speech recognition aborted') {
                 this._onError?.(error.message);
             }

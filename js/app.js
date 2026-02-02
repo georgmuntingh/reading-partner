@@ -1315,6 +1315,15 @@ class ReadingPartnerApp {
             onAnswerResult: (result) => {
                 this._quizOverlay.showAnswerResult(result);
             },
+            onTranscript: (text) => {
+                this._quizOverlay.setTranscript(text);
+            },
+            onVoiceStart: () => {
+                this._quizOverlay.showTranscript();
+            },
+            onVoiceEnd: () => {
+                this._quizOverlay.hideTranscript();
+            },
             onError: (message) => {
                 this._quizOverlay.showError(message);
             }

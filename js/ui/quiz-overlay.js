@@ -83,6 +83,12 @@ export class QuizOverlay {
                         </button>
                     </div>
 
+                    <!-- Voice transcript (shown during recording) -->
+                    <div class="quiz-transcript-section hidden" id="quiz-transcript-section">
+                        <label class="quiz-label">Listening...</label>
+                        <div class="quiz-transcript" id="quiz-transcript">...</div>
+                    </div>
+
                     <!-- Feedback -->
                     <div class="quiz-feedback-section hidden" id="quiz-feedback-section">
                         <label class="quiz-label">Feedback:</label>
@@ -109,6 +115,8 @@ export class QuizOverlay {
             textInput: this._container.querySelector('#quiz-text-input'),
             submitBtn: this._container.querySelector('#quiz-submit-btn'),
             micBtn: this._container.querySelector('#quiz-mic-btn'),
+            transcriptSection: this._container.querySelector('#quiz-transcript-section'),
+            transcript: this._container.querySelector('#quiz-transcript'),
             feedbackSection: this._container.querySelector('#quiz-feedback-section'),
             feedback: this._container.querySelector('#quiz-feedback'),
             controls: this._container.querySelector('#quiz-controls')
@@ -201,6 +209,29 @@ export class QuizOverlay {
 
     setMultipleChoice(isMultipleChoice) {
         this._isMultipleChoice = isMultipleChoice;
+    }
+
+    /**
+     * Show the transcript section (when voice recording starts)
+     */
+    showTranscript() {
+        this._elements.transcriptSection.classList.remove('hidden');
+        this._elements.transcript.textContent = '...';
+    }
+
+    /**
+     * Hide the transcript section (when voice recording ends)
+     */
+    hideTranscript() {
+        this._elements.transcriptSection.classList.add('hidden');
+    }
+
+    /**
+     * Update live transcript text
+     * @param {string} text
+     */
+    setTranscript(text) {
+        this._elements.transcript.textContent = text || '...';
     }
 
     /**
@@ -343,8 +374,10 @@ export class QuizOverlay {
         this._elements.questionSection.classList.add('hidden');
         this._elements.optionsSection.classList.add('hidden');
         this._elements.inputSection.classList.add('hidden');
+        this._elements.transcriptSection.classList.add('hidden');
         this._elements.feedbackSection.classList.add('hidden');
         this._elements.feedback.textContent = '';
+        this._elements.transcript.textContent = '...';
         this._elements.textInput.value = '';
 
         this.setState(QuizState.IDLE);

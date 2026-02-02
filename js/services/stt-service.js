@@ -8,6 +8,8 @@ export class STTService {
         this._recognition = null;
         this._isSupported = false;
         this._isListening = false;
+        this._silenceTimer = null;
+        this._silenceTimeout = 3000; // ms of silence before stopping
 
         // Callbacks
         this.onInterimResult = null;
@@ -32,7 +34,7 @@ export class STTService {
 
         this._isSupported = true;
         this._recognition = new SpeechRecognition();
-        this._recognition.continuous = false;
+        this._recognition.continuous = true;
         this._recognition.interimResults = true;
         this._recognition.lang = 'en-US';
         this._recognition.maxAlternatives = 1;
@@ -55,6 +57,14 @@ export class STTService {
     }
 
     /**
+     * Set the silence timeout duration
+     * @param {number} ms - Milliseconds of silence before stopping
+     */
+    setSilenceTimeout(ms) {
+        this._silenceTimeout = ms;
+    }
+
+    /**
      * Start listening for speech
      * @returns {Promise<string>} Transcribed text
      */
@@ -74,9 +84,21 @@ export class STTService {
             let finalTranscript = '';
             let hasResult = false;
 
+            const resetSilenceTimer = () => {
+                clearTimeout(this._silenceTimer);
+                this._silenceTimer = setTimeout(() => {
+                    // Silence threshold reached, stop gracefully
+                    if (this._isListening) {
+                        this._recognition.stop();
+                    }
+                }, this._silenceTimeout);
+            };
+
             this._recognition.onstart = () => {
                 console.log('STT: Started listening');
                 this.onStart?.();
+                // Start silence timer — if no speech at all, stop after timeout
+                resetSilenceTimer();
             };
 
             this._recognition.onresult = (event) => {
@@ -92,14 +114,24 @@ export class STTService {
                     }
                 }
 
+                // Reset silence timer on any speech activity
+                resetSilenceTimer();
+
                 // Report interim results for live display
                 if (interimTranscript) {
-                    this.onInterimResult?.(interimTranscript);
+                    this.onInterimResult?.(finalTranscript + interimTranscript);
                 }
             };
 
             this._recognition.onerror = (event) => {
                 console.error('STT Error:', event.error);
+                clearTimeout(this._silenceTimer);
+
+                // With continuous mode, no-speech is not fatal — just ignore it
+                if (event.error === 'no-speech') {
+                    return;
+                }
+
                 this._isListening = false;
 
                 let errorMessage = 'Speech recognition error';
@@ -107,9 +139,6 @@ export class STTService {
                     case 'not-allowed':
                     case 'permission-denied':
                         errorMessage = 'Microphone permission denied';
-                        break;
-                    case 'no-speech':
-                        errorMessage = 'No speech detected';
                         break;
                     case 'audio-capture':
                         errorMessage = 'No microphone found';
@@ -128,13 +157,13 @@ export class STTService {
 
             this._recognition.onend = () => {
                 console.log('STT: Stopped listening');
+                clearTimeout(this._silenceTimer);
                 this._isListening = false;
                 this.onEnd?.();
 
                 if (hasResult && finalTranscript.trim()) {
                     resolve(finalTranscript.trim());
                 } else if (!hasResult) {
-                    // No final result received, this can happen on some errors
                     reject(new Error('No speech detected'));
                 }
             };
@@ -142,6 +171,7 @@ export class STTService {
             try {
                 this._recognition.start();
             } catch (error) {
+                clearTimeout(this._silenceTimer);
                 this._isListening = false;
                 reject(error);
             }
@@ -152,6 +182,7 @@ export class STTService {
      * Stop listening
      */
     stopListening() {
+        clearTimeout(this._silenceTimer);
         if (this._recognition && this._isListening) {
             this._recognition.stop();
         }
@@ -161,6 +192,7 @@ export class STTService {
      * Abort listening (discard results)
      */
     abortListening() {
+        clearTimeout(this._silenceTimer);
         if (this._recognition && this._isListening) {
             this._recognition.abort();
         }
