@@ -13,6 +13,7 @@ export class PlaybackControls {
      * @param {HTMLElement} options.prevChapterBtn
      * @param {HTMLElement} options.nextChapterBtn
      * @param {HTMLElement} options.askBtn
+     * @param {HTMLElement} options.quizBtn
      * @param {HTMLInputElement} [options.speedSlider] - Optional, for backward compatibility
      * @param {HTMLElement} [options.speedValue] - Optional, for backward compatibility
      * @param {HTMLSelectElement} [options.voiceSelect] - Optional, for backward compatibility
@@ -24,6 +25,7 @@ export class PlaybackControls {
      * @param {() => void} callbacks.onPrevChapter
      * @param {() => void} callbacks.onNextChapter
      * @param {() => void} callbacks.onAsk
+     * @param {() => void} callbacks.onQuiz
      * @param {(speed: number) => void} [callbacks.onSpeedChange] - Optional, for backward compatibility
      * @param {(voiceId: string) => void} [callbacks.onVoiceChange] - Optional, for backward compatibility
      */
@@ -36,6 +38,7 @@ export class PlaybackControls {
         this._prevChapterBtn = options.prevChapterBtn;
         this._nextChapterBtn = options.nextChapterBtn;
         this._askBtn = options.askBtn;
+        this._quizBtn = options.quizBtn;
         this._speedSlider = options.speedSlider || null;
         this._speedValue = options.speedValue || null;
         this._voiceSelect = options.voiceSelect || null;
@@ -80,6 +83,11 @@ export class PlaybackControls {
         // Ask button
         this._askBtn.addEventListener('click', () => {
             this._callbacks.onAsk?.();
+        });
+
+        // Quiz button
+        this._quizBtn.addEventListener('click', () => {
+            this._callbacks.onQuiz?.();
         });
 
         // Speed slider (optional)
@@ -162,6 +170,7 @@ export class PlaybackControls {
         this._prevChapterBtn.disabled = !enabled;
         this._nextChapterBtn.disabled = !enabled;
         this._askBtn.disabled = !enabled;
+        this._quizBtn.disabled = !enabled;
         if (this._speedSlider) {
             this._speedSlider.disabled = !enabled;
         }
@@ -241,6 +250,20 @@ export class PlaybackControls {
             this._askBtn.title = reason;
         } else {
             this._askBtn.title = 'Ask a question';
+        }
+    }
+
+    /**
+     * Temporarily disable Quiz button
+     * @param {boolean} disabled
+     * @param {string} [reason] - Optional reason for disabling (shown as tooltip)
+     */
+    setQuizDisabled(disabled, reason) {
+        this._quizBtn.disabled = disabled;
+        if (disabled && reason) {
+            this._quizBtn.title = reason;
+        } else {
+            this._quizBtn.title = 'Start quiz';
         }
     }
 }

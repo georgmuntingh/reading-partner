@@ -37,7 +37,19 @@ export class SettingsModal {
             lineSpacing: 1.8,
             normalizeText: true,
             normalizeNumbers: true,
-            normalizeAbbreviations: true
+            normalizeAbbreviations: true,
+            // Quiz settings
+            quizMode: 'multiple-choice',
+            quizGuided: true,
+            quizChapterScope: 'full',
+            quizQuestionTypes: {
+                factual: true,
+                deeper_understanding: true,
+                vocabulary: false,
+                inference: false,
+                themes: false
+            },
+            quizSystemPrompt: ''
         };
 
         this._buildUI();
@@ -226,6 +238,67 @@ export class SettingsModal {
                     </div>
 
                     <div class="settings-section">
+                        <h3>Quiz Settings</h3>
+
+                        <div class="form-group">
+                            <label for="settings-quiz-mode">Quiz Mode</label>
+                            <select id="settings-quiz-mode" class="form-select">
+                                <option value="multiple-choice">Multiple Choice</option>
+                                <option value="free-form">Free Form</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-quiz-guided" checked>
+                                Guided Mode
+                            </label>
+                            <p class="form-hint">When enabled, the LLM provides hints after wrong answers instead of revealing the correct answer immediately</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-quiz-scope">Chapter Scope</label>
+                            <select id="settings-quiz-scope" class="form-select">
+                                <option value="full">Entire chapter</option>
+                                <option value="up-to-current">Up to current sentence</option>
+                            </select>
+                            <p class="form-hint">Determines whether questions cover the full chapter or only content up to your reading position</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>Question Types</label>
+                            <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs);">
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-type-factual" checked>
+                                    Factual
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-type-deeper">
+                                    Deeper Understanding
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-type-vocabulary">
+                                    Vocabulary
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-type-inference">
+                                    Inference
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-type-themes">
+                                    Themes
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-quiz-system-prompt">Custom System Prompt (optional)</label>
+                            <textarea id="settings-quiz-system-prompt" class="form-input" rows="3" placeholder="Override the default system prompt for quiz generation..."></textarea>
+                            <p class="form-hint">Leave empty to use the default quiz generation prompt</p>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
                         <h3>Headset Controls Diagnostics</h3>
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             If headphone controls aren't working (especially on Android), use these tools to diagnose the issue.
@@ -315,6 +388,15 @@ export class SettingsModal {
             fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
             contextBefore: this._container.querySelector('#settings-context-before'),
             contextAfter: this._container.querySelector('#settings-context-after'),
+            quizMode: this._container.querySelector('#settings-quiz-mode'),
+            quizGuided: this._container.querySelector('#settings-quiz-guided'),
+            quizScope: this._container.querySelector('#settings-quiz-scope'),
+            quizTypeFactual: this._container.querySelector('#settings-quiz-type-factual'),
+            quizTypeDeeper: this._container.querySelector('#settings-quiz-type-deeper'),
+            quizTypeVocabulary: this._container.querySelector('#settings-quiz-type-vocabulary'),
+            quizTypeInference: this._container.querySelector('#settings-quiz-type-inference'),
+            quizTypeThemes: this._container.querySelector('#settings-quiz-type-themes'),
+            quizSystemPrompt: this._container.querySelector('#settings-quiz-system-prompt'),
             cancelBtn: this._container.querySelector('#settings-cancel-btn'),
             saveBtn: this._container.querySelector('#settings-save-btn'),
             aboutContent: this._container.querySelector('#settings-about-content')
@@ -564,7 +646,19 @@ export class SettingsModal {
             lineSpacing: parseFloat(this._elements.lineSpacing.value),
             normalizeText: this._elements.normalizeText.checked,
             normalizeNumbers: this._elements.normalizeNumbers.checked,
-            normalizeAbbreviations: this._elements.normalizeAbbreviations.checked
+            normalizeAbbreviations: this._elements.normalizeAbbreviations.checked,
+            // Quiz settings
+            quizMode: this._elements.quizMode.value,
+            quizGuided: this._elements.quizGuided.checked,
+            quizChapterScope: this._elements.quizScope.value,
+            quizQuestionTypes: {
+                factual: this._elements.quizTypeFactual.checked,
+                deeper_understanding: this._elements.quizTypeDeeper.checked,
+                vocabulary: this._elements.quizTypeVocabulary.checked,
+                inference: this._elements.quizTypeInference.checked,
+                themes: this._elements.quizTypeThemes.checked
+            },
+            quizSystemPrompt: this._elements.quizSystemPrompt.value.trim()
         };
 
         // Validate
@@ -693,6 +787,18 @@ export class SettingsModal {
         this._elements.normalizeText.checked = this._settings.normalizeText !== false;
         this._elements.normalizeNumbers.checked = this._settings.normalizeNumbers !== false;
         this._elements.normalizeAbbreviations.checked = this._settings.normalizeAbbreviations !== false;
+
+        // Load quiz settings
+        this._elements.quizMode.value = this._settings.quizMode || 'multiple-choice';
+        this._elements.quizGuided.checked = this._settings.quizGuided !== false;
+        this._elements.quizScope.value = this._settings.quizChapterScope || 'full';
+        const qt = this._settings.quizQuestionTypes || {};
+        this._elements.quizTypeFactual.checked = qt.factual !== false;
+        this._elements.quizTypeDeeper.checked = !!qt.deeper_understanding;
+        this._elements.quizTypeVocabulary.checked = !!qt.vocabulary;
+        this._elements.quizTypeInference.checked = !!qt.inference;
+        this._elements.quizTypeThemes.checked = !!qt.themes;
+        this._elements.quizSystemPrompt.value = this._settings.quizSystemPrompt || '';
 
         this._updateBackendUI();
     }

@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-01-31T12:50:48.091Z",
-  "commit": "7903592d44b9e056fab67f6d36a7df55a2cad50d",
-  "commitShort": "7903592",
-  "branch": "claude/add-fullscreen-toggle-uqCdk",
-  "lastCommitDate": "2026-01-31T13:39:00+01:00"
+  "buildTime": "2026-02-02T08:52:30.114Z",
+  "commit": "23928e31f5c40a4ed8ec95aa849a1289eaa913db",
+  "commitShort": "23928e3",
+  "branch": "claude/add-quiz-mode-02y2A",
+  "lastCommitDate": "2026-02-02T08:23:04+00:00"
 }

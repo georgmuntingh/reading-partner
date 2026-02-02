@@ -363,6 +363,62 @@ export class StorageService {
         });
     }
 
+    // ========== Quiz Questions ==========
+    // Uses the settings store with key patterns to avoid schema changes
+
+    /**
+     * Save a quiz question for a chapter
+     * @param {string} bookId
+     * @param {number} chapterIndex
+     * @param {Object} question - Quiz question data
+     * @returns {Promise<void>}
+     */
+    async saveQuizQuestion(bookId, chapterIndex, question) {
+        const key = `quiz_${bookId}_ch${chapterIndex}`;
+        const existing = await this.getSetting(key) || [];
+        existing.push(question);
+        await this.saveSetting(key, existing);
+    }
+
+    /**
+     * Get all quiz questions for a chapter
+     * @param {string} bookId
+     * @param {number} chapterIndex
+     * @returns {Promise<Object[]>}
+     */
+    async getQuizQuestions(bookId, chapterIndex) {
+        const key = `quiz_${bookId}_ch${chapterIndex}`;
+        return await this.getSetting(key) || [];
+    }
+
+    /**
+     * Get all quiz questions for a book across all chapters
+     * @param {string} bookId
+     * @param {number} chapterCount
+     * @returns {Promise<Object[]>} Array of { chapterIndex, questions[] }
+     */
+    async getAllQuizQuestionsForBook(bookId, chapterCount) {
+        const result = [];
+        for (let i = 0; i < chapterCount; i++) {
+            const questions = await this.getQuizQuestions(bookId, i);
+            if (questions.length > 0) {
+                result.push({ chapterIndex: i, questions });
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Clear quiz questions for a chapter
+     * @param {string} bookId
+     * @param {number} chapterIndex
+     * @returns {Promise<void>}
+     */
+    async clearQuizQuestions(bookId, chapterIndex) {
+        const key = `quiz_${bookId}_ch${chapterIndex}`;
+        await this.deleteSetting(key);
+    }
+
     // ========== Settings ==========
 
     /**
