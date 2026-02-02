@@ -63,6 +63,7 @@ export class QuizController {
         this._questionTypes = ['factual'];
         this._useFullChapter = true;
         this._customSystemPrompt = '';
+        this._selectionContext = null;
     }
 
     // ========== Getters ==========
@@ -99,6 +100,16 @@ export class QuizController {
         if (questionTypes !== undefined) this._questionTypes = questionTypes;
         if (useFullChapter !== undefined) this._useFullChapter = useFullChapter;
         if (customSystemPrompt !== undefined) this._customSystemPrompt = customSystemPrompt;
+    }
+
+    /**
+     * Set override context sentences (e.g., from text selection).
+     * When set, these are used instead of chapter-based context.
+     * Cleared when stop() is called.
+     * @param {string[]|null} sentences
+     */
+    setSelectionContext(sentences) {
+        this._selectionContext = sentences;
     }
 
     // ========== Quiz Flow ==========
@@ -488,6 +499,7 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
         this._currentQuestion = null;
         this._disabledOptions = [];
         this._chatHistory = [];
+        this._selectionContext = null;
         this._setState(QuizState.IDLE);
     }
 
@@ -501,6 +513,11 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
     // ========== Internal: Context ==========
 
     async _getContextSentences() {
+        // Use selection context if available
+        if (this._selectionContext && this._selectionContext.length > 0) {
+            return this._selectionContext;
+        }
+
         if (!this._readingState) return [];
 
         const position = this._readingState.getCurrentPosition();

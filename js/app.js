@@ -553,11 +553,27 @@ class ReadingPartnerApp {
                     break;
                 case 'PageUp':
                     e.preventDefault();
-                    this._readerView?.previousPage();
+                    if (e.ctrlKey) {
+                        this._navigateToPrevChapter();
+                    } else {
+                        this._readerView?.previousPage();
+                    }
                     break;
                 case 'PageDown':
                     e.preventDefault();
-                    this._readerView?.nextPage();
+                    if (e.ctrlKey) {
+                        this._navigateToNextChapter();
+                    } else {
+                        this._readerView?.nextPage();
+                    }
+                    break;
+                case 'Home':
+                    e.preventDefault();
+                    this._readerView?.firstPage();
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    this._readerView?.lastPage();
                     break;
                 case 'KeyF':
                     e.preventDefault();
@@ -1287,6 +1303,10 @@ class ReadingPartnerApp {
                 author: this._currentBook.author
             });
         }
+
+        // Check for text selection to use as quiz context
+        const selectedSentences = this._readerView?.getSelectedSentenceTexts();
+        this._quizController.setSelectionContext(selectedSentences);
 
         // Setup overlay
         this._quizOverlay.setMultipleChoice(isMultipleChoice);

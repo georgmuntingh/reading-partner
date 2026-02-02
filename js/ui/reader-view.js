@@ -444,6 +444,30 @@ export class ReaderView {
     }
 
     /**
+     * Go to the first page
+     * @returns {boolean} Whether navigation occurred
+     */
+    firstPage() {
+        if (this._currentPage > 0) {
+            this._goToPageInternal(0);
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Go to the last page
+     * @returns {boolean} Whether navigation occurred
+     */
+    lastPage() {
+        if (this._currentPage < this._totalPages - 1) {
+            this._goToPageInternal(this._totalPages - 1);
+            return true;
+        }
+        return false;
+    }
+
+    /**
      * Get current page (0-indexed)
      * @returns {number}
      */
@@ -639,6 +663,44 @@ export class ReaderView {
             console.warn('Failed to scroll to fragment:', fragmentId, e);
         }
         return false;
+    }
+
+    // ========== Selection Support ==========
+
+    /**
+     * Get the text of the currently selected sentences, if any true selection exists.
+     * Returns null if there is no selection or the selection is collapsed (just a click position).
+     * @returns {string[]|null} Array of selected sentence texts, or null
+     */
+    getSelectedSentenceTexts() {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            return null;
+        }
+
+        const range = selection.getRangeAt(0);
+        if (!this._textContent.contains(range.startContainer) || !this._textContent.contains(range.endContainer)) {
+            return null;
+        }
+
+        const startSentence = this._findSentenceElement(range.startContainer);
+        const endSentence = this._findSentenceElement(range.endContainer);
+        if (!startSentence || !endSentence) {
+            return null;
+        }
+
+        const startIndex = parseInt(startSentence.dataset.index, 10);
+        const endIndex = parseInt(endSentence.dataset.index, 10);
+
+        // Collect sentence texts from the stored sentences array
+        const sentences = [];
+        for (let i = startIndex; i <= endIndex; i++) {
+            if (i >= 0 && i < this._sentences.length) {
+                sentences.push(this._sentences[i]);
+            }
+        }
+
+        return sentences.length > 0 ? sentences : null;
     }
 
     // ========== Highlight Support ==========

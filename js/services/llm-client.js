@@ -361,6 +361,10 @@ export class LLMClient {
 
 Question type(s) to choose from: ${typesList}.`;
 
+            if (previousQuestions.length > 0) {
+                systemPrompt += `\n\nIMPORTANT: The user has already been asked ${previousQuestions.length} question(s) in this session. You MUST generate a different question that does not repeat or closely paraphrase any previously asked question. Vary the topic, focus, and angle of your question.`;
+            }
+
             if (isMultipleChoice) {
                 systemPrompt += `
 
