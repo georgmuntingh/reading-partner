@@ -44,6 +44,7 @@ class ReadingPartnerApp {
         this._quizSettings = {
             quizMode: 'multiple-choice',
             quizGuided: true,
+            quizReadOptionsAloud: true,
             quizChapterScope: 'full',
             quizQuestionTypes: {
                 factual: true,
@@ -1307,6 +1308,7 @@ class ReadingPartnerApp {
         this._quizController.setSettings({
             isMultipleChoice,
             isGuided: this._quizSettings.quizGuided,
+            readOptionsAloud: this._quizSettings.quizReadOptionsAloud,
             questionTypes,
             useFullChapter: this._quizSettings.quizChapterScope === 'full',
             customSystemPrompt: this._quizSettings.quizSystemPrompt
@@ -1585,6 +1587,10 @@ class ReadingPartnerApp {
             if (settings.quizGuided !== undefined) {
                 this._quizSettings.quizGuided = settings.quizGuided;
                 await storage.saveSetting('quizGuided', settings.quizGuided);
+            }
+            if (settings.quizReadOptionsAloud !== undefined) {
+                this._quizSettings.quizReadOptionsAloud = settings.quizReadOptionsAloud;
+                await storage.saveSetting('quizReadOptionsAloud', settings.quizReadOptionsAloud);
             }
             if (settings.quizChapterScope !== undefined) {
                 this._quizSettings.quizChapterScope = settings.quizChapterScope;
@@ -2072,6 +2078,9 @@ class ReadingPartnerApp {
 
             const quizGuided = await storage.getSetting('quizGuided');
             if (quizGuided !== null) this._quizSettings.quizGuided = quizGuided;
+
+            const quizReadOptionsAloud = await storage.getSetting('quizReadOptionsAloud');
+            if (quizReadOptionsAloud !== null) this._quizSettings.quizReadOptionsAloud = quizReadOptionsAloud;
 
             const quizChapterScope = await storage.getSetting('quizChapterScope');
             if (quizChapterScope !== null) this._quizSettings.quizChapterScope = quizChapterScope;
