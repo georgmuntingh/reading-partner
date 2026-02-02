@@ -13,6 +13,7 @@ export const OPENROUTER_MODELS = {
         { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air (Free)' },
     ],
     paid: [
+        { id: 'google/gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite' },
         { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
         { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
         { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
@@ -25,7 +26,7 @@ export const OPENROUTER_MODELS = {
     ]
 };
 
-export const DEFAULT_MODEL = 'openai/gpt-4o-mini';
+export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {
