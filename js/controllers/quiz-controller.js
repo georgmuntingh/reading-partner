@@ -154,8 +154,18 @@ export class QuizController {
             this._onQuestionReady?.(question);
             this._setState(QuizState.SPEAKING_QUESTION);
 
-            // Speak the question text
+            // Speak the question text, then options for multiple choice
             await this._speakText(question.question);
+            if (this._isStopped) return;
+
+            if (this._isMultipleChoice && question.options?.length) {
+                const labels = ['A', 'B', 'C', 'D'];
+                for (let i = 0; i < question.options.length; i++) {
+                    if (this._isStopped) return;
+                    const label = labels[i] || String(i + 1);
+                    await this._speakText(`${label}. ${question.options[i]}`);
+                }
+            }
 
             if (this._isStopped) return;
 
