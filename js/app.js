@@ -687,6 +687,9 @@ class ReadingPartnerApp {
             this._navigation.setBookmarks(this._readingState.getBookmarks());
             this._navigation.setHighlights(this._readingState.getHighlights());
 
+            // Load quiz history
+            this._loadQuizHistory();
+
             // Restore sentence position
             if (position.sentenceIndex > 0) {
                 this._audioController.goToSentence(position.sentenceIndex);
@@ -1324,6 +1327,26 @@ class ReadingPartnerApp {
     _closeQuizOverlay() {
         this._quizController?.stop();
         this._quizOverlay.hide();
+
+        // Refresh quiz history in navigation panel
+        this._loadQuizHistory();
+    }
+
+    /**
+     * Load quiz history for the current book into the navigation panel
+     */
+    async _loadQuizHistory() {
+        if (!this._currentBook || !this._navigation) return;
+
+        try {
+            const quizHistory = await storage.getAllQuizQuestionsForBook(
+                this._currentBook.id,
+                this._currentBook.chapters.length
+            );
+            this._navigation.setQuizHistory(quizHistory);
+        } catch (error) {
+            console.error('Failed to load quiz history:', error);
+        }
     }
 
     /**
@@ -2211,6 +2234,9 @@ class ReadingPartnerApp {
             this._navigation.setBook(this._currentBook, position.chapterIndex);
             this._navigation.setBookmarks(this._readingState.getBookmarks());
             this._navigation.setHighlights(this._readingState.getHighlights());
+
+            // Load quiz history
+            this._loadQuizHistory();
 
             // Restore sentence position
             if (position.sentenceIndex > 0) {

@@ -27,6 +27,7 @@ export class NavigationPanel {
         this._currentChapterIndex = 0;
         this._bookmarks = [];
         this._highlights = [];
+        this._quizHistory = []; // Array of { chapterIndex, questions[] }
 
         this._setupEventListeners();
     }
@@ -101,6 +102,15 @@ export class NavigationPanel {
     }
 
     /**
+     * Set quiz history data
+     * @param {Object[]} quizHistory - Array of { chapterIndex, questions[] }
+     */
+    setQuizHistory(quizHistory) {
+        this._quizHistory = quizHistory;
+        this._renderQuizHistory();
+    }
+
+    /**
      * Render the navigation panel
      */
     render() {
@@ -111,6 +121,7 @@ export class NavigationPanel {
         this._renderChapters();
         this._renderBookmarks();
         this._renderHighlights();
+        this._renderQuizHistory();
     }
 
     /**
@@ -262,6 +273,66 @@ export class NavigationPanel {
             });
 
             highlightsList.appendChild(item);
+        });
+    }
+
+    /**
+     * Render quiz history grouped by chapter
+     */
+    _renderQuizHistory() {
+        const historyList = this._panel.querySelector('#quiz-history-list');
+        if (!historyList) {
+            return;
+        }
+
+        if (!this._quizHistory || this._quizHistory.length === 0) {
+            historyList.innerHTML = '<div class="nav-empty">No quiz questions yet</div>';
+            return;
+        }
+
+        historyList.innerHTML = '';
+
+        this._quizHistory.forEach(({ chapterIndex, questions }) => {
+            const chapterTitle = this._currentBook?.chapters[chapterIndex]?.title || 'Unknown';
+
+            // Chapter header
+            const chapterHeader = document.createElement('div');
+            chapterHeader.className = 'quiz-history-chapter';
+            chapterHeader.innerHTML = `
+                <div class="quiz-history-chapter-title">Ch. ${chapterIndex + 1}: ${this._escapeHtml(chapterTitle)}</div>
+            `;
+            historyList.appendChild(chapterHeader);
+
+            // Questions for this chapter
+            questions.forEach((q, qIndex) => {
+                const item = document.createElement('div');
+                item.className = 'quiz-history-item';
+
+                const isCorrect = q.wasCorrect !== undefined ? q.wasCorrect : null;
+                const resultIcon = isCorrect === true ? '<span class="quiz-history-correct">&#10003;</span>'
+                    : isCorrect === false ? '<span class="quiz-history-incorrect">&#10007;</span>'
+                    : '';
+
+                let answerHtml = '';
+                if (q.options && q.correctIndex !== undefined) {
+                    // Multiple choice - show correct answer
+                    const correctOption = q.options[q.correctIndex];
+                    answerHtml = `<div class="quiz-history-answer"><strong>Answer:</strong> ${this._escapeHtml(correctOption)}</div>`;
+                } else if (q.explanation) {
+                    answerHtml = `<div class="quiz-history-answer"><strong>Answer:</strong> ${this._escapeHtml(q.explanation)}</div>`;
+                }
+
+                item.innerHTML = `
+                    <div class="quiz-history-question">
+                        ${resultIcon}
+                        <span class="quiz-history-q-num">${qIndex + 1}.</span>
+                        ${this._escapeHtml(q.question)}
+                    </div>
+                    ${answerHtml}
+                `;
+
+                historyList.appendChild(item);
+            });
         });
     }
 

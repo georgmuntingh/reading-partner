@@ -392,6 +392,23 @@ export class StorageService {
     }
 
     /**
+     * Get all quiz questions for a book across all chapters
+     * @param {string} bookId
+     * @param {number} chapterCount
+     * @returns {Promise<Object[]>} Array of { chapterIndex, questions[] }
+     */
+    async getAllQuizQuestionsForBook(bookId, chapterCount) {
+        const result = [];
+        for (let i = 0; i < chapterCount; i++) {
+            const questions = await this.getQuizQuestions(bookId, i);
+            if (questions.length > 0) {
+                result.push({ chapterIndex: i, questions });
+            }
+        }
+        return result;
+    }
+
+    /**
      * Clear quiz questions for a chapter
      * @param {string} bookId
      * @param {number} chapterIndex

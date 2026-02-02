@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-01T19:47:44.381Z",
-  "commit": "649a8040755d807b409deced10304d02be17f781",
-  "commitShort": "649a804",
+  "buildTime": "2026-02-02T08:22:37.321Z",
+  "commit": "38723dfe305750ce5954b0348f9d025cab21b10e",
+  "commitShort": "38723df",
   "branch": "claude/add-quiz-mode-02y2A",
-  "lastCommitDate": "2026-02-01T14:56:51+01:00"
+  "lastCommitDate": "2026-02-01T19:49:18+00:00"
 }
