@@ -41,6 +41,7 @@ export class SettingsModal {
             // Quiz settings
             quizMode: 'multiple-choice',
             quizGuided: true,
+            quizReadOptionsAloud: true,
             quizChapterScope: 'full',
             quizQuestionTypes: {
                 factual: true,
@@ -257,6 +258,14 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-quiz-read-options" checked>
+                                Read Options Aloud
+                            </label>
+                            <p class="form-hint">When enabled, the TTS reads out the multiple choice answer options after the question</p>
+                        </div>
+
+                        <div class="form-group">
                             <label for="settings-quiz-scope">Chapter Scope</label>
                             <select id="settings-quiz-scope" class="form-select">
                                 <option value="full">Entire chapter</option>
@@ -390,6 +399,7 @@ export class SettingsModal {
             contextAfter: this._container.querySelector('#settings-context-after'),
             quizMode: this._container.querySelector('#settings-quiz-mode'),
             quizGuided: this._container.querySelector('#settings-quiz-guided'),
+            quizReadOptions: this._container.querySelector('#settings-quiz-read-options'),
             quizScope: this._container.querySelector('#settings-quiz-scope'),
             quizTypeFactual: this._container.querySelector('#settings-quiz-type-factual'),
             quizTypeDeeper: this._container.querySelector('#settings-quiz-type-deeper'),
@@ -650,6 +660,7 @@ export class SettingsModal {
             // Quiz settings
             quizMode: this._elements.quizMode.value,
             quizGuided: this._elements.quizGuided.checked,
+            quizReadOptionsAloud: this._elements.quizReadOptions.checked,
             quizChapterScope: this._elements.quizScope.value,
             quizQuestionTypes: {
                 factual: this._elements.quizTypeFactual.checked,
@@ -791,6 +802,7 @@ export class SettingsModal {
         // Load quiz settings
         this._elements.quizMode.value = this._settings.quizMode || 'multiple-choice';
         this._elements.quizGuided.checked = this._settings.quizGuided !== false;
+        this._elements.quizReadOptions.checked = this._settings.quizReadOptionsAloud !== false;
         this._elements.quizScope.value = this._settings.quizChapterScope || 'full';
         const qt = this._settings.quizQuestionTypes || {};
         this._elements.quizTypeFactual.checked = qt.factual !== false;

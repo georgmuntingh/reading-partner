@@ -63,6 +63,8 @@ export class QuizController {
         this._questionTypes = ['factual'];
         this._useFullChapter = true;
         this._customSystemPrompt = '';
+        this._selectionContext = null;
+        this._readOptionsAloud = true;
     }
 
     // ========== Getters ==========
@@ -93,12 +95,23 @@ export class QuizController {
         this._playbackSpeed = speed;
     }
 
-    setSettings({ isMultipleChoice, isGuided, questionTypes, useFullChapter, customSystemPrompt }) {
+    setSettings({ isMultipleChoice, isGuided, questionTypes, useFullChapter, customSystemPrompt, readOptionsAloud }) {
         if (isMultipleChoice !== undefined) this._isMultipleChoice = isMultipleChoice;
         if (isGuided !== undefined) this._isGuided = isGuided;
         if (questionTypes !== undefined) this._questionTypes = questionTypes;
         if (useFullChapter !== undefined) this._useFullChapter = useFullChapter;
         if (customSystemPrompt !== undefined) this._customSystemPrompt = customSystemPrompt;
+        if (readOptionsAloud !== undefined) this._readOptionsAloud = readOptionsAloud;
+    }
+
+    /**
+     * Set override context sentences (e.g., from text selection).
+     * When set, these are used instead of chapter-based context.
+     * Cleared when stop() is called.
+     * @param {string[]|null} sentences
+     */
+    setSelectionContext(sentences) {
+        this._selectionContext = sentences;
     }
 
     // ========== Quiz Flow ==========
@@ -143,8 +156,18 @@ export class QuizController {
             this._onQuestionReady?.(question);
             this._setState(QuizState.SPEAKING_QUESTION);
 
-            // Speak the question text
+            // Speak the question text, then options for multiple choice
             await this._speakText(question.question);
+            if (this._isStopped) return;
+
+            if (this._readOptionsAloud && this._isMultipleChoice && question.options?.length) {
+                const labels = ['A', 'B', 'C', 'D'];
+                for (let i = 0; i < question.options.length; i++) {
+                    if (this._isStopped) return;
+                    const label = labels[i] || String(i + 1);
+                    await this._speakText(`${label}. ${question.options[i]}`);
+                }
+            }
 
             if (this._isStopped) return;
 
@@ -175,6 +198,8 @@ export class QuizController {
                 done: true
             });
             this._setState(QuizState.SPEAKING_FEEDBACK);
+            await this._speakText('Correct!');
+            if (this._isStopped) return;
             await this._speakText(this._currentQuestion.explanation);
             if (!this._isStopped) {
                 this._setState(QuizState.AWAITING_ANSWER);
@@ -195,6 +220,8 @@ export class QuizController {
                     done: false
                 });
                 this._setState(QuizState.SPEAKING_FEEDBACK);
+                await this._speakText('That is incorrect.');
+                if (this._isStopped) return;
                 await this._speakText(hint);
                 if (!this._isStopped) {
                     this._setState(QuizState.AWAITING_ANSWER);
@@ -216,6 +243,8 @@ export class QuizController {
                 done: true
             });
             this._setState(QuizState.SPEAKING_FEEDBACK);
+            await this._speakText('That is incorrect.');
+            if (this._isStopped) return;
             await this._speakText(feedback);
             if (!this._isStopped) {
                 this._setState(QuizState.AWAITING_ANSWER);
@@ -488,6 +517,7 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
         this._currentQuestion = null;
         this._disabledOptions = [];
         this._chatHistory = [];
+        this._selectionContext = null;
         this._setState(QuizState.IDLE);
     }
 
@@ -501,6 +531,11 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
     // ========== Internal: Context ==========
 
     async _getContextSentences() {
+        // Use selection context if available
+        if (this._selectionContext && this._selectionContext.length > 0) {
+            return this._selectionContext;
+        }
+
         if (!this._readingState) return [];
 
         const position = this._readingState.getCurrentPosition();
