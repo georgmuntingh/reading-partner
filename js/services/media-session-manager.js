@@ -12,10 +12,12 @@
  * keep the silent audio element's play/pause state in sync with TTS state.
  */
 
-// Generate silent WAV audio programmatically
+// Generate near-silent WAV audio with imperceptible noise
+// Uses 60 seconds at 8kHz with LSB noise so Android detects a real audio signal
+// and shows the media session notification in the notification shade.
 const SILENT_WAV = (() => {
     const sampleRate = 8000;
-    const duration = 2;
+    const duration = 60;
     const numSamples = sampleRate * duration;
     const dataSize = numSamples;
     const fileSize = 44 + dataSize;
@@ -43,8 +45,11 @@ const SILENT_WAV = (() => {
     writeString(36, 'data');
     view.setUint32(40, dataSize, true);
 
+    // Fill with near-silence: center value (128) with random LSB noise
+    // This produces an imperceptible signal that prevents Android from
+    // classifying the audio as silent and suppressing the notification
     for (let i = 44; i < fileSize; i++) {
-        view.setUint8(i, 128);
+        view.setUint8(i, 128 + (Math.random() < 0.5 ? 0 : 1));
     }
 
     const bytes = new Uint8Array(buffer);
@@ -117,7 +122,7 @@ class MediaSessionManager {
         this._silentAudio = document.createElement('audio');
         this._silentAudio.src = SILENT_WAV;
         this._silentAudio.loop = true;
-        this._silentAudio.volume = 0.05;
+        this._silentAudio.volume = 0.2;
         this._silentAudio.preload = 'auto';
 
         this._silentAudio.addEventListener('play', () => {
@@ -276,6 +281,25 @@ class MediaSessionManager {
     }
 
     /**
+     * Set position state to help Android browsers show the notification.
+     * Some browsers require position state to be set for the media notification
+     * to appear in the notification shade.
+     */
+    _updatePositionState() {
+        try {
+            if (navigator.mediaSession.setPositionState) {
+                navigator.mediaSession.setPositionState({
+                    duration: 3600,
+                    playbackRate: 1,
+                    position: 0
+                });
+            }
+        } catch (e) {
+            console.warn('Media Session: Could not set position state:', e.message);
+        }
+    }
+
+    /**
      * Update playback state - MUST sync audio element state with TTS state
      * This is critical: browser uses audio.paused to decide play vs pause action
      *
@@ -298,6 +322,7 @@ class MediaSessionManager {
                 console.warn('Media Session: Could not start audio:', e.message);
             }
             navigator.mediaSession.playbackState = 'playing';
+            this._updatePositionState();
 
         } else if (state === 'paused' || state === 'stopped') {
             navigator.mediaSession.playbackState = 'paused';
@@ -414,6 +439,7 @@ class MediaSessionManager {
             // On Android, set to 'playing' to trigger notification
             // On desktop, set to 'paused' so first button press sends "play"
             navigator.mediaSession.playbackState = this._isAndroid ? 'playing' : 'paused';
+            this._updatePositionState();
             console.log(`Media Session: Force start successful, playbackState=${navigator.mediaSession.playbackState}`);
 
             if (this._isAndroid) {
