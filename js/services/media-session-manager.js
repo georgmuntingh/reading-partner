@@ -85,7 +85,7 @@ class MediaSessionManager {
         this._hasUserInteraction = false;
 
         // Configurable audio settings
-        this._volume = 0.1;
+        this._volume = 0.01;
         this._duration = 300;
 
         // Android detection - needs continuous audio for notification

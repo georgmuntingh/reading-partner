@@ -54,7 +54,7 @@ export class SettingsModal {
             // Reading history
             readingHistorySize: 3,
             // Media session audio
-            mediaSessionVolume: 0.1,
+            mediaSessionVolume: 0.01,
             mediaSessionDuration: 300
         };
 
@@ -326,8 +326,8 @@ export class SettingsModal {
                         <h3>Headset Controls</h3>
 
                         <div class="form-group">
-                            <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.1</span></label>
-                            <input type="range" id="settings-media-volume" class="form-input" min="0.01" max="1" step="0.01" value="0.1">
+                            <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.01</span></label>
+                            <input type="range" id="settings-media-volume" class="form-input" min="0.001" max="0.1" step="0.001" value="0.01">
                             <p class="form-hint">Volume of the background audio used to keep the media session active. Lower values are less audible but may not trigger the notification on some devices.</p>
                         </div>
 
@@ -505,7 +505,7 @@ export class SettingsModal {
         // Media session volume slider
         this._elements.mediaVolume.addEventListener('input', () => {
             const volume = parseFloat(this._elements.mediaVolume.value);
-            this._elements.mediaVolumeValue.textContent = volume.toFixed(2);
+            this._elements.mediaVolumeValue.textContent = volume.toFixed(3);
         });
 
         // Media session duration slider
@@ -725,7 +725,7 @@ export class SettingsModal {
             },
             quizSystemPrompt: this._elements.quizSystemPrompt.value.trim(),
             // Media session settings
-            mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.1,
+            mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.01,
             mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300
         };
 
@@ -874,8 +874,8 @@ export class SettingsModal {
         this._elements.quizSystemPrompt.value = this._settings.quizSystemPrompt || '';
 
         // Load media session settings
-        this._elements.mediaVolume.value = this._settings.mediaSessionVolume || 0.1;
-        this._elements.mediaVolumeValue.textContent = (this._settings.mediaSessionVolume || 0.1).toFixed(2);
+        this._elements.mediaVolume.value = this._settings.mediaSessionVolume || 0.01;
+        this._elements.mediaVolumeValue.textContent = (this._settings.mediaSessionVolume || 0.01).toFixed(3);
         this._elements.mediaDuration.value = this._settings.mediaSessionDuration || 300;
         this._elements.mediaDurationValue.textContent = `${this._settings.mediaSessionDuration || 300}s`;
 
