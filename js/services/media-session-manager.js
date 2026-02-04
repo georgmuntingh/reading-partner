@@ -2,9 +2,14 @@
  * Media Session Manager
  * Integrates with the Media Session API to enable headset/media key controls
  *
- * Controls:
+ * Controls (reading mode):
  * - Single tap (play/pause): Toggle TTS playback
  * - Double tap / Next track: Enter Q&A mode
+ * - Double tap back / Previous track: (no action)
+ *
+ * Controls (Q&A mode):
+ * - Single tap (play/pause): Exit Q&A mode and continue reading
+ * - Double tap / Next track: Ask another question
  * - Double tap back / Previous track: Exit Q&A mode and continue reading
  *
  * IMPORTANT: The browser determines which action (play/pause) to send based on
@@ -69,11 +74,15 @@ class MediaSessionManager {
         this._isInitialized = false;
         this._isQAModeActive = false;
 
-        // Callbacks
+        // Callbacks - reading mode
         this._onPlay = null;
         this._onPause = null;
         this._onEnterQAMode = null;
         this._onExitQAMode = null;
+
+        // Callbacks - Q&A mode
+        this._onQAPlayPause = null;
+        this._onQANextQuestion = null;
 
         // Current metadata
         this._bookTitle = '';
@@ -129,7 +138,7 @@ class MediaSessionManager {
     /**
      * Initialize the Media Session manager
      */
-    initialize({ onPlay, onPause, onEnterQAMode, onExitQAMode }) {
+    initialize({ onPlay, onPause, onEnterQAMode, onExitQAMode, onQAPlayPause, onQANextQuestion }) {
         if (!this._isSupported) {
             console.warn('Media Session API not supported');
             return;
@@ -139,6 +148,8 @@ class MediaSessionManager {
         this._onPause = onPause;
         this._onEnterQAMode = onEnterQAMode;
         this._onExitQAMode = onExitQAMode;
+        this._onQAPlayPause = onQAPlayPause;
+        this._onQANextQuestion = onQANextQuestion;
 
         this._createSilentAudio();
         this._setupActionHandlers();
@@ -190,7 +201,8 @@ class MediaSessionManager {
         navigator.mediaSession.setActionHandler('play', async () => {
             console.log('Media Session: PLAY action received');
             if (this._isQAModeActive) {
-                console.log('Media Session: Ignoring play - Q&A mode active');
+                console.log('Media Session: Play in Q&A mode - delegating to exit Q&A');
+                this._onQAPlayPause?.();
                 return;
             }
 
@@ -221,7 +233,8 @@ class MediaSessionManager {
         navigator.mediaSession.setActionHandler('pause', () => {
             console.log('Media Session: PAUSE action received');
             if (this._isQAModeActive) {
-                console.log('Media Session: Ignoring pause - Q&A mode active');
+                console.log('Media Session: Pause in Q&A mode - delegating to exit Q&A');
+                this._onQAPlayPause?.();
                 return;
             }
 
@@ -253,15 +266,20 @@ class MediaSessionManager {
             }
         });
 
-        // Next track (double tap on headsets) - Enter Q&A mode
+        // Next track (double tap on headsets)
+        // Reading mode: Enter Q&A mode
+        // Q&A mode: Ask another question
         navigator.mediaSession.setActionHandler('nexttrack', () => {
             console.log('Media Session: NEXTTRACK action received');
-            if (!this._isQAModeActive) {
+            if (this._isQAModeActive) {
+                console.log('Media Session: Next track in Q&A mode - asking another question');
+                this._onQANextQuestion?.();
+            } else {
                 this._onEnterQAMode?.();
             }
         });
 
-        // Previous track - Exit Q&A mode
+        // Previous track - Exit Q&A mode and continue reading
         navigator.mediaSession.setActionHandler('previoustrack', () => {
             console.log('Media Session: PREVIOUSTRACK action received');
             if (this._isQAModeActive) {
@@ -271,6 +289,11 @@ class MediaSessionManager {
 
         navigator.mediaSession.setActionHandler('stop', () => {
             console.log('Media Session: STOP action received');
+            if (this._isQAModeActive) {
+                console.log('Media Session: Stop in Q&A mode - delegating to exit Q&A');
+                this._onQAPlayPause?.();
+                return;
+            }
             this._silentAudio.pause();
             navigator.mediaSession.playbackState = 'paused';
             this._onPause?.();

@@ -862,8 +862,14 @@ class ReadingPartnerApp {
 
     /**
      * Initialize Media Session for headset/media key controls
+     *
+     * Reading mode:
      * - Single tap (play/pause): Toggle TTS playback
      * - Double tap / Next track: Enter Q&A mode
+     *
+     * Q&A mode:
+     * - Single tap (play/pause): Exit Q&A mode and continue reading
+     * - Double tap / Next track: Ask another question
      * - Double tap back / Previous track: Exit Q&A mode and continue reading
      */
     _initializeMediaSession() {
@@ -889,6 +895,12 @@ class ReadingPartnerApp {
             },
             onExitQAMode: () => {
                 this._continueReadingFromQA();
+            },
+            onQAPlayPause: () => {
+                this._continueReadingFromQA();
+            },
+            onQANextQuestion: () => {
+                this._askAnotherQuestion();
             }
         });
 
