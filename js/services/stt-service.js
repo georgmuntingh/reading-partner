@@ -102,24 +102,39 @@ export class STTService {
             };
 
             this._recognition.onresult = (event) => {
-                let interimTranscript = '';
+                // Rebuild transcripts from all results each time rather than
+                // incrementally appending. On mobile Chrome (Android), the
+                // results array and event.resultIndex behave differently than
+                // on desktop: partial results may accumulate as separate entries
+                // or be finalized with overlapping text, causing concatenation
+                // artifacts like "whatwhat iswhat is the..." when using +=.
+                let currentFinal = '';
+                let currentInterim = '';
 
-                for (let i = event.resultIndex; i < event.results.length; i++) {
+                for (let i = 0; i < event.results.length; i++) {
                     const result = event.results[i];
                     if (result.isFinal) {
-                        finalTranscript += result[0].transcript;
-                        hasResult = true;
+                        currentFinal += result[0].transcript;
                     } else {
-                        interimTranscript += result[0].transcript;
+                        currentInterim += result[0].transcript;
                     }
+                }
+
+                finalTranscript = currentFinal;
+                if (currentFinal) {
+                    hasResult = true;
                 }
 
                 // Reset silence timer on any speech activity
                 resetSilenceTimer();
 
-                // Report interim results for live display
-                if (interimTranscript) {
-                    this.onInterimResult?.(finalTranscript + interimTranscript);
+                // Report current transcript for live display.
+                // Include final results too, not just interim — on mobile
+                // Chrome, results may be finalized progressively without
+                // interim phases, so only checking interim would miss updates.
+                const displayTranscript = currentFinal + currentInterim;
+                if (displayTranscript) {
+                    this.onInterimResult?.(displayTranscript);
                 }
             };
 
