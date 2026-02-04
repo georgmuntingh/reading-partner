@@ -102,24 +102,28 @@ export class STTService {
             };
 
             this._recognition.onresult = (event) => {
-                let interimTranscript = '';
+                // Use only the LAST result in the array. On mobile Chrome
+                // (Android) with continuous mode, each new entry in the
+                // results array contains the full cumulative transcript from
+                // the start of speech — not just the new segment. Iterating
+                // and concatenating all entries produces overlapping text like
+                // "couldcould youcould you please". The last entry always has
+                // the most current and complete transcript on both mobile and
+                // desktop.
+                const lastResult = event.results[event.results.length - 1];
+                const transcript = lastResult[0].transcript;
 
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const result = event.results[i];
-                    if (result.isFinal) {
-                        finalTranscript += result[0].transcript;
-                        hasResult = true;
-                    } else {
-                        interimTranscript += result[0].transcript;
-                    }
+                if (lastResult.isFinal) {
+                    finalTranscript = transcript;
+                    hasResult = true;
                 }
 
                 // Reset silence timer on any speech activity
                 resetSilenceTimer();
 
-                // Report interim results for live display
-                if (interimTranscript) {
-                    this.onInterimResult?.(finalTranscript + interimTranscript);
+                // Report current transcript for live display
+                if (transcript) {
+                    this.onInterimResult?.(transcript);
                 }
             };
 
