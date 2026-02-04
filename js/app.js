@@ -1615,6 +1615,20 @@ class ReadingPartnerApp {
                 this._quizSettings.quizSystemPrompt = settings.quizSystemPrompt;
                 await storage.saveSetting('quizSystemPrompt', settings.quizSystemPrompt);
             }
+
+            // Save media session settings
+            if (settings.mediaSessionVolume !== undefined) {
+                await storage.saveSetting('mediaSessionVolume', settings.mediaSessionVolume);
+            }
+            if (settings.mediaSessionDuration !== undefined) {
+                await storage.saveSetting('mediaSessionDuration', settings.mediaSessionDuration);
+            }
+            if (settings.mediaSessionVolume !== undefined || settings.mediaSessionDuration !== undefined) {
+                mediaSessionManager.configure({
+                    volume: settings.mediaSessionVolume,
+                    duration: settings.mediaSessionDuration
+                });
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -2108,6 +2122,16 @@ class ReadingPartnerApp {
             const quizSystemPrompt = await storage.getSetting('quizSystemPrompt');
             if (quizSystemPrompt !== null) this._quizSettings.quizSystemPrompt = quizSystemPrompt;
 
+            // Load media session settings
+            const mediaSessionVolume = await storage.getSetting('mediaSessionVolume');
+            const mediaSessionDuration = await storage.getSetting('mediaSessionDuration');
+            const mediaSessionSettings = {};
+            if (mediaSessionVolume !== null) mediaSessionSettings.volume = mediaSessionVolume;
+            if (mediaSessionDuration !== null) mediaSessionSettings.duration = mediaSessionDuration;
+            if (Object.keys(mediaSessionSettings).length > 0) {
+                mediaSessionManager.configure(mediaSessionSettings);
+            }
+
             // Update Q&A setup UI
             this._updateQASetupStatus();
 
@@ -2119,7 +2143,9 @@ class ReadingPartnerApp {
                 voice: this._savedVoice,
                 speed: this._savedSpeed,
                 ...typographySettings,
-                ...normalizationSettings
+                ...normalizationSettings,
+                mediaSessionVolume: mediaSessionVolume !== null ? mediaSessionVolume : undefined,
+                mediaSessionDuration: mediaSessionDuration !== null ? mediaSessionDuration : undefined
             });
 
         } catch (error) {
