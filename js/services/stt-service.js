@@ -102,39 +102,28 @@ export class STTService {
             };
 
             this._recognition.onresult = (event) => {
-                // Rebuild transcripts from all results each time rather than
-                // incrementally appending. On mobile Chrome (Android), the
-                // results array and event.resultIndex behave differently than
-                // on desktop: partial results may accumulate as separate entries
-                // or be finalized with overlapping text, causing concatenation
-                // artifacts like "whatwhat iswhat is the..." when using +=.
-                let currentFinal = '';
-                let currentInterim = '';
+                // Use only the LAST result in the array. On mobile Chrome
+                // (Android) with continuous mode, each new entry in the
+                // results array contains the full cumulative transcript from
+                // the start of speech — not just the new segment. Iterating
+                // and concatenating all entries produces overlapping text like
+                // "couldcould youcould you please". The last entry always has
+                // the most current and complete transcript on both mobile and
+                // desktop.
+                const lastResult = event.results[event.results.length - 1];
+                const transcript = lastResult[0].transcript;
 
-                for (let i = 0; i < event.results.length; i++) {
-                    const result = event.results[i];
-                    if (result.isFinal) {
-                        currentFinal += result[0].transcript;
-                    } else {
-                        currentInterim += result[0].transcript;
-                    }
-                }
-
-                finalTranscript = currentFinal;
-                if (currentFinal) {
+                if (lastResult.isFinal) {
+                    finalTranscript = transcript;
                     hasResult = true;
                 }
 
                 // Reset silence timer on any speech activity
                 resetSilenceTimer();
 
-                // Report current transcript for live display.
-                // Include final results too, not just interim — on mobile
-                // Chrome, results may be finalized progressively without
-                // interim phases, so only checking interim would miss updates.
-                const displayTranscript = currentFinal + currentInterim;
-                if (displayTranscript) {
-                    this.onInterimResult?.(displayTranscript);
+                // Report current transcript for live display
+                if (transcript) {
+                    this.onInterimResult?.(transcript);
                 }
             };
 
