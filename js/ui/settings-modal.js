@@ -50,7 +50,9 @@ export class SettingsModal {
                 inference: false,
                 themes: false
             },
-            quizSystemPrompt: ''
+            quizSystemPrompt: '',
+            // Reading history
+            readingHistorySize: 3
         };
 
         this._buildUI();
@@ -74,6 +76,16 @@ export class SettingsModal {
                 </div>
 
                 <div class="modal-content">
+                    <div class="settings-section">
+                        <h3>General</h3>
+
+                        <div class="form-group">
+                            <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">3</span></label>
+                            <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="3">
+                            <p class="form-hint">Number of recent books shown in "Continue reading" on the start screen</p>
+                        </div>
+                    </div>
+
                     <div class="settings-section">
                         <h3>Voice & Speed</h3>
 
@@ -370,6 +382,8 @@ export class SettingsModal {
         this._elements = {
             modal: this._container.querySelector('.modal'),
             closeBtn: this._container.querySelector('.modal-close-btn'),
+            historySize: this._container.querySelector('#settings-history-size'),
+            historySizeValue: this._container.querySelector('#settings-history-size-value'),
             voice: this._container.querySelector('#settings-voice'),
             speed: this._container.querySelector('#settings-speed'),
             speedValue: this._container.querySelector('#settings-speed-value'),
@@ -435,6 +449,12 @@ export class SettingsModal {
         // TTS backend change - toggle FastAPI URL visibility
         this._elements.ttsBackend.addEventListener('change', () => {
             this._updateBackendUI();
+        });
+
+        // History size slider
+        this._elements.historySize.addEventListener('input', () => {
+            const size = parseInt(this._elements.historySize.value);
+            this._elements.historySizeValue.textContent = size;
         });
 
         // Speed slider
@@ -640,6 +660,7 @@ export class SettingsModal {
      */
     _save() {
         const settings = {
+            readingHistorySize: parseInt(this._elements.historySize.value) || 3,
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
             fullChapterContext: this._elements.fullChapterContext.checked,
@@ -771,6 +792,10 @@ export class SettingsModal {
      * Load current settings into form
      */
     _loadCurrentSettings() {
+        // General settings
+        this._elements.historySize.value = this._settings.readingHistorySize || 3;
+        this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 3;
+
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
         this._elements.fullChapterContext.checked = !!this._settings.fullChapterContext;

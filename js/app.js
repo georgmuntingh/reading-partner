@@ -30,6 +30,7 @@ class ReadingPartnerApp {
         this._savedSpeed = undefined;
         this._savedVoice = undefined;
         this._wasPlayingBeforeQA = false;
+        this._readingHistorySize = 3;
 
         // Q&A Settings
         this._qaSettings = {
@@ -163,7 +164,7 @@ class ReadingPartnerApp {
         // Setup settings button
         this._elements.settingsBtn = document.getElementById('settings-btn');
         this._elements.settingsBtn?.addEventListener('click', () => {
-            this._settingsModal.setSettings({ ...this._qaSettings, ...this._quizSettings });
+            this._settingsModal.setSettings({ readingHistorySize: this._readingHistorySize, ...this._qaSettings, ...this._quizSettings });
             this._settingsModal.show();
         });
 
@@ -1525,8 +1526,18 @@ class ReadingPartnerApp {
             );
         }
 
+        // Save general settings
+        if (settings.readingHistorySize !== undefined) {
+            this._readingHistorySize = settings.readingHistorySize;
+            // Trim existing cookie history if new size is smaller
+            this._trimCookieHistory();
+        }
+
         // Save to storage
         try {
+            if (settings.readingHistorySize !== undefined) {
+                await storage.saveSetting('readingHistorySize', settings.readingHistorySize);
+            }
             await storage.saveSetting('qaApiKey', this._qaSettings.apiKey);
             await storage.saveSetting('qaModel', this._qaSettings.model);
             await storage.saveSetting('qaFullChapterContext', this._qaSettings.fullChapterContext);
@@ -2008,6 +2019,12 @@ class ReadingPartnerApp {
      */
     async _loadSettings() {
         try {
+            // Load general settings
+            const readingHistorySize = await storage.getSetting('readingHistorySize');
+            if (readingHistorySize !== null) {
+                this._readingHistorySize = readingHistorySize;
+            }
+
             const speed = await storage.getSetting('playbackSpeed');
             if (speed !== null) {
                 // Will be set when controls are initialized
@@ -2096,6 +2113,7 @@ class ReadingPartnerApp {
 
             // Update settings modal with all settings
             this._settingsModal?.setSettings({
+                readingHistorySize: this._readingHistorySize,
                 ...this._qaSettings,
                 ...this._quizSettings,
                 voice: this._savedVoice,
@@ -2129,14 +2147,14 @@ class ReadingPartnerApp {
     // ========== Cookie-based State Persistence ==========
 
     /**
-     * Save current reading state to a cookie for quick restoration
-     * Stores book ID, chapter, sentence position, and counts of bookmarks/highlights
+     * Save current reading state to cookie history for quick restoration.
+     * Maintains an array of the last N books read, where N = readingHistorySize setting.
      */
     _saveCookieState() {
         if (!this._currentBook || !this._readingState) return;
 
         const position = this._readingState.getCurrentPosition();
-        const state = {
+        const entry = {
             bookId: this._currentBook.id,
             bookTitle: this._currentBook.title,
             chapterIndex: position.chapterIndex,
@@ -2148,7 +2166,20 @@ class ReadingPartnerApp {
         };
 
         try {
-            const stateJson = JSON.stringify(state);
+            // Load existing history
+            let history = this._loadCookieState();
+
+            // Remove any existing entry for this book
+            history = history.filter(h => h.bookId !== entry.bookId);
+
+            // Add current book at the front (most recent)
+            history.unshift(entry);
+
+            // Trim to max history size
+            const maxSize = this._readingHistorySize || 3;
+            history = history.slice(0, maxSize);
+
+            const stateJson = JSON.stringify(history);
             // Set cookie with 365-day expiry
             const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
             document.cookie = `readingPartnerState=${encodeURIComponent(stateJson)};expires=${expires};path=/;SameSite=Lax`;
@@ -2158,8 +2189,8 @@ class ReadingPartnerApp {
     }
 
     /**
-     * Load reading state from cookie
-     * @returns {Object|null} Saved state or null
+     * Load reading history from cookie
+     * @returns {Object[]} Array of saved book states (most recent first), or empty array
      */
     _loadCookieState() {
         try {
@@ -2167,69 +2198,107 @@ class ReadingPartnerApp {
             for (const cookie of cookies) {
                 const [name, value] = cookie.trim().split('=');
                 if (name === 'readingPartnerState' && value) {
-                    return JSON.parse(decodeURIComponent(value));
+                    const parsed = JSON.parse(decodeURIComponent(value));
+                    // Migrate from old single-object format to array
+                    if (parsed && !Array.isArray(parsed)) {
+                        return [parsed];
+                    }
+                    return Array.isArray(parsed) ? parsed : [];
                 }
             }
         } catch (error) {
             console.error('Failed to load cookie state:', error);
         }
-        return null;
+        return [];
     }
 
     /**
-     * Check if there's a saved reading state and show resume option
+     * Trim cookie history to match current readingHistorySize setting
+     */
+    _trimCookieHistory() {
+        try {
+            let history = this._loadCookieState();
+            const maxSize = this._readingHistorySize || 3;
+            if (history.length > maxSize) {
+                history = history.slice(0, maxSize);
+                const stateJson = JSON.stringify(history);
+                const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
+                document.cookie = `readingPartnerState=${encodeURIComponent(stateJson)};expires=${expires};path=/;SameSite=Lax`;
+            }
+        } catch (error) {
+            console.error('Failed to trim cookie history:', error);
+        }
+    }
+
+    /**
+     * Check if there's a saved reading history and show resume options
      */
     _checkResumeState() {
-        const savedState = this._loadCookieState();
-        if (!savedState || !savedState.bookId) return;
+        const history = this._loadCookieState();
+        if (!history || history.length === 0) return;
 
-        // Show a resume banner on the upload screen
+        // Show resume section on the upload screen
         const uploadContainer = this._elements.uploadScreen?.querySelector('.upload-container');
         if (!uploadContainer) return;
 
-        // Remove any existing resume banner
-        const existing = uploadContainer.querySelector('.resume-banner');
+        // Remove any existing resume section
+        const existing = uploadContainer.querySelector('.resume-section');
         if (existing) existing.remove();
 
-        const banner = document.createElement('div');
-        banner.className = 'resume-banner';
+        const section = document.createElement('div');
+        section.className = 'resume-section';
 
-        const timeAgo = this._formatTimeAgo(savedState.timestamp);
-        const stats = [];
-        if (savedState.bookmarkCount > 0) {
-            stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
+        // Section header
+        const header = document.createElement('div');
+        header.className = 'resume-section-title';
+        header.textContent = 'Continue reading';
+        section.appendChild(header);
+
+        // Add a banner for each book in history
+        for (const savedState of history) {
+            if (!savedState.bookId) continue;
+
+            const banner = document.createElement('div');
+            banner.className = 'resume-banner';
+
+            const timeAgo = this._formatTimeAgo(savedState.timestamp);
+            const stats = [];
+            if (savedState.bookmarkCount > 0) {
+                stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
+            }
+            if (savedState.highlightCount > 0) {
+                stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
+            }
+            const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
+
+            // Show source info
+            let sourceText = '';
+            if (savedState.source?.type === 'gutenberg') {
+                sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
+            }
+
+            banner.innerHTML = `
+                <div class="resume-info">
+                    <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                    <div class="resume-time">Last read ${timeAgo}</div>
+                </div>
+                <button class="btn btn-primary btn-sm resume-btn">Resume</button>
+            `;
+
+            const resumeBtn = banner.querySelector('.resume-btn');
+            resumeBtn.addEventListener('click', () => {
+                this._resumeLastBook(savedState);
+            });
+
+            section.appendChild(banner);
         }
-        if (savedState.highlightCount > 0) {
-            stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
-        }
-        const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
-
-        // Show source info
-        let sourceText = '';
-        if (savedState.source?.type === 'gutenberg') {
-            sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
-        }
-
-        banner.innerHTML = `
-            <div class="resume-info">
-                <div class="resume-title">Continue reading</div>
-                <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
-                <div class="resume-time">Last read ${timeAgo}</div>
-            </div>
-            <button class="btn btn-primary btn-sm resume-btn">Resume</button>
-        `;
-
-        const resumeBtn = banner.querySelector('.resume-btn');
-        resumeBtn.addEventListener('click', () => {
-            this._resumeLastBook(savedState);
-        });
 
         // Insert before the upload area
         const uploadArea = uploadContainer.querySelector('.upload-area');
         if (uploadArea) {
-            uploadContainer.insertBefore(banner, uploadArea);
+            uploadContainer.insertBefore(section, uploadArea);
         } else {
-            uploadContainer.appendChild(banner);
+            uploadContainer.appendChild(section);
         }
     }
 
