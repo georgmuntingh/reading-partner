@@ -52,7 +52,10 @@ export class SettingsModal {
             },
             quizSystemPrompt: '',
             // Reading history
-            readingHistorySize: 3
+            readingHistorySize: 3,
+            // Media session audio
+            mediaSessionVolume: 0.01,
+            mediaSessionDuration: 300
         };
 
         this._buildUI();
@@ -320,7 +323,21 @@ export class SettingsModal {
                     </div>
 
                     <div class="settings-section">
-                        <h3>Headset Controls Diagnostics</h3>
+                        <h3>Headset Controls</h3>
+
+                        <div class="form-group">
+                            <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.01</span></label>
+                            <input type="range" id="settings-media-volume" class="form-input" min="0.001" max="0.1" step="0.001" value="0.01">
+                            <p class="form-hint">Volume of the background audio used to keep the media session active. Lower values are less audible but may not trigger the notification on some devices.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-media-duration">Media Session Duration: <span id="settings-media-duration-value">300s</span></label>
+                            <input type="range" id="settings-media-duration" class="form-input" min="10" max="600" step="10" value="300">
+                            <p class="form-hint">Duration of the background audio loop in seconds. Longer durations reduce loop restarts that could interrupt the media session.</p>
+                        </div>
+
+                        <h4 style="margin-top: var(--spacing-lg);">Diagnostics</h4>
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             If headphone controls aren't working (especially on Android), use these tools to diagnose the issue.
                         </p>
@@ -403,6 +420,10 @@ export class SettingsModal {
             normalizeText: this._container.querySelector('#settings-normalize-text'),
             normalizeNumbers: this._container.querySelector('#settings-normalize-numbers'),
             normalizeAbbreviations: this._container.querySelector('#settings-normalize-abbreviations'),
+            mediaVolume: this._container.querySelector('#settings-media-volume'),
+            mediaVolumeValue: this._container.querySelector('#settings-media-volume-value'),
+            mediaDuration: this._container.querySelector('#settings-media-duration'),
+            mediaDurationValue: this._container.querySelector('#settings-media-duration-value'),
             diagnosticStatus: this._container.querySelector('#diagnostic-status'),
             runDiagnosticsBtn: this._container.querySelector('#run-diagnostics-btn'),
             forceStartMediaBtn: this._container.querySelector('#force-start-media-btn'),
@@ -479,6 +500,18 @@ export class SettingsModal {
         this._elements.lineSpacing.addEventListener('input', () => {
             const spacing = parseFloat(this._elements.lineSpacing.value);
             this._elements.lineSpacingValue.textContent = spacing.toFixed(1);
+        });
+
+        // Media session volume slider
+        this._elements.mediaVolume.addEventListener('input', () => {
+            const volume = parseFloat(this._elements.mediaVolume.value);
+            this._elements.mediaVolumeValue.textContent = volume.toFixed(3);
+        });
+
+        // Media session duration slider
+        this._elements.mediaDuration.addEventListener('input', () => {
+            const duration = parseInt(this._elements.mediaDuration.value);
+            this._elements.mediaDurationValue.textContent = `${duration}s`;
         });
 
         // Diagnostic buttons
@@ -588,7 +621,7 @@ export class SettingsModal {
             html += '<br>';
 
             html += `${info.audioElement.readyState >= 2 ? '✓' : '✗'} Ready State: ${info.audioElement.readyState}/4<br>`;
-            html += `Volume: ${(info.audioElement.volume * 1000).toFixed(1)}/1000 (silent)<br><br>`;
+            html += `Volume: ${info.audioElement.volume}<br><br>`;
         } else {
             html += '<strong>🔊 Audio Element:</strong> Not created<br><br>';
         }
@@ -690,7 +723,10 @@ export class SettingsModal {
                 inference: this._elements.quizTypeInference.checked,
                 themes: this._elements.quizTypeThemes.checked
             },
-            quizSystemPrompt: this._elements.quizSystemPrompt.value.trim()
+            quizSystemPrompt: this._elements.quizSystemPrompt.value.trim(),
+            // Media session settings
+            mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.01,
+            mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300
         };
 
         // Validate
@@ -836,6 +872,12 @@ export class SettingsModal {
         this._elements.quizTypeInference.checked = !!qt.inference;
         this._elements.quizTypeThemes.checked = !!qt.themes;
         this._elements.quizSystemPrompt.value = this._settings.quizSystemPrompt || '';
+
+        // Load media session settings
+        this._elements.mediaVolume.value = this._settings.mediaSessionVolume || 0.01;
+        this._elements.mediaVolumeValue.textContent = (this._settings.mediaSessionVolume || 0.01).toFixed(3);
+        this._elements.mediaDuration.value = this._settings.mediaSessionDuration || 300;
+        this._elements.mediaDurationValue.textContent = `${this._settings.mediaSessionDuration || 300}s`;
 
         this._updateBackendUI();
     }

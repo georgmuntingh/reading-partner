@@ -12,10 +12,15 @@
  * keep the silent audio element's play/pause state in sync with TTS state.
  */
 
-// Generate silent WAV audio programmatically
-const SILENT_WAV = (() => {
+/**
+ * Generate a WAV audio data URI with low-amplitude white noise.
+ * The white noise ensures Android detects a real audio signal and shows
+ * the media session notification in the notification shade.
+ * @param {number} duration - Duration in seconds
+ * @returns {string} data URI for the WAV file
+ */
+function generateWhiteNoiseWav(duration) {
     const sampleRate = 8000;
-    const duration = 2;
     const numSamples = sampleRate * duration;
     const dataSize = numSamples;
     const fileSize = 44 + dataSize;
@@ -43,8 +48,11 @@ const SILENT_WAV = (() => {
     writeString(36, 'data');
     view.setUint32(40, dataSize, true);
 
+    // Fill with low-amplitude white noise: random values in [124, 132]
+    // (±4 around the 8-bit unsigned center of 128). This is enough signal
+    // for Android to detect real audio without being perceptible.
     for (let i = 44; i < fileSize; i++) {
-        view.setUint8(i, 128);
+        view.setUint8(i, 124 + Math.floor(Math.random() * 9));
     }
 
     const bytes = new Uint8Array(buffer);
@@ -53,7 +61,7 @@ const SILENT_WAV = (() => {
         binary += String.fromCharCode(bytes[i]);
     }
     return 'data:audio/wav;base64,' + btoa(binary);
-})();
+}
 
 class MediaSessionManager {
     constructor() {
@@ -76,12 +84,46 @@ class MediaSessionManager {
         this._silentAudio = null;
         this._hasUserInteraction = false;
 
+        // Configurable audio settings
+        this._volume = 0.01;
+        this._duration = 300;
+
         // Android detection - needs continuous audio for notification
         this._isAndroid = /Android/i.test(navigator.userAgent);
     }
 
     isSupported() {
         return this._isSupported;
+    }
+
+    /**
+     * Configure media session audio settings.
+     * If the audio element already exists, updates it in place.
+     * @param {Object} options
+     * @param {number} [options.volume] - Audio volume (0.0 - 1.0)
+     * @param {number} [options.duration] - Audio duration in seconds
+     */
+    configure({ volume, duration } = {}) {
+        const volumeChanged = volume !== undefined && volume !== this._volume;
+        const durationChanged = duration !== undefined && duration !== this._duration;
+
+        if (volume !== undefined) this._volume = volume;
+        if (duration !== undefined) this._duration = duration;
+
+        if (this._silentAudio) {
+            if (volumeChanged) {
+                this._silentAudio.volume = this._volume;
+            }
+            if (durationChanged) {
+                // Regenerate the WAV with new duration
+                const wasPlaying = !this._silentAudio.paused;
+                this._silentAudio.src = generateWhiteNoiseWav(this._duration);
+                this._silentAudio.load();
+                if (wasPlaying) {
+                    this._silentAudio.play().catch(() => {});
+                }
+            }
+        }
     }
 
     /**
@@ -115,9 +157,9 @@ class MediaSessionManager {
         if (this._silentAudio) return;
 
         this._silentAudio = document.createElement('audio');
-        this._silentAudio.src = SILENT_WAV;
+        this._silentAudio.src = generateWhiteNoiseWav(this._duration);
         this._silentAudio.loop = true;
-        this._silentAudio.volume = 0.05;
+        this._silentAudio.volume = this._volume;
         this._silentAudio.preload = 'auto';
 
         this._silentAudio.addEventListener('play', () => {
@@ -276,6 +318,25 @@ class MediaSessionManager {
     }
 
     /**
+     * Set position state to help Android browsers show the notification.
+     * Some browsers require position state to be set for the media notification
+     * to appear in the notification shade.
+     */
+    _updatePositionState() {
+        try {
+            if (navigator.mediaSession.setPositionState) {
+                navigator.mediaSession.setPositionState({
+                    duration: 3600,
+                    playbackRate: 1,
+                    position: 0
+                });
+            }
+        } catch (e) {
+            console.warn('Media Session: Could not set position state:', e.message);
+        }
+    }
+
+    /**
      * Update playback state - MUST sync audio element state with TTS state
      * This is critical: browser uses audio.paused to decide play vs pause action
      *
@@ -298,6 +359,7 @@ class MediaSessionManager {
                 console.warn('Media Session: Could not start audio:', e.message);
             }
             navigator.mediaSession.playbackState = 'playing';
+            this._updatePositionState();
 
         } else if (state === 'paused' || state === 'stopped') {
             navigator.mediaSession.playbackState = 'paused';
@@ -414,6 +476,7 @@ class MediaSessionManager {
             // On Android, set to 'playing' to trigger notification
             // On desktop, set to 'paused' so first button press sends "play"
             navigator.mediaSession.playbackState = this._isAndroid ? 'playing' : 'paused';
+            this._updatePositionState();
             console.log(`Media Session: Force start successful, playbackState=${navigator.mediaSession.playbackState}`);
 
             if (this._isAndroid) {
