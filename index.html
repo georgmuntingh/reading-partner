@@ -97,9 +97,9 @@
             <main class="reader-content" id="reader-content">
                 <div class="chapter-header-row">
                     <div class="chapter-title" id="chapter-title">Chapter Title</div>
-                    <div class="page-number" id="page-number">
+                    <button class="page-number" id="page-number" aria-label="Open chapter overview" title="Chapter overview">
                         <span id="page-current">1</span> / <span id="page-total">1</span>
-                    </div>
+                    </button>
                 </div>
                 <div class="page-container" id="page-container">
                     <button class="page-nav-btn page-nav-prev" id="page-prev-btn" aria-label="Previous page">
@@ -248,6 +248,11 @@
     <!-- Quiz Overlay -->
     <div id="quiz-overlay" class="quiz-overlay hidden">
         <!-- Content will be rendered by QuizOverlay component -->
+    </div>
+
+    <!-- Chapter Overview Overlay -->
+    <div id="chapter-overview" class="chapter-overview hidden">
+        <!-- Content will be rendered by ChapterOverview component -->
     </div>
 
     <!-- Settings Modal -->

@@ -53,6 +53,9 @@ export class SettingsModal {
             quizSystemPrompt: '',
             // Reading history
             readingHistorySize: 3,
+            // Multi-column layout
+            columnCount: 1,
+            columnAutoCenter: true,
             // Media session audio
             mediaSessionVolume: 0.01,
             mediaSessionDuration: 300
@@ -143,6 +146,30 @@ export class SettingsModal {
                         <div class="form-group">
                             <label for="settings-line-spacing">Line Spacing: <span id="settings-line-spacing-value">1.8</span></label>
                             <input type="range" id="settings-line-spacing" class="form-input" min="1.0" max="2.5" step="0.1" value="1.8">
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>Layout</h3>
+
+                        <div class="form-group">
+                            <label>Columns: <span id="settings-column-count-value">1</span></label>
+                            <div class="column-count-buttons" id="settings-column-count-buttons">
+                                <button class="column-count-btn active" data-columns="1">1</button>
+                                <button class="column-count-btn" data-columns="2">2</button>
+                                <button class="column-count-btn" data-columns="3">3</button>
+                                <button class="column-count-btn" data-columns="4">4</button>
+                                <button class="column-count-btn" data-columns="5">5</button>
+                            </div>
+                            <p class="form-hint">Number of pages displayed side by side. Useful on wide screens.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-column-auto-center" checked>
+                                Keep active page centered
+                            </label>
+                            <p class="form-hint">When enabled, the page with the current sentence stays in the center column. When disabled, the view advances only when the last visible page is reached.</p>
                         </div>
                     </div>
 
@@ -412,6 +439,9 @@ export class SettingsModal {
             verticalMarginValue: this._container.querySelector('#settings-vertical-margin-value'),
             lineSpacing: this._container.querySelector('#settings-line-spacing'),
             lineSpacingValue: this._container.querySelector('#settings-line-spacing-value'),
+            columnCountButtons: this._container.querySelector('#settings-column-count-buttons'),
+            columnCountValue: this._container.querySelector('#settings-column-count-value'),
+            columnAutoCenter: this._container.querySelector('#settings-column-auto-center'),
             ttsBackend: this._container.querySelector('#settings-tts-backend'),
             fastApiUrl: this._container.querySelector('#settings-fastapi-url'),
             fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
@@ -500,6 +530,16 @@ export class SettingsModal {
         this._elements.lineSpacing.addEventListener('input', () => {
             const spacing = parseFloat(this._elements.lineSpacing.value);
             this._elements.lineSpacingValue.textContent = spacing.toFixed(1);
+        });
+
+        // Column count buttons
+        this._elements.columnCountButtons.addEventListener('click', (e) => {
+            const btn = e.target.closest('.column-count-btn');
+            if (!btn) return;
+            const count = parseInt(btn.dataset.columns, 10);
+            this._elements.columnCountButtons.querySelectorAll('.column-count-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            this._elements.columnCountValue.textContent = count;
         });
 
         // Media session volume slider
@@ -708,6 +748,8 @@ export class SettingsModal {
             marginSize: this._elements.margin.value,
             verticalMargin: parseInt(this._elements.verticalMargin.value),
             lineSpacing: parseFloat(this._elements.lineSpacing.value),
+            columnCount: parseInt(this._elements.columnCountButtons.querySelector('.column-count-btn.active')?.dataset.columns || '1', 10),
+            columnAutoCenter: this._elements.columnAutoCenter.checked,
             normalizeText: this._elements.normalizeText.checked,
             normalizeNumbers: this._elements.normalizeNumbers.checked,
             normalizeAbbreviations: this._elements.normalizeAbbreviations.checked,
@@ -854,6 +896,14 @@ export class SettingsModal {
         this._elements.verticalMarginValue.textContent = `${this._elements.verticalMargin.value}px`;
         this._elements.lineSpacing.value = this._settings.lineSpacing || 1.8;
         this._elements.lineSpacingValue.textContent = (this._settings.lineSpacing || 1.8).toFixed(1);
+
+        // Load column settings
+        const columnCount = this._settings.columnCount || 1;
+        this._elements.columnCountValue.textContent = columnCount;
+        this._elements.columnCountButtons.querySelectorAll('.column-count-btn').forEach(btn => {
+            btn.classList.toggle('active', parseInt(btn.dataset.columns, 10) === columnCount);
+        });
+        this._elements.columnAutoCenter.checked = this._settings.columnAutoCenter !== false;
 
         // Load normalization settings
         this._elements.normalizeText.checked = this._settings.normalizeText !== false;
