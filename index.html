@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>Reading Partner - EPUB TTS Reader</title>
+    <title>Reading Partner - TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-SyJ3iFzk.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-DBYHpqvM.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-C2Ox2x_9.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-_ghvgZEa.css">
 </head>
 <body>
     <div id="app">
@@ -14,7 +14,7 @@
         <div id="upload-screen" class="screen active">
             <div class="upload-container">
                 <h1>Reading Partner</h1>
-                <p class="subtitle">Upload an EPUB to start listening</p>
+                <p class="subtitle">Upload a file to start listening</p>
 
                 <!-- Q&A Setup Section -->
                 <div class="qa-setup" id="qa-setup">
@@ -46,17 +46,22 @@
                 </div>
 
                 <div class="upload-area" id="upload-area">
-                    <input type="file" id="file-input" accept=".epub" hidden>
+                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
                     <div class="upload-icon">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
                             <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
                         </svg>
                     </div>
-                    <p>Drag & drop EPUB file here</p>
+                    <p>Drag & drop your file here</p>
+                    <p class="upload-formats">
+                        <span class="format-badge format-epub">EPUB</span>
+                        <span class="format-badge format-md">MD</span>
+                        <span class="format-badge format-html">HTML</span>
+                    </p>
                     <p class="or">or</p>
-                    <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select eBook</button>
-                    <p class="upload-hint">Load from your device or Project Gutenberg</p>
+                    <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select File</button>
+                    <p class="upload-hint">Supports EPUB, Markdown, and HTML files</p>
                 </div>
 
                 <div id="loading-indicator" class="loading hidden">
