@@ -10,6 +10,7 @@ import { hashString } from '../utils/helpers.js';
 
 export class EPUBParser extends FormatParser {
     constructor() {
+        super();
         this._book = null;
     }
 

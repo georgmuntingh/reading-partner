@@ -103,32 +103,65 @@ export class MarkdownParser extends FormatParser {
     }
 
     /**
-     * Extract title from the first H1 heading
+     * Replace fenced code block contents with whitespace of equal length.
+     * This preserves character offsets so heading regex matches on the
+     * masked string correspond to the correct positions in the original.
+     * @param {string} text
+     * @returns {string}
+     */
+    _maskCodeBlocks(text) {
+        // Match fenced code blocks: ``` or ~~~ with optional language tag
+        return text.replace(/^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm, (match) => {
+            // Replace every character except newlines with a space
+            return match.replace(/[^\n]/g, ' ');
+        });
+    }
+
+    /**
+     * Extract title from the first H1 heading (ignoring code blocks)
      * @param {string} text
      * @returns {string|null}
      */
     _extractTitle(text) {
-        const match = text.match(/^#\s+(.+)$/m);
-        return match ? match[1].trim() : null;
+        const masked = this._maskCodeBlocks(text);
+        const match = masked.match(/^#\s+(.+)$/m);
+        if (!match) return null;
+        // Read the title from the original text at the same position
+        const titleStart = match.index + match[0].indexOf(match[1]);
+        return text.substring(titleStart, titleStart + match[1].length).trim();
     }
 
     /**
      * Split markdown text into chapters by heading level.
      * Strategy: split on H1 (#), or if no H1s exist, split on H2 (##), etc.
      * If no headings exist, treat the entire file as one chapter.
+     * Headings inside fenced code blocks are ignored.
      * @param {string} text
      * @returns {Array}
      */
     _splitIntoChapters(text) {
+        // Mask code blocks so # inside them doesn't match as headings
+        const masked = this._maskCodeBlocks(text);
+
         // Try heading levels 1 through 6
         for (let level = 1; level <= 6; level++) {
             const prefix = '#'.repeat(level);
             // Match lines that start with exactly `level` hashes followed by a space
             const regex = new RegExp(`^${prefix}\\s+(.+)$`, 'gm');
-            const matches = [...text.matchAll(regex)];
+            const matches = [...masked.matchAll(regex)];
 
             if (matches.length >= 2 || (matches.length === 1 && level === 1)) {
-                return this._splitByMatches(text, matches, prefix.length);
+                // Re-read match titles from original text (masked has spaces)
+                const originalMatches = matches.map(m => {
+                    const fullLine = text.substring(m.index, m.index + m[0].length);
+                    const titleMatch = fullLine.match(/^#{1,6}\s+(.+)$/);
+                    return {
+                        index: m.index,
+                        0: m[0],
+                        1: titleMatch ? titleMatch[1] : m[1]
+                    };
+                });
+                return this._splitByMatches(text, originalMatches, prefix.length);
             }
         }
 
