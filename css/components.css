@@ -1341,6 +1341,170 @@
     border-bottom: 1px solid var(--border-color);
 }
 
+/* ========== Chapter Overview ========== */
+.chapter-overview {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1000;
+    background-color: rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.chapter-overview.active {
+    opacity: 1;
+}
+
+.chapter-overview-overlay {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-color);
+}
+
+.chapter-overview-header {
+    flex-shrink: 0;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+    background-color: var(--surface-color);
+}
+
+.chapter-overview-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-sm);
+}
+
+.chapter-overview-title-row h2 {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-color);
+}
+
+.chapter-overview-close-btn {
+    color: var(--text-secondary);
+}
+
+.chapter-overview-chapter-select {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.chapter-overview-select {
+    flex: 1;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    font-size: var(--font-size-sm);
+    max-width: 100%;
+}
+
+.chapter-overview-grid {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-lg);
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--spacing-lg);
+    align-content: start;
+}
+
+.chapter-overview-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--text-secondary);
+    padding: var(--spacing-xl);
+}
+
+.chapter-overview-thumbnail {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-sm);
+    transition: all 0.15s ease;
+    position: relative;
+    background-color: var(--surface-color);
+    border: 2px solid transparent;
+}
+
+.chapter-overview-thumbnail:hover {
+    background-color: var(--bg-color);
+    border-color: var(--border-color);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.chapter-overview-thumbnail.current-page {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+.chapter-overview-thumbnail.read-page .chapter-overview-preview {
+    opacity: 0.6;
+}
+
+.chapter-overview-thumbnail.read-page .chapter-overview-page-label {
+    color: var(--text-secondary);
+}
+
+.chapter-overview-preview {
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: white;
+    border: 1px solid var(--border-color);
+}
+
+.chapter-overview-page-label {
+    margin-top: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+    color: var(--text-color);
+    font-weight: 500;
+}
+
+.chapter-overview-badges {
+    display: flex;
+    gap: 4px;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+}
+
+.chapter-overview-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background-color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.chapter-overview-badge.bookmark-badge {
+    color: var(--primary-color);
+}
+
+.chapter-overview-badge.highlight-badge {
+    color: var(--highlight-border);
+}
+
+/* Clone styles for thumbnails */
+.chapter-overview-clone {
+    /* Override max-width for thumbnail rendering */
+    max-width: none !important;
+}
+
 /* Column count buttons */
 .column-count-buttons {
     display: flex;

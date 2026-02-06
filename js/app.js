@@ -20,6 +20,7 @@ import { QuizOverlay } from './ui/quiz-overlay.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
+import { ChapterOverview } from './ui/chapter-overview.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -73,6 +74,7 @@ class ReadingPartnerApp {
         this._settingsModal = null;
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
+        this._chapterOverview = null;
     }
 
     /**
@@ -185,6 +187,22 @@ class ReadingPartnerApp {
                 onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId)
             }
         );
+
+        // Initialize Chapter Overview
+        this._chapterOverview = new ChapterOverview(
+            { container: document.getElementById('chapter-overview') },
+            {
+                onClose: () => this._closeChapterOverview(),
+                onPageSelect: (pageNum) => this._onOverviewPageSelect(pageNum),
+                onChapterSelect: (chapterIndex) => this._onOverviewChapterSelect(chapterIndex)
+            }
+        );
+
+        // Setup page number click to open chapter overview
+        this._elements.pageNumber = document.getElementById('page-number');
+        this._elements.pageNumber?.addEventListener('click', () => {
+            this._openChapterOverview();
+        });
 
         // Setup load book button (header button in reader)
         this._elements.loadBookBtn?.addEventListener('click', () => {
@@ -1393,6 +1411,72 @@ class ReadingPartnerApp {
 
         // Refresh quiz history in navigation panel
         this._loadQuizHistory();
+    }
+
+    // ========== Chapter Overview ==========
+
+    /**
+     * Open the chapter overview overlay
+     */
+    _openChapterOverview() {
+        if (!this._currentBook || !this._readerView) return;
+
+        // Set chapters and current chapter
+        this._chapterOverview.setChapters(this._currentBook.chapters, this._currentChapterIndex);
+
+        // Set page data from reader view
+        this._chapterOverview.setPageData({
+            textContentEl: this._readerView.getTextContentElement(),
+            totalPages: this._readerView.getTotalPages(),
+            pageHeight: this._readerView.getPageHeight(),
+            currentPage: this._readerView.getCurrentPage(),
+            currentSentenceIndex: this._readerView.getCurrentIndex(),
+            sentenceToPage: this._readerView.getSentenceToPageMap(),
+            pageToSentences: this._readerView.getPageToSentencesMap()
+        });
+
+        // Set bookmarks and highlights for current chapter
+        const bookmarks = (this._readingState?.getBookmarks() || []).filter(
+            b => b.chapterIndex === this._currentChapterIndex
+        );
+        const highlights = this._readingState?.getHighlightsForChapter(this._currentChapterIndex) || [];
+        this._chapterOverview.setBookmarks(bookmarks);
+        this._chapterOverview.setHighlights(highlights);
+
+        this._chapterOverview.show();
+    }
+
+    /**
+     * Close the chapter overview overlay
+     */
+    _closeChapterOverview() {
+        this._chapterOverview.hide();
+    }
+
+    /**
+     * Handle page selection from chapter overview
+     * @param {number} pageNum - 0-indexed page number
+     */
+    _onOverviewPageSelect(pageNum) {
+        this._chapterOverview.hide();
+        this._readerView.goToPage(pageNum);
+    }
+
+    /**
+     * Handle chapter selection from chapter overview
+     * @param {number} chapterIndex
+     */
+    async _onOverviewChapterSelect(chapterIndex) {
+        if (chapterIndex === this._currentChapterIndex) return;
+
+        // Close overview, navigate to chapter, then re-open
+        this._chapterOverview.hide();
+        await this._navigateToChapter(chapterIndex);
+
+        // Re-open overview after chapter loads
+        setTimeout(() => {
+            this._openChapterOverview();
+        }, 500);
     }
 
     /**
