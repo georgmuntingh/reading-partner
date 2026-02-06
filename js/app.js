@@ -3,7 +3,7 @@
  * EPUB TTS Reader with Q&A capabilities
  */
 
-import { epubParser } from './services/epub-parser.js';
+import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/parser-factory.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
@@ -695,14 +695,16 @@ class ReadingPartnerApp {
                 this._showTTSStatus('Loading new book...');
             } else {
                 loadingIndicator.classList.remove('hidden');
-                loadingText.textContent = 'Parsing EPUB...';
+                const fileType = detectFileType(file.name);
+                const label = fileType ? FORMAT_LABELS[fileType] : 'file';
+                loadingText.textContent = `Parsing ${label}...`;
             }
 
-            // Parse EPUB and save to storage
+            // Parse file and save to storage
             this._currentBook = await this._readingState.loadBook(file, source, existingBookId);
 
             if (!this._currentBook.chapters.length) {
-                throw new Error('No readable content found in this EPUB');
+                throw new Error('No readable content found in this file');
             }
 
             if (isFromReader) {
@@ -2306,6 +2308,7 @@ class ReadingPartnerApp {
             bookmarkCount: this._readingState.getBookmarks().length,
             highlightCount: this._readingState.getHighlights().length,
             source: this._currentBook.source || null,
+            fileType: this._currentBook.fileType || 'epub',
             timestamp: Date.now()
         };
 
@@ -2421,9 +2424,14 @@ class ReadingPartnerApp {
                 sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
             }
 
+            // Format badge
+            const ft = savedState.fileType || 'epub';
+            const ftLabel = FORMAT_LABELS[ft] || ft.toUpperCase();
+            const formatBadge = `<span class="format-badge format-badge-sm format-${ft}">${ftLabel}</span>`;
+
             banner.innerHTML = `
                 <div class="resume-info">
-                    <div class="resume-detail">"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                    <div class="resume-detail">${formatBadge} "${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
                     <div class="resume-time">Last read ${timeAgo}</div>
                 </div>
                 <button class="btn btn-primary btn-sm resume-btn">Resume</button>
@@ -2460,7 +2468,7 @@ class ReadingPartnerApp {
 
             let openError = null;
             try {
-                // Try to open the book from storage (includes EPUB data)
+                // Try to open the book from storage (includes file data)
                 this._currentBook = await this._readingState.openBook(bookId);
             } catch (error) {
                 openError = error;
@@ -2470,13 +2478,13 @@ class ReadingPartnerApp {
             if (openError) {
                 const source = savedState.source;
                 if (source?.type === 'gutenberg' && source.bookId) {
-                    console.log('EPUB data not in storage, re-downloading from Gutenberg...');
+                    console.log('File data not in storage, re-downloading from Gutenberg...');
                     loadingText.textContent = 'Re-downloading from Gutenberg...';
                     const { file, source: dlSource } = await this._downloadGutenbergEpub(source.bookId);
                     await this._loadBook(file, dlSource, bookId);
                     return; // _loadBook handles everything including screen switch
                 }
-                throw new Error(openError.message + '. Please load the EPUB file again.');
+                throw new Error(openError.message + '. Please load the file again.');
             }
 
             if (!this._currentBook.chapters.length) {

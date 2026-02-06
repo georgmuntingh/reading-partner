@@ -47,10 +47,10 @@ export class BookLoaderModal {
                             </div>
                             <div class="book-source-info">
                                 <h3>Load from Device</h3>
-                                <p>Select an EPUB file from your computer</p>
+                                <p>EPUB, Markdown, or HTML file</p>
                             </div>
                         </div>
-                        <input type="file" id="book-loader-file-input" accept=".epub" hidden>
+                        <input type="file" id="book-loader-file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
                         <button class="btn btn-primary book-source-btn" id="browse-local-btn">
                             Browse Files
                         </button>
