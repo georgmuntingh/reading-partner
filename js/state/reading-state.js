@@ -4,7 +4,7 @@
  */
 
 import { storage } from '../services/storage.js';
-import { epubParser } from '../services/epub-parser.js';
+import { getParser, getParserForFile, detectFileType } from '../services/parser-factory.js';
 
 export class ReadingStateController {
     /**
@@ -47,7 +47,8 @@ export class ReadingStateController {
      * @returns {Promise<Object>} book
      */
     async loadBook(file, source = null, existingBookId = null) {
-        const book = await epubParser.loadFromFile(file);
+        const parser = getParserForFile(file.name);
+        const book = await parser.loadFromFile(file);
 
         // Reuse existing ID (for re-downloads) or generate new one
         book.id = existingBookId || this._generateBookId(file.name);
@@ -100,11 +101,14 @@ export class ReadingStateController {
             throw new Error('Book not found');
         }
 
-        // Reinitialize epub.js from stored EPUB data
-        if (book.epubData) {
-            await epubParser.initFromArrayBuffer(book.epubData);
+        // Reinitialize parser from stored file data
+        const fileData = book.fileData || book.epubData; // backwards compat
+        const fileType = book.fileType || 'epub';
+        if (fileData) {
+            const parser = getParser(fileType);
+            await parser.initFromStoredData(fileData);
         } else {
-            throw new Error('EPUB data not available');
+            throw new Error('File data not available');
         }
 
         this._currentBook = book;
@@ -188,7 +192,9 @@ export class ReadingStateController {
             throw new Error('No book loaded');
         }
 
-        return await epubParser.loadChapter(this._currentBook, chapterIndex);
+        const fileType = this._currentBook.fileType || 'epub';
+        const parser = getParser(fileType);
+        return await parser.loadChapter(this._currentBook, chapterIndex);
     }
 
     /**

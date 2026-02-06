@@ -4,30 +4,11 @@
  * Uses lazy loading - chapters are parsed on-demand
  */
 
+import { FormatParser } from './format-parser.js';
 import { splitIntoSentences } from '../utils/sentence-splitter.js';
 import { hashString } from '../utils/helpers.js';
 
-/**
- * @typedef {Object} Chapter
- * @property {string} id
- * @property {string} title
- * @property {string} href
- * @property {string[]|null} sentences - null until loaded
- * @property {string|null} html - processed HTML with sentence spans, null until loaded
- * @property {boolean} loaded
- */
-
-/**
- * @typedef {Object} BookState
- * @property {string} id
- * @property {string} title
- * @property {string} author
- * @property {Blob|null} coverImage
- * @property {Chapter[]} chapters
- * @property {number} lastOpened
- */
-
-export class EPUBParser {
+export class EPUBParser extends FormatParser {
     constructor() {
         this._book = null;
     }
@@ -81,7 +62,8 @@ export class EPUBParser {
             author: metadata.author || 'Unknown Author',
             coverImage,
             chapters,
-            epubData: arrayBuffer, // Store for persistence across sessions
+            fileData: arrayBuffer, // Store for persistence across sessions
+            fileType: 'epub',
             lastOpened: Date.now()
         };
     }
@@ -91,7 +73,7 @@ export class EPUBParser {
      * @param {ArrayBuffer} arrayBuffer
      * @returns {Promise<void>}
      */
-    async initFromArrayBuffer(arrayBuffer) {
+    async initFromStoredData(arrayBuffer) {
         if (this._book) {
             this._book.destroy();
         }
