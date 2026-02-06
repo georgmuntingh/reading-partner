@@ -48,6 +48,14 @@ export class ReaderView {
         this._pageToSentences = new Map(); // Maps page number to array of sentence indices
         this._isCalculatingPages = false;
 
+        // Multi-column state
+        this._columnCount = 1;
+        this._columnAutoCenter = true;
+        this._multiColumnContainer = null;
+        this._columnViewports = [];
+        this._visiblePages = []; // Array of page numbers currently visible in columns
+        this._MIN_COLUMN_WIDTH = 250; // Minimum column width in px
+
         // Highlight toolbar
         this._highlightToolbar = null;
         this._createHighlightToolbar();
@@ -57,6 +65,234 @@ export class ReaderView {
         this._setupPageNavigation();
         this._setupResizeHandler();
         this._setupTextSelection();
+        this._setupMultiColumnContainer();
+    }
+
+    // ========== Multi-Column Support ==========
+
+    /**
+     * Create the multi-column container structure
+     */
+    _setupMultiColumnContainer() {
+        this._multiColumnContainer = document.createElement('div');
+        this._multiColumnContainer.className = 'multi-column-container multi-column-inactive';
+        // Insert after textContent in the page container
+        this._textContent.parentElement.insertBefore(this._multiColumnContainer, this._textContent.nextSibling);
+
+        // Event delegation for cloned column viewports
+        this._multiColumnContainer.addEventListener('click', (e) => {
+            // Check for image clicks
+            const imgEl = e.target.closest('img');
+            if (imgEl && imgEl.src) {
+                e.preventDefault();
+                this._onImageClick?.(imgEl.src, imgEl.alt || '');
+                return;
+            }
+
+            // Check for link clicks
+            const linkEl = e.target.closest('a[href]');
+            if (linkEl) {
+                const href = linkEl.getAttribute('href');
+                if (href) {
+                    if (href.startsWith('mailto:') || href.startsWith('tel:')) return;
+                    if (href.startsWith('http://') || href.startsWith('https://')) {
+                        e.preventDefault();
+                        window.open(href, '_blank', 'noopener,noreferrer');
+                        return;
+                    }
+                    e.preventDefault();
+                    this._onLinkClick?.(href);
+                    return;
+                }
+            }
+
+            // Check for sentence clicks
+            const sentenceEl = e.target.closest('.sentence');
+            if (sentenceEl && sentenceEl.dataset.index !== undefined) {
+                const index = parseInt(sentenceEl.dataset.index, 10);
+                this._onSentenceClick?.(index);
+            }
+        });
+    }
+
+    /**
+     * Set the number of visible columns
+     * @param {number} count - Number of columns (1-5)
+     */
+    setColumnCount(count) {
+        const newCount = Math.max(1, Math.min(5, count));
+        if (newCount === this._columnCount) return;
+        this._columnCount = newCount;
+        this._updateMultiColumnMode();
+    }
+
+    /**
+     * Set whether active page auto-centers in columns
+     * @param {boolean} autoCenter
+     */
+    setColumnAutoCenter(autoCenter) {
+        this._columnAutoCenter = autoCenter;
+        if (this._columnCount > 1) {
+            this._updateMultiColumnDisplay();
+        }
+    }
+
+    /**
+     * Get current column count
+     * @returns {number}
+     */
+    getColumnCount() {
+        return this._columnCount;
+    }
+
+    /**
+     * Calculate the effective number of columns based on available width
+     * @returns {number}
+     */
+    _getEffectiveColumnCount() {
+        if (this._columnCount <= 1) return 1;
+        const containerWidth = this._pageContainer?.clientWidth || window.innerWidth;
+        const maxColumns = Math.floor(containerWidth / this._MIN_COLUMN_WIDTH);
+        return Math.max(1, Math.min(this._columnCount, maxColumns));
+    }
+
+    /**
+     * Update multi-column mode (show/hide containers, recalculate display)
+     */
+    _updateMultiColumnMode() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+
+        if (effectiveColumns <= 1) {
+            // Single column mode: show textContent, hide multi-column container
+            this._textContent.classList.remove('multi-column-hidden');
+            this._multiColumnContainer.classList.add('multi-column-inactive');
+            this._columnViewports = [];
+            // Restore scroll position for current page
+            this._goToPageInternal(this._currentPage, false);
+        } else {
+            // Multi-column mode: hide textContent scrolling, show multi-column container
+            this._textContent.classList.add('multi-column-hidden');
+            this._multiColumnContainer.classList.remove('multi-column-inactive');
+            this._buildColumnViewports(effectiveColumns);
+            this._updateMultiColumnDisplay();
+        }
+        this._updatePageIndicator();
+        this._updatePageButtons();
+    }
+
+    /**
+     * Build the column viewport elements
+     * @param {number} count - Number of columns to build
+     */
+    _buildColumnViewports(count) {
+        this._multiColumnContainer.innerHTML = '';
+        this._columnViewports = [];
+
+        for (let i = 0; i < count; i++) {
+            const viewport = document.createElement('div');
+            viewport.className = 'column-viewport';
+
+            const content = document.createElement('div');
+            content.className = 'column-content';
+            viewport.appendChild(content);
+
+            this._multiColumnContainer.appendChild(viewport);
+            this._columnViewports.push({ viewport, content });
+        }
+    }
+
+    /**
+     * Compute which pages should be visible in each column, given the current page
+     * @returns {number[]} Array of page numbers for each column (-1 for empty/padding)
+     */
+    _computeVisiblePages() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns <= 1) return [this._currentPage];
+
+        const activePage = this._currentPage;
+        const pages = [];
+
+        if (this._columnAutoCenter) {
+            // Center the active page
+            let centerIndex;
+            if (effectiveColumns % 2 === 0) {
+                // Even: active page is center-left (index = n/2 - 1)
+                centerIndex = Math.floor(effectiveColumns / 2) - 1;
+            } else {
+                // Odd: active page is center (index = floor(n/2))
+                centerIndex = Math.floor(effectiveColumns / 2);
+            }
+
+            let startPage = activePage - centerIndex;
+
+            // Clamp: at start of chapter, shift right
+            if (startPage < 0) {
+                startPage = 0;
+            }
+            // Clamp: at end of chapter, shift left
+            if (startPage + effectiveColumns > this._totalPages) {
+                startPage = Math.max(0, this._totalPages - effectiveColumns);
+            }
+
+            for (let i = 0; i < effectiveColumns; i++) {
+                const p = startPage + i;
+                pages.push(p < this._totalPages ? p : -1);
+            }
+        } else {
+            // Non-centering mode: pages advance in groups
+            // The visible window starts at a multiple of effectiveColumns that contains activePage
+            const windowStart = Math.floor(activePage / effectiveColumns) * effectiveColumns;
+            for (let i = 0; i < effectiveColumns; i++) {
+                const p = windowStart + i;
+                pages.push(p < this._totalPages ? p : -1);
+            }
+        }
+
+        return pages;
+    }
+
+    /**
+     * Update the multi-column display with the correct pages
+     */
+    _updateMultiColumnDisplay() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns <= 1 || this._columnViewports.length === 0) return;
+
+        // Rebuild viewports if count changed (e.g., after resize)
+        if (this._columnViewports.length !== effectiveColumns) {
+            this._buildColumnViewports(effectiveColumns);
+        }
+
+        this._visiblePages = this._computeVisiblePages();
+
+        for (let i = 0; i < this._columnViewports.length; i++) {
+            const { viewport, content } = this._columnViewports[i];
+            const pageNum = this._visiblePages[i];
+
+            if (pageNum < 0 || pageNum >= this._totalPages) {
+                // Empty column
+                content.innerHTML = '';
+                viewport.classList.add('column-empty');
+                continue;
+            }
+
+            viewport.classList.remove('column-empty');
+
+            // Clone the master content and scroll to the right page
+            const clone = this._textContent.cloneNode(true);
+            clone.removeAttribute('id');
+            clone.classList.remove('multi-column-hidden');
+            clone.className = 'text-content column-page-content';
+            clone.style.position = 'relative';
+            clone.style.overflow = 'hidden';
+            clone.style.height = `${this._pageHeight}px`;
+
+            content.innerHTML = '';
+            content.appendChild(clone);
+
+            // Set scroll position after appending to DOM
+            clone.scrollTop = pageNum * this._pageHeight;
+        }
     }
 
     /**
@@ -162,6 +398,13 @@ export class ReaderView {
         this._html = html;
         this._currentPage = 0;
 
+        // For pagination calculation, ensure master content is visible
+        const needsMultiColumn = this._getEffectiveColumnCount() > 1;
+        this._textContent.classList.remove('multi-column-hidden');
+        if (this._multiColumnContainer) {
+            this._multiColumnContainer.classList.add('multi-column-inactive');
+        }
+
         // Clear existing content
         this._textContent.innerHTML = '';
 
@@ -191,9 +434,24 @@ export class ReaderView {
                 if (currentIndex > 0) {
                     const page = this._sentenceToPage.get(currentIndex);
                     if (page !== undefined) {
-                        this._goToPageInternal(page, false);
+                        this._currentPage = page;
                     }
                 }
+                // Set up multi-column mode if needed
+                if (needsMultiColumn) {
+                    this._textContent.classList.add('multi-column-hidden');
+                    this._multiColumnContainer?.classList.remove('multi-column-inactive');
+                    this._buildColumnViewports(this._getEffectiveColumnCount());
+                    this._updateMultiColumnDisplay();
+                } else {
+                    // Single column: scroll to the right page
+                    if (this._currentPage > 0) {
+                        const pageHeight = this._pageHeight || this._textContent.clientHeight;
+                        this._textContent.scrollTop = this._currentPage * pageHeight;
+                    }
+                }
+                this._updatePageIndicator();
+                this._updatePageButtons();
             });
         });
 
@@ -372,16 +630,31 @@ export class ReaderView {
      * Recalculate pages (e.g., after resize)
      */
     _recalculatePages() {
+        // For recalculation, temporarily show the master content so we can measure
+        const wasHidden = this._textContent.classList.contains('multi-column-hidden');
+        if (wasHidden) {
+            this._textContent.classList.remove('multi-column-hidden');
+            this._multiColumnContainer?.classList.add('multi-column-inactive');
+        }
+
         const currentSentence = this._currentIndex;
         this._calculatePages();
 
         // Navigate to page containing current sentence
         if (currentSentence >= 0) {
             const page = this._sentenceToPage.get(currentSentence);
-            if (page !== undefined && page !== this._currentPage) {
-                this._goToPageInternal(page, false);
+            if (page !== undefined) {
+                this._currentPage = page;
             }
         }
+
+        // Restore multi-column mode if needed
+        if (wasHidden) {
+            this._textContent.classList.add('multi-column-hidden');
+            this._multiColumnContainer?.classList.remove('multi-column-inactive');
+        }
+
+        this._updateMultiColumnMode();
     }
 
     /**
@@ -406,10 +679,16 @@ export class ReaderView {
 
         this._currentPage = targetPage;
 
-        // Scroll to the correct position using stored page height
-        const pageHeight = this._pageHeight || this._textContent.clientHeight;
-        const scrollTop = targetPage * pageHeight;
-        this._textContent.scrollTop = scrollTop;
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns > 1) {
+            // Multi-column mode: update column display
+            this._updateMultiColumnDisplay();
+        } else {
+            // Single column mode: scroll to the correct position
+            const pageHeight = this._pageHeight || this._textContent.clientHeight;
+            const scrollTop = targetPage * pageHeight;
+            this._textContent.scrollTop = scrollTop;
+        }
 
         this._updatePageIndicator();
         this._updatePageButtons();
@@ -420,7 +699,7 @@ export class ReaderView {
     }
 
     /**
-     * Go to next page
+     * Go to next page (advances by 1 page, shifting the multi-column view)
      * @returns {boolean} Whether navigation occurred
      */
     nextPage() {
@@ -432,7 +711,7 @@ export class ReaderView {
     }
 
     /**
-     * Go to previous page
+     * Go to previous page (goes back by 1 page, shifting the multi-column view)
      * @returns {boolean} Whether navigation occurred
      */
     previousPage() {
@@ -487,8 +766,20 @@ export class ReaderView {
      * Update page indicator display
      */
     _updatePageIndicator() {
-        if (this._pageCurrentEl) {
-            this._pageCurrentEl.textContent = (this._currentPage + 1).toString();
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns > 1 && this._visiblePages.length > 0) {
+            const validPages = this._visiblePages.filter(p => p >= 0);
+            if (validPages.length > 0) {
+                const first = Math.min(...validPages) + 1;
+                const last = Math.max(...validPages) + 1;
+                if (this._pageCurrentEl) {
+                    this._pageCurrentEl.textContent = first === last ? `${first}` : `${first}-${last}`;
+                }
+            }
+        } else {
+            if (this._pageCurrentEl) {
+                this._pageCurrentEl.textContent = (this._currentPage + 1).toString();
+            }
         }
         if (this._pageTotalEl) {
             this._pageTotalEl.textContent = this._totalPages.toString();
@@ -514,11 +805,34 @@ export class ReaderView {
      */
     _navigateToSentencePage(sentenceIndex) {
         const page = this._sentenceToPage.get(sentenceIndex);
-        if (page !== undefined && page !== this._currentPage) {
-            this._goToPageInternal(page, false);
-            return true;
+        if (page === undefined) return false;
+
+        const effectiveColumns = this._getEffectiveColumnCount();
+
+        if (effectiveColumns > 1 && this._columnAutoCenter) {
+            // In auto-center mode, always navigate to the sentence's page
+            // so it stays centered
+            if (page !== this._currentPage) {
+                this._goToPageInternal(page, false);
+                return true;
+            }
+            return false;
+        } else if (effectiveColumns > 1 && !this._columnAutoCenter) {
+            // In non-centering mode, only advance when sentence goes beyond visible pages
+            const visiblePages = this._computeVisiblePages();
+            if (!visiblePages.includes(page)) {
+                this._goToPageInternal(page, false);
+                return true;
+            }
+            return false;
+        } else {
+            // Single column mode
+            if (page !== this._currentPage) {
+                this._goToPageInternal(page, false);
+                return true;
+            }
+            return false;
         }
-        return false;
     }
 
     /**
@@ -527,7 +841,7 @@ export class ReaderView {
      * @param {boolean} [scroll=true] - Whether to navigate to page containing sentence
      */
     highlightSentence(index, scroll = true) {
-        // Remove previous highlight
+        // Remove previous highlight on master content
         const prevElement = this._textContent.querySelector(`.sentence[data-index="${this._currentIndex}"]`);
         if (prevElement) {
             prevElement.classList.remove('current');
@@ -536,16 +850,23 @@ export class ReaderView {
 
         this._currentIndex = index;
 
-        // Add new highlight
+        // Add new highlight on master content
         const element = this._textContent.querySelector(`.sentence[data-index="${index}"]`);
         if (element) {
             element.classList.remove('played');
             element.classList.add('current');
+        }
 
-            if (scroll) {
-                // Navigate to page containing this sentence
-                this._navigateToSentencePage(index);
+        if (scroll) {
+            // Navigate to page containing this sentence
+            const pageChanged = this._navigateToSentencePage(index);
+            // If page didn't change but we're in multi-column mode, still update display
+            if (!pageChanged && this._getEffectiveColumnCount() > 1) {
+                this._updateMultiColumnDisplay();
             }
+        } else if (this._getEffectiveColumnCount() > 1) {
+            // Even without scrolling, refresh the column display to show updated highlights
+            this._updateMultiColumnDisplay();
         }
     }
 
@@ -558,6 +879,9 @@ export class ReaderView {
             el.classList.remove('current', 'played');
         });
         this._currentIndex = -1;
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
     }
 
     /**
@@ -572,6 +896,9 @@ export class ReaderView {
                 el.classList.remove('played');
             }
         });
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
     }
 
     /**
@@ -591,9 +918,57 @@ export class ReaderView {
     }
 
     /**
+     * Get currently visible page numbers (for multi-column mode)
+     * @returns {number[]}
+     */
+    getVisiblePages() {
+        if (this._getEffectiveColumnCount() > 1) {
+            return this._visiblePages.filter(p => p >= 0);
+        }
+        return [this._currentPage];
+    }
+
+    /**
+     * Get the sentence-to-page mapping
+     * @returns {Map<number, number>}
+     */
+    getSentenceToPageMap() {
+        return this._sentenceToPage;
+    }
+
+    /**
+     * Get the page-to-sentences mapping
+     * @returns {Map<number, number[]>}
+     */
+    getPageToSentencesMap() {
+        return this._pageToSentences;
+    }
+
+    /**
+     * Get the computed page height
+     * @returns {number}
+     */
+    getPageHeight() {
+        return this._pageHeight;
+    }
+
+    /**
+     * Get the master text content element (for thumbnail rendering)
+     * @returns {HTMLElement}
+     */
+    getTextContentElement() {
+        return this._textContent;
+    }
+
+    /**
      * Show loading state
      */
     showLoading() {
+        // Show master content, hide multi-column
+        this._textContent.classList.remove('multi-column-hidden');
+        if (this._multiColumnContainer) {
+            this._multiColumnContainer.classList.add('multi-column-inactive');
+        }
         this._textContent.innerHTML = `
             <div class="loading">
                 <div class="spinner"></div>
@@ -611,6 +986,11 @@ export class ReaderView {
      * @param {string} message
      */
     showError(message) {
+        // Show master content, hide multi-column
+        this._textContent.classList.remove('multi-column-hidden');
+        if (this._multiColumnContainer) {
+            this._multiColumnContainer.classList.add('multi-column-inactive');
+        }
         this._textContent.innerHTML = `
             <div class="error-message">
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -679,7 +1059,7 @@ export class ReaderView {
         }
 
         const range = selection.getRangeAt(0);
-        if (!this._textContent.contains(range.startContainer) || !this._textContent.contains(range.endContainer)) {
+        if (!this._isWithinReaderContent(range.startContainer) || !this._isWithinReaderContent(range.endContainer)) {
             return null;
         }
 
@@ -759,10 +1139,20 @@ export class ReaderView {
 
         // Hide toolbar when clicking outside
         document.addEventListener('mousedown', (e) => {
-            if (!this._highlightToolbar.contains(e.target) && !this._textContent.contains(e.target)) {
+            if (!this._highlightToolbar.contains(e.target) && !this._isWithinReaderContent(e.target)) {
                 this._hideHighlightToolbar();
             }
         });
+    }
+
+    /**
+     * Check if a node is within our reader content (master or multi-column clones)
+     * @param {Node} node
+     * @returns {boolean}
+     */
+    _isWithinReaderContent(node) {
+        return this._textContent.contains(node) ||
+            (this._multiColumnContainer && this._multiColumnContainer.contains(node));
     }
 
     /**
@@ -779,9 +1169,9 @@ export class ReaderView {
             return;
         }
 
-        // Check if selection is within our text content
+        // Check if selection is within our text content (master or column clones)
         const range = selection.getRangeAt(0);
-        if (!this._textContent.contains(range.startContainer) || !this._textContent.contains(range.endContainer)) {
+        if (!this._isWithinReaderContent(range.startContainer) || !this._isWithinReaderContent(range.endContainer)) {
             return;
         }
 
@@ -811,7 +1201,7 @@ export class ReaderView {
      */
     _findSentenceElement(node) {
         let el = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
-        while (el && el !== this._textContent) {
+        while (el && el !== this._textContent && el !== this._multiColumnContainer) {
             if (el.classList && el.classList.contains('sentence') && el.dataset.index !== undefined) {
                 return el;
             }
@@ -876,12 +1266,17 @@ export class ReaderView {
 
         if (!text) return;
 
-        // Apply visual highlight immediately
+        // Apply visual highlight to master content
         this._applyHighlightToSentences(startIndex, endIndex, color);
 
         // Clear selection and hide toolbar
         selection.removeAllRanges();
         this._hideHighlightToolbar();
+
+        // Refresh multi-column display to show new highlight
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
 
         // Notify callback
         this._onHighlight?.(startIndex, endIndex, text, color);
@@ -943,6 +1338,11 @@ export class ReaderView {
                 highlight.color || 'yellow'
             );
         }
+
+        // Refresh multi-column display
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
     }
 
     /**
@@ -955,6 +1355,9 @@ export class ReaderView {
         }
         if (this._hideToolbarTimeout) {
             clearTimeout(this._hideToolbarTimeout);
+        }
+        if (this._multiColumnContainer) {
+            this._multiColumnContainer.remove();
         }
     }
 }

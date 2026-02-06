@@ -1341,6 +1341,40 @@
     border-bottom: 1px solid var(--border-color);
 }
 
+/* Column count buttons */
+.column-count-buttons {
+    display: flex;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-xs);
+}
+
+.column-count-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.column-count-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.column-count-btn.active {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: white;
+}
+
 /* Image Viewer Modal */
 .image-viewer-modal {
     position: fixed;

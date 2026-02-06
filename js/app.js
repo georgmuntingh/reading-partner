@@ -1516,6 +1516,14 @@ class ReadingPartnerApp {
         const hMargin = horizontalMap[settings.marginSize] || 50;
         const vMargin = settings.verticalMargin !== undefined ? settings.verticalMargin : 2;
         textContent.style.padding = `${vMargin}px ${hMargin}px`;
+
+        // Apply column layout settings
+        if (this._readerView) {
+            const columnCount = settings.columnCount || 1;
+            const columnAutoCenter = settings.columnAutoCenter !== false;
+            this._readerView.setColumnAutoCenter(columnAutoCenter);
+            this._readerView.setColumnCount(columnCount);
+        }
     }
 
     /**
@@ -1589,6 +1597,14 @@ class ReadingPartnerApp {
             }
             if (settings.lineSpacing) {
                 await storage.saveSetting('lineSpacing', settings.lineSpacing);
+            }
+
+            // Save column layout settings
+            if (settings.columnCount !== undefined) {
+                await storage.saveSetting('columnCount', settings.columnCount);
+            }
+            if (settings.columnAutoCenter !== undefined) {
+                await storage.saveSetting('columnAutoCenter', settings.columnAutoCenter);
             }
 
             // Save normalization settings
@@ -2104,6 +2120,12 @@ class ReadingPartnerApp {
             if (marginSize !== null) typographySettings.marginSize = marginSize;
             if (verticalMargin !== null) typographySettings.verticalMargin = verticalMargin;
             if (lineSpacing !== null) typographySettings.lineSpacing = lineSpacing;
+
+            // Load column layout settings
+            const columnCount = await storage.getSetting('columnCount');
+            const columnAutoCenter = await storage.getSetting('columnAutoCenter');
+            if (columnCount !== null) typographySettings.columnCount = columnCount;
+            if (columnAutoCenter !== null) typographySettings.columnAutoCenter = columnAutoCenter;
 
             // Load normalization settings
             const normalizeText = await storage.getSetting('normalizeText');
