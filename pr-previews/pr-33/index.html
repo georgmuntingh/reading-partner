@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Reading Partner - TTS Reader</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+  <script type="module" crossorigin src="/reading-partner/pr-previews/pr-33/assets/index-Dp67stTY.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/pr-previews/pr-33/assets/index-BYNoZctM.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Upload Screen -->
+        <div id="upload-screen" class="screen active">
+            <div class="upload-container">
+                <h1>Reading Partner</h1>
+                <p class="subtitle">Upload a file to start listening</p>
+
+                <!-- Q&A Setup Section -->
+                <div class="qa-setup" id="qa-setup">
+                    <details class="qa-setup-details" id="qa-setup-details">
+                        <summary class="qa-setup-summary">
+                            <span class="qa-setup-title">Q&A Settings (Optional)</span>
+                            <span class="qa-setup-status" id="qa-setup-status">Not configured</span>
+                        </summary>
+                        <div class="qa-setup-content">
+                            <div class="form-group">
+                                <label for="setup-api-key">OpenRouter API Key</label>
+                                <input type="password" id="setup-api-key" class="form-input" placeholder="sk-or-...">
+                                <p class="form-hint">
+                                    Get your free API key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+                                </p>
+                            </div>
+                            <div class="form-group">
+                                <label for="setup-model">AI Model</label>
+                                <select id="setup-model" class="form-select">
+                                    <optgroup label="Free Models" id="setup-free-models">
+                                    </optgroup>
+                                    <optgroup label="Paid Models" id="setup-paid-models">
+                                    </optgroup>
+                                </select>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" id="save-qa-setup-btn">Save Q&A Settings</button>
+                        </div>
+                    </details>
+                </div>
+
+                <div class="upload-area" id="upload-area">
+                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
+                    <div class="upload-icon">
+                        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                        </svg>
+                    </div>
+                    <p>Drag & drop your file here</p>
+                    <p class="upload-formats">
+                        <span class="format-badge format-epub">EPUB</span>
+                        <span class="format-badge format-md">MD</span>
+                        <span class="format-badge format-html">HTML</span>
+                    </p>
+                    <p class="or">or</p>
+                    <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select File</button>
+                    <p class="upload-hint">Supports EPUB, Markdown, and HTML files</p>
+                </div>
+
+                <div id="loading-indicator" class="loading hidden">
+                    <div class="spinner"></div>
+                    <p id="loading-text">Loading...</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reader Screen -->
+        <div id="reader-screen" class="screen">
+            <header class="reader-header">
+                <button class="btn-icon" id="menu-btn" aria-label="Menu">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="3" y1="12" x2="21" y2="12"/>
+                        <line x1="3" y1="6" x2="21" y2="6"/>
+                        <line x1="3" y1="18" x2="21" y2="18"/>
+                    </svg>
+                </button>
+                <div class="nav-history-buttons">
+                    <button class="btn-icon btn-nav-history" id="nav-back-btn" aria-label="Go back" title="Go back" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-nav-history" id="nav-forward-btn" aria-label="Go forward" title="Go forward" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-nav-history" id="nav-home-btn" aria-label="Go to current sentence" title="Go to current sentence" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                            <polyline points="9 22 9 12 15 12 15 22"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="book-title" id="book-title">Book Title</div>
+                <button class="btn-icon" id="load-book-btn" aria-label="Load new book" title="Load new book">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                        <line x1="12" y1="8" x2="12" y2="14"/>
+                        <line x1="9" y1="11" x2="15" y2="11"/>
+                    </svg>
+                </button>
+                <button class="btn-icon" id="settings-btn" aria-label="Settings">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+            </header>
+
+            <main class="reader-content" id="reader-content">
+                <div class="chapter-header-row">
+                    <div class="chapter-title" id="chapter-title">Chapter Title</div>
+                    <button class="page-number" id="page-number" aria-label="Open chapter overview" title="Chapter overview">
+                        <span id="page-current">1</span> / <span id="page-total">1</span>
+                    </button>
+                </div>
+                <div class="page-container" id="page-container">
+                    <button class="page-nav-btn page-nav-prev" id="page-prev-btn" aria-label="Previous page">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"/>
+                        </svg>
+                    </button>
+                    <div class="text-content" id="text-content">
+                        <!-- Sentences will be rendered here -->
+                    </div>
+                    <button class="page-nav-btn page-nav-next" id="page-next-btn" aria-label="Next page">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"/>
+                        </svg>
+                    </button>
+                </div>
+            </main>
+
+            <footer class="reader-controls">
+                <div class="controls-row">
+                    <button class="btn-icon" id="prev-chapter-btn" aria-label="Previous chapter" title="Previous chapter">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="19 20 9 12 19 4 19 20"/>
+                            <line x1="5" y1="19" x2="5" y2="5"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="prev-btn" aria-label="Previous sentence">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="19 20 9 12 19 4 19 20"/>
+                        </svg>
+                    </button>
+                    <button class="btn-play" id="play-btn" aria-label="Play">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" id="play-icon">
+                            <polygon points="5 3 19 12 5 21 5 3"/>
+                        </svg>
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" id="pause-icon" class="hidden">
+                            <rect x="6" y="4" width="4" height="16"/>
+                            <rect x="14" y="4" width="4" height="16"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="next-btn" aria-label="Next sentence">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 4 15 12 5 20 5 4"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="next-chapter-btn" aria-label="Next chapter" title="Next chapter">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 4 15 12 5 20 5 4"/>
+                            <line x1="19" y1="5" x2="19" y2="19"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-ask" id="ask-btn" aria-label="Ask a question" title="Ask a question">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-quiz" id="quiz-btn" aria-label="Start quiz" title="Start quiz">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>
+                            <rect x="9" y="3" width="6" height="4" rx="1"/>
+                            <path d="M9 14l2 2 4-4"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon" id="fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-expand-icon">
+                            <polyline points="15 3 21 3 21 9"/>
+                            <polyline points="9 21 3 21 3 15"/>
+                            <line x1="21" y1="3" x2="14" y2="10"/>
+                            <line x1="3" y1="21" x2="10" y2="14"/>
+                        </svg>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-collapse-icon" class="hidden">
+                            <polyline points="4 14 10 14 10 20"/>
+                            <polyline points="20 10 14 10 14 4"/>
+                            <line x1="14" y1="10" x2="21" y2="3"/>
+                            <line x1="3" y1="21" x2="10" y2="14"/>
+                        </svg>
+                    </button>
+                </div>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Navigation Panel -->
+    <div id="nav-overlay" class="nav-overlay"></div>
+    <div id="nav-panel" class="nav-panel">
+        <div class="nav-header">
+            <h2>Navigation</h2>
+            <button class="nav-close-btn" aria-label="Close navigation">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="nav-section">
+            <h3>Chapters</h3>
+            <div id="chapters-list" class="nav-list">
+                <!-- Chapters will be rendered here -->
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Bookmarks</h3>
+            <div id="bookmarks-list" class="nav-list">
+                <!-- Bookmarks will be rendered here -->
+            </div>
+            <button class="btn btn-primary" id="add-bookmark-btn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Bookmark
+            </button>
+        </div>
+
+        <div class="nav-section">
+            <h3>Highlights</h3>
+            <div id="highlights-list" class="nav-list">
+                <!-- Highlights will be rendered here -->
+            </div>
+        </div>
+
+        <div class="nav-section">
+            <h3>Quiz History</h3>
+            <div id="quiz-history-list" class="nav-list">
+                <!-- Quiz history will be rendered here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- TTS Status Overlay -->
+    <div id="tts-status" class="tts-status hidden">
+        <div class="spinner"></div>
+        <p>Loading TTS engine...</p>
+    </div>
+
+    <!-- Q&A Overlay -->
+    <div id="qa-overlay" class="qa-overlay hidden">
+        <!-- Content will be rendered by QAOverlay component -->
+    </div>
+
+    <!-- Quiz Overlay -->
+    <div id="quiz-overlay" class="quiz-overlay hidden">
+        <!-- Content will be rendered by QuizOverlay component -->
+    </div>
+
+    <!-- Chapter Overview Overlay -->
+    <div id="chapter-overview" class="chapter-overview hidden">
+        <!-- Content will be rendered by ChapterOverview component -->
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal-overlay hidden">
+        <!-- Content will be rendered by SettingsModal component -->
+    </div>
+
+    <!-- Book Loader Modal -->
+    <div id="book-loader-modal" class="modal-overlay hidden">
+        <!-- Content will be rendered by BookLoaderModal component -->
+    </div>
+
+    <!-- Image Viewer Modal -->
+    <div id="image-viewer-modal" class="image-viewer-modal hidden">
+        <!-- Content will be rendered by ImageViewerModal component -->
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+</body>
+</html>
