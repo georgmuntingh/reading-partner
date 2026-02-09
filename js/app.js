@@ -184,7 +184,8 @@ class ReadingPartnerApp {
             {
                 onClose: () => this._bookLoaderModal.hide(),
                 onFileSelect: (file, source) => this._handleFileSelect(file, source),
-                onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId)
+                onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId),
+                onResumeBook: (savedState) => this._handleResumeFromModal(savedState)
             }
         );
 
@@ -206,11 +207,13 @@ class ReadingPartnerApp {
 
         // Setup load book button (header button in reader)
         this._elements.loadBookBtn?.addEventListener('click', () => {
+            this._bookLoaderModal.setReadingHistory(this._loadCookieState());
             this._bookLoaderModal.show();
         });
 
         // Setup select ebook button (start screen)
         this._elements.selectEbookBtn?.addEventListener('click', () => {
+            this._bookLoaderModal.setReadingHistory(this._loadCookieState());
             this._bookLoaderModal.show();
         });
 
@@ -471,6 +474,31 @@ class ReadingPartnerApp {
             console.error('Failed to load from Gutenberg:', error);
             this._bookLoaderModal.showError(error.message);
         }
+    }
+
+    /**
+     * Handle resume book from the book loader modal
+     * @param {Object} savedState - Cookie state with bookId, source, etc.
+     */
+    async _handleResumeFromModal(savedState) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+
+        if (isFromReader) {
+            this._pause();
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
+            }
+            this._quizController?.resetSession();
+            this._currentChapterIndex = 0;
+        }
+
+        this._bookLoaderModal.hide();
+        await this._resumeLastBook(savedState);
     }
 
     /**
