@@ -21,6 +21,7 @@ import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
 import { ChapterOverview } from './ui/chapter-overview.js';
+import { NavigationHistory } from './state/navigation-history.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -75,6 +76,10 @@ class ReadingPartnerApp {
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
         this._chapterOverview = null;
+
+        // Navigation history (back/forward)
+        this._navigationHistory = null;
+        this._viewDecoupled = false; // When true, playback doesn't auto-scroll the view
     }
 
     /**
@@ -122,6 +127,13 @@ class ReadingPartnerApp {
                 onHighlightDelete: (id) => this._deleteHighlight(id)
             }
         );
+
+        // Initialize navigation history (back/forward)
+        this._navigationHistory = new NavigationHistory({
+            maxDepth: 50,
+            onChange: () => this._updateNavHistoryButtons()
+        });
+        this._setupNavHistoryButtons();
 
         // Initialize Q&A Overlay
         this._qaOverlay = new QAOverlay(
@@ -340,6 +352,11 @@ class ReadingPartnerApp {
 
             // Header actions
             loadBookBtn: document.getElementById('load-book-btn'),
+
+            // Navigation history buttons
+            navBackBtn: document.getElementById('nav-back-btn'),
+            navForwardBtn: document.getElementById('nav-forward-btn'),
+            navHomeBtn: document.getElementById('nav-home-btn'),
 
             // Status
             ttsStatus: document.getElementById('tts-status')
@@ -751,6 +768,10 @@ class ReadingPartnerApp {
                 this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
             }
 
+            // Clear navigation history for new book
+            this._navigationHistory?.clear();
+            this._viewDecoupled = false;
+
             // Get saved position
             const position = this._readingState.getCurrentPosition();
 
@@ -823,7 +844,10 @@ class ReadingPartnerApp {
         // Initialize AudioController
         this._audioController = new AudioController({
             onSentenceChange: (index) => {
-                this._readerView.highlightSentence(index);
+                // When view is decoupled (user pressed back/forward),
+                // update the highlight on master content but don't scroll
+                const scroll = !this._viewDecoupled;
+                this._readerView.highlightSentence(index, scroll);
                 // Auto-save position during playback
                 if (this._readingState) {
                     this._readingState.updateSentencePosition(index);
@@ -1914,12 +1938,137 @@ class ReadingPartnerApp {
         this._elements.ttsStatus.classList.add('hidden');
     }
 
+    // ========== Navigation History (Back/Forward/Home) ==========
+
+    /**
+     * Setup event listeners for navigation history buttons
+     */
+    _setupNavHistoryButtons() {
+        this._elements.navBackBtn?.addEventListener('click', () => this._goBack());
+        this._elements.navForwardBtn?.addEventListener('click', () => this._goForward());
+        this._elements.navHomeBtn?.addEventListener('click', () => this._goHome());
+    }
+
+    /**
+     * Update the enabled/disabled state of back/forward/home buttons
+     */
+    _updateNavHistoryButtons() {
+        const { navBackBtn, navForwardBtn, navHomeBtn } = this._elements;
+        if (navBackBtn) {
+            navBackBtn.disabled = !this._navigationHistory?.canGoBack();
+        }
+        if (navForwardBtn) {
+            navForwardBtn.disabled = !this._navigationHistory?.canGoForward();
+        }
+        if (navHomeBtn) {
+            navHomeBtn.disabled = !this._viewDecoupled;
+        }
+    }
+
+    /**
+     * Navigate back in history.
+     * Decouples the view from the active playback sentence.
+     */
+    async _goBack() {
+        if (!this._navigationHistory?.canGoBack()) return;
+
+        const currentPage = this._readerView?.getCurrentPage() ?? 0;
+        const entry = this._navigationHistory.goBack(
+            this._currentChapterIndex,
+            this._audioController?.getCurrentIndex() ?? 0,
+            currentPage
+        );
+        if (!entry) return;
+
+        // Decouple view from playback
+        this._viewDecoupled = true;
+
+        // Navigate to the history entry without pushing history
+        if (entry.chapterIndex !== this._currentChapterIndex) {
+            // Need to load a different chapter
+            await this._loadChapter(entry.chapterIndex, false);
+            this._navigation.setCurrentChapter(entry.chapterIndex);
+        }
+
+        // Go to the stored page (after layout completes for chapter loads)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this._readerView?.goToPage(entry.page);
+            });
+        });
+
+        this._updateNavHistoryButtons();
+    }
+
+    /**
+     * Navigate forward in history.
+     * Keeps the view decoupled from the active playback sentence.
+     */
+    async _goForward() {
+        if (!this._navigationHistory?.canGoForward()) return;
+
+        const currentPage = this._readerView?.getCurrentPage() ?? 0;
+        const entry = this._navigationHistory.goForward(
+            this._currentChapterIndex,
+            this._audioController?.getCurrentIndex() ?? 0,
+            currentPage
+        );
+        if (!entry) return;
+
+        // Keep view decoupled
+        this._viewDecoupled = true;
+
+        // Navigate to the history entry without pushing history
+        if (entry.chapterIndex !== this._currentChapterIndex) {
+            await this._loadChapter(entry.chapterIndex, false);
+            this._navigation.setCurrentChapter(entry.chapterIndex);
+        }
+
+        // Go to the stored page (after layout completes for chapter loads)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this._readerView?.goToPage(entry.page);
+            });
+        });
+
+        this._updateNavHistoryButtons();
+    }
+
+    /**
+     * Re-couple the view with the active playback sentence (home button).
+     * Navigates back to the chapter/sentence currently being played.
+     */
+    async _goHome() {
+        if (!this._viewDecoupled) return;
+
+        this._viewDecoupled = false;
+
+        // Get the current playback position
+        const position = this._readingState?.getCurrentPosition();
+        if (!position) {
+            this._updateNavHistoryButtons();
+            return;
+        }
+
+        // Load the chapter if different from what's currently displayed
+        if (position.chapterIndex !== this._currentChapterIndex) {
+            await this._loadChapter(position.chapterIndex, false);
+            this._navigation.setCurrentChapter(position.chapterIndex);
+            this._currentChapterIndex = position.chapterIndex;
+        }
+
+        // Scroll to the current sentence
+        this._readerView?.highlightSentence(position.sentenceIndex, true);
+
+        this._updateNavHistoryButtons();
+    }
+
     /**
      * Navigate to the previous chapter
      */
     async _navigateToPrevChapter() {
         if (!this._currentBook || this._currentChapterIndex <= 0) return;
-        await this._navigateToChapter(this._currentChapterIndex - 1);
+        await this._navigateToChapter(this._currentChapterIndex - 1, { pushHistory: true });
     }
 
     /**
@@ -1927,16 +2076,31 @@ class ReadingPartnerApp {
      */
     async _navigateToNextChapter() {
         if (!this._currentBook || this._currentChapterIndex >= this._currentBook.chapters.length - 1) return;
-        await this._navigateToChapter(this._currentChapterIndex + 1);
+        await this._navigateToChapter(this._currentChapterIndex + 1, { pushHistory: true });
     }
 
     /**
      * Navigate to a chapter
      * @param {number} chapterIndex
      */
-    async _navigateToChapter(chapterIndex) {
+    async _navigateToChapter(chapterIndex, { pushHistory = true } = {}) {
         if (chapterIndex === this._currentChapterIndex) {
             return;
+        }
+
+        // Push current position to history before navigating
+        if (pushHistory && this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+
+        // Re-couple view on explicit navigation
+        if (pushHistory) {
+            this._viewDecoupled = false;
+            this._updateNavHistoryButtons();
         }
 
         // Pause playback
@@ -1961,6 +2125,19 @@ class ReadingPartnerApp {
      * @param {Object} bookmark
      */
     async _navigateToBookmark(bookmark) {
+        // Push current position to history before navigating
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+
+        // Re-couple view on explicit navigation
+        this._viewDecoupled = false;
+        this._updateNavHistoryButtons();
+
         // Pause playback
         this._pause();
 
@@ -1992,6 +2169,16 @@ class ReadingPartnerApp {
 
         if (!filePart && fragment) {
             // Same-chapter fragment link (e.g., #footnote-1)
+            // Push current position to history before scrolling
+            if (this._navigationHistory) {
+                this._navigationHistory.pushCurrentPosition(
+                    this._currentChapterIndex,
+                    this._audioController?.getCurrentIndex() ?? 0,
+                    this._readerView?.getCurrentPage() ?? 0
+                );
+            }
+            this._viewDecoupled = true;
+            this._updateNavHistoryButtons();
             this._readerView.scrollToFragment(fragment);
             return;
         }
@@ -2008,6 +2195,17 @@ class ReadingPartnerApp {
             return;
         }
 
+        // Push current position to history before navigating
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+        this._viewDecoupled = true;
+        this._updateNavHistoryButtons();
+
         // Navigate to the target chapter if it's different from the current one
         if (targetIndex !== this._currentChapterIndex) {
             this._pause();
@@ -2015,7 +2213,7 @@ class ReadingPartnerApp {
             await this._loadChapter(targetIndex, false);
             this._navigation.setCurrentChapter(targetIndex);
             this._audioController.goToSentence(0);
-            this._readerView.highlightSentence(0);
+            this._readerView.highlightSentence(0, false);
         }
 
         // Scroll to the fragment target after rendering completes
@@ -2124,6 +2322,19 @@ class ReadingPartnerApp {
      * @param {Object} highlight
      */
     async _navigateToHighlight(highlight) {
+        // Push current position to history before navigating
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+
+        // Re-couple view on explicit navigation
+        this._viewDecoupled = false;
+        this._updateNavHistoryButtons();
+
         // Pause playback
         this._pause();
 
@@ -2529,6 +2740,10 @@ class ReadingPartnerApp {
                 this._controls.setEnabled(true);
                 this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
             }
+
+            // Clear navigation history for resumed book
+            this._navigationHistory?.clear();
+            this._viewDecoupled = false;
 
             // Get saved position
             const position = this._readingState.getCurrentPosition();
