@@ -2077,9 +2077,14 @@ class ReadingPartnerApp {
 
         // Load the playback chapter if different from what's currently displayed
         if (chapterIndex !== this._currentChapterIndex) {
-            // Load in non-view-only mode so the audio controller gets the right sentences
-            await this._loadChapter(chapterIndex, false);
+            // Load view-only first (to render the chapter without resetting audio),
+            // then restore the audio controller to the correct sentence
+            await this._loadChapter(chapterIndex, false, { viewOnly: true });
             this._navigation.setCurrentChapter(chapterIndex);
+
+            // Re-sync audio controller with the displayed chapter's sentences
+            const sentences = this._currentBook.chapters[chapterIndex].sentences || [];
+            this._audioController.setSentences(sentences, sentenceIndex);
         }
 
         // Scroll to the current playback sentence
