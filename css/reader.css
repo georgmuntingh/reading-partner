@@ -16,6 +16,24 @@
     z-index: 100;
 }
 
+/* Navigation history buttons (back/forward/home) */
+.nav-history-buttons {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-shrink: 0;
+}
+
+.btn-nav-history {
+    width: 36px;
+    height: 36px;
+    color: var(--text-color);
+}
+
+.btn-nav-history:disabled {
+    opacity: 0.25;
+}
+
 .book-title {
     flex: 1;
     text-align: center;
