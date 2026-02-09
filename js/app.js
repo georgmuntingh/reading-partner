@@ -80,6 +80,11 @@ class ReadingPartnerApp {
         // Navigation history (back/forward)
         this._navigationHistory = null;
         this._viewDecoupled = false; // When true, playback doesn't auto-scroll the view
+
+        // Playback position (tracks where audio is actually playing,
+        // independent of what chapter is currently displayed)
+        this._playbackChapterIndex = 0;
+        this._playbackSentenceIndex = 0;
     }
 
     /**
@@ -790,6 +795,7 @@ class ReadingPartnerApp {
             if (position.sentenceIndex > 0) {
                 this._audioController.goToSentence(position.sentenceIndex);
                 this._readerView.highlightSentence(position.sentenceIndex);
+                this._playbackSentenceIndex = position.sentenceIndex;
             }
 
             // Switch to reader screen
@@ -844,10 +850,18 @@ class ReadingPartnerApp {
         // Initialize AudioController
         this._audioController = new AudioController({
             onSentenceChange: (index) => {
+                // Track playback position
+                this._playbackSentenceIndex = index;
+
                 // When view is decoupled (user pressed back/forward),
-                // update the highlight on master content but don't scroll
-                const scroll = !this._viewDecoupled;
-                this._readerView.highlightSentence(index, scroll);
+                // only update highlight if we're displaying the playback chapter
+                if (this._viewDecoupled) {
+                    if (this._currentChapterIndex === this._playbackChapterIndex) {
+                        this._readerView.highlightSentence(index, false);
+                    }
+                } else {
+                    this._readerView.highlightSentence(index, true);
+                }
                 // Auto-save position during playback
                 if (this._readingState) {
                     this._readingState.updateSentencePosition(index);
@@ -998,7 +1012,7 @@ class ReadingPartnerApp {
      * @param {number} chapterIndex
      * @param {boolean} [autoSkipEmpty=true] - Skip to next chapter if empty
      */
-    async _loadChapter(chapterIndex, autoSkipEmpty = true) {
+    async _loadChapter(chapterIndex, autoSkipEmpty = true, { viewOnly = false } = {}) {
         if (!this._currentBook || chapterIndex < 0 || chapterIndex >= this._currentBook.chapters.length) {
             return;
         }
@@ -1030,7 +1044,7 @@ class ReadingPartnerApp {
             if (!hasVisualContent) {
                 console.log(`Chapter ${chapterIndex} is empty, skipping to next...`);
                 if (chapterIndex < this._currentBook.chapters.length - 1) {
-                    return this._loadChapter(chapterIndex + 1, autoSkipEmpty);
+                    return this._loadChapter(chapterIndex + 1, autoSkipEmpty, { viewOnly });
                 } else {
                     this._readerView.showError('No readable content found');
                     return;
@@ -1051,8 +1065,13 @@ class ReadingPartnerApp {
             this._readerView.setHighlights(chapterHighlights);
         }
 
-        // Update audio controller
-        this._audioController.setSentences(sentences, 0);
+        // Only update audio controller when not in view-only mode
+        // (view-only is used for back/forward/link navigation where playback continues)
+        if (!viewOnly) {
+            this._audioController.setSentences(sentences, 0);
+            this._playbackChapterIndex = chapterIndex;
+            this._playbackSentenceIndex = 0;
+        }
 
         // Update Media Session metadata for headset controls
         this._updateMediaSessionMetadata();
@@ -1062,18 +1081,27 @@ class ReadingPartnerApp {
      * Handle chapter end
      */
     async _onChapterEnd() {
+        // Use playback chapter (not displayed chapter, which may differ when view is decoupled)
+        const playbackChapter = this._playbackChapterIndex;
+
         // Auto-advance to next chapter if available
-        if (this._currentChapterIndex < this._currentBook.chapters.length - 1) {
-            const nextChapterIndex = this._currentChapterIndex + 1;
+        if (playbackChapter < this._currentBook.chapters.length - 1) {
+            const nextChapterIndex = playbackChapter + 1;
 
             // Update reading state
             this._readingState.goToChapter(nextChapterIndex, 0);
 
-            // Load next chapter
-            await this._loadChapter(nextChapterIndex);
-
-            // Update navigation
-            this._navigation.setCurrentChapter(nextChapterIndex);
+            if (this._viewDecoupled) {
+                // View is decoupled: load audio for next chapter without changing the display
+                const sentences = await this._readingState.loadChapter(nextChapterIndex);
+                this._audioController.setSentences(sentences, 0);
+                this._playbackChapterIndex = nextChapterIndex;
+                this._playbackSentenceIndex = 0;
+            } else {
+                // Normal case: load next chapter (updates both display and audio)
+                await this._loadChapter(nextChapterIndex);
+                this._navigation.setCurrentChapter(nextChapterIndex);
+            }
 
             // Auto-play next chapter
             this._play();
@@ -1983,10 +2011,9 @@ class ReadingPartnerApp {
         // Decouple view from playback
         this._viewDecoupled = true;
 
-        // Navigate to the history entry without pushing history
+        // Navigate to the history entry in view-only mode (don't touch audio)
         if (entry.chapterIndex !== this._currentChapterIndex) {
-            // Need to load a different chapter
-            await this._loadChapter(entry.chapterIndex, false);
+            await this._loadChapter(entry.chapterIndex, false, { viewOnly: true });
             this._navigation.setCurrentChapter(entry.chapterIndex);
         }
 
@@ -2018,9 +2045,9 @@ class ReadingPartnerApp {
         // Keep view decoupled
         this._viewDecoupled = true;
 
-        // Navigate to the history entry without pushing history
+        // Navigate to the history entry in view-only mode (don't touch audio)
         if (entry.chapterIndex !== this._currentChapterIndex) {
-            await this._loadChapter(entry.chapterIndex, false);
+            await this._loadChapter(entry.chapterIndex, false, { viewOnly: true });
             this._navigation.setCurrentChapter(entry.chapterIndex);
         }
 
@@ -2043,22 +2070,20 @@ class ReadingPartnerApp {
 
         this._viewDecoupled = false;
 
-        // Get the current playback position
-        const position = this._readingState?.getCurrentPosition();
-        if (!position) {
-            this._updateNavHistoryButtons();
-            return;
+        // Use the tracked playback position (not reading state, which may
+        // have been updated by view-only chapter loads)
+        const chapterIndex = this._playbackChapterIndex;
+        const sentenceIndex = this._playbackSentenceIndex;
+
+        // Load the playback chapter if different from what's currently displayed
+        if (chapterIndex !== this._currentChapterIndex) {
+            // Load in non-view-only mode so the audio controller gets the right sentences
+            await this._loadChapter(chapterIndex, false);
+            this._navigation.setCurrentChapter(chapterIndex);
         }
 
-        // Load the chapter if different from what's currently displayed
-        if (position.chapterIndex !== this._currentChapterIndex) {
-            await this._loadChapter(position.chapterIndex, false);
-            this._navigation.setCurrentChapter(position.chapterIndex);
-            this._currentChapterIndex = position.chapterIndex;
-        }
-
-        // Scroll to the current sentence
-        this._readerView?.highlightSentence(position.sentenceIndex, true);
+        // Scroll to the current playback sentence
+        this._readerView?.highlightSentence(sentenceIndex, true);
 
         this._updateNavHistoryButtons();
     }
@@ -2150,9 +2175,11 @@ class ReadingPartnerApp {
             this._navigation.setCurrentChapter(bookmark.chapterIndex);
         }
 
-        // Go to sentence
+        // Go to sentence and update playback tracking
         this._audioController.goToSentence(bookmark.sentenceIndex);
         this._readerView.highlightSentence(bookmark.sentenceIndex);
+        this._playbackChapterIndex = bookmark.chapterIndex;
+        this._playbackSentenceIndex = bookmark.sentenceIndex;
     }
 
     /**
@@ -2208,12 +2235,9 @@ class ReadingPartnerApp {
 
         // Navigate to the target chapter if it's different from the current one
         if (targetIndex !== this._currentChapterIndex) {
-            this._pause();
-            this._readingState.goToChapter(targetIndex, 0);
-            await this._loadChapter(targetIndex, false);
+            // Load chapter in view-only mode: don't pause or change audio state
+            await this._loadChapter(targetIndex, false, { viewOnly: true });
             this._navigation.setCurrentChapter(targetIndex);
-            this._audioController.goToSentence(0);
-            this._readerView.highlightSentence(0, false);
         }
 
         // Scroll to the fragment target after rendering completes
@@ -2345,9 +2369,11 @@ class ReadingPartnerApp {
             this._navigation.setCurrentChapter(highlight.chapterIndex);
         }
 
-        // Go to the highlighted sentence
+        // Go to the highlighted sentence and update playback tracking
         this._audioController.goToSentence(highlight.startSentenceIndex);
         this._readerView.highlightSentence(highlight.startSentenceIndex);
+        this._playbackChapterIndex = highlight.chapterIndex;
+        this._playbackSentenceIndex = highlight.startSentenceIndex;
     }
 
     /**
@@ -2763,6 +2789,7 @@ class ReadingPartnerApp {
             if (position.sentenceIndex > 0) {
                 this._audioController.goToSentence(position.sentenceIndex);
                 this._readerView.highlightSentence(position.sentenceIndex);
+                this._playbackSentenceIndex = position.sentenceIndex;
             }
 
             // Switch to reader screen
