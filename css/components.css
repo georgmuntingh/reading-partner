@@ -1697,6 +1697,47 @@
     max-width: 520px;
 }
 
+/* Continue reading section in book loader modal */
+.modal-continue-reading {
+    margin-bottom: var(--spacing-lg);
+}
+
+.modal-continue-reading-title {
+    font-weight: 600;
+    font-size: var(--font-size-base);
+    color: var(--text-color);
+    margin-bottom: var(--spacing-sm);
+}
+
+.modal-continue-reading-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-resume-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-md);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--surface-color);
+    border: 1px solid var(--primary-color);
+}
+
+.modal-resume-item:first-child {
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
+}
+
+.modal-resume-item:last-child {
+    border-bottom-left-radius: var(--radius-md);
+    border-bottom-right-radius: var(--radius-md);
+}
+
+.modal-resume-item + .modal-resume-item {
+    border-top: none;
+}
+
 .book-source-option {
     padding: var(--spacing-lg);
     border: 1px solid var(--border-color);

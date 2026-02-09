@@ -3,6 +3,8 @@
  * Modal for selecting ebooks from local filesystem or Project Gutenberg
  */
 
+import { FORMAT_LABELS } from '../services/parser-factory.js';
+
 export class BookLoaderModal {
     /**
      * @param {Object} options
@@ -11,10 +13,12 @@ export class BookLoaderModal {
      * @param {() => void} callbacks.onClose - Close modal
      * @param {(file: File, source: Object) => void} callbacks.onFileSelect - File selected from device
      * @param {(bookId: string) => void} callbacks.onGutenbergLoad - Load from Gutenberg
+     * @param {(savedState: Object) => void} callbacks.onResumeBook - Resume a previously read book
      */
     constructor(options, callbacks) {
         this._container = options.container;
         this._callbacks = callbacks;
+        this._readingHistory = [];
 
         this._buildUI();
         this._setupEventListeners();
@@ -37,6 +41,9 @@ export class BookLoaderModal {
                 </div>
 
                 <div class="modal-content">
+                    <!-- Continue Reading Section (populated dynamically) -->
+                    <div id="modal-continue-reading" class="modal-continue-reading hidden"></div>
+
                     <!-- Local File Option -->
                     <div class="book-source-option" id="local-file-option">
                         <div class="book-source-header">
@@ -128,6 +135,7 @@ export class BookLoaderModal {
         this._elements = {
             modal: this._container.querySelector('.modal'),
             closeBtn: this._container.querySelector('.modal-close-btn'),
+            continueReading: this._container.querySelector('#modal-continue-reading'),
             fileInput: this._container.querySelector('#book-loader-file-input'),
             browseLocalBtn: this._container.querySelector('#browse-local-btn'),
             // Search elements
@@ -410,6 +418,96 @@ export class BookLoaderModal {
     }
 
     /**
+     * Set the reading history to display in the "Continue reading" section
+     * @param {Object[]} history - Array of saved book states
+     */
+    setReadingHistory(history) {
+        this._readingHistory = history || [];
+    }
+
+    /**
+     * Render the "Continue reading" section based on current history
+     */
+    _renderContinueReading() {
+        const container = this._elements.continueReading;
+        if (!this._readingHistory.length) {
+            container.classList.add('hidden');
+            container.innerHTML = '';
+            return;
+        }
+
+        container.classList.remove('hidden');
+
+        let html = '<div class="modal-continue-reading-title">Continue reading</div>';
+        html += '<div class="modal-continue-reading-list">';
+
+        for (const savedState of this._readingHistory) {
+            if (!savedState.bookId) continue;
+
+            const timeAgo = this._formatTimeAgo(savedState.timestamp);
+            const ft = savedState.fileType || 'epub';
+            const ftLabel = FORMAT_LABELS[ft] || ft.toUpperCase();
+            const formatBadge = `<span class="format-badge format-badge-sm format-${ft}">${ftLabel}</span>`;
+
+            let sourceText = '';
+            if (savedState.source?.type === 'gutenberg') {
+                sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
+            }
+
+            const stats = [];
+            if (savedState.bookmarkCount > 0) {
+                stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
+            }
+            if (savedState.highlightCount > 0) {
+                stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
+            }
+            const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
+
+            html += `
+                <div class="modal-resume-item" data-book-id="${this._escapeHtml(savedState.bookId)}">
+                    <div class="resume-info">
+                        <div class="resume-detail">${formatBadge} "${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                        <div class="resume-time">Last read ${timeAgo}</div>
+                    </div>
+                    <button class="btn btn-primary btn-sm resume-btn">Resume</button>
+                </div>
+            `;
+        }
+
+        html += '</div>';
+        container.innerHTML = html;
+
+        // Attach click handlers
+        container.querySelectorAll('.modal-resume-item .resume-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const bookId = btn.closest('.modal-resume-item').dataset.bookId;
+                const savedState = this._readingHistory.find(s => s.bookId === bookId);
+                if (savedState) {
+                    this._callbacks.onResumeBook?.(savedState);
+                }
+            });
+        });
+    }
+
+    /**
+     * Format a timestamp as a relative time string
+     * @param {number} timestamp
+     * @returns {string}
+     */
+    _formatTimeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return 'just now';
+        const minutes = Math.floor(seconds / 60);
+        if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+        const days = Math.floor(hours / 24);
+        if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
+        const months = Math.floor(days / 30);
+        return `${months} month${months > 1 ? 's' : ''} ago`;
+    }
+
+    /**
      * Escape HTML to prevent XSS
      * @param {string} str
      * @returns {string}
@@ -430,6 +528,9 @@ export class BookLoaderModal {
         this._clearSearchResults();
         this._hideLoading();
         this._hideError();
+
+        // Render the continue reading section
+        this._renderContinueReading();
 
         // Remove hidden first, then add active after a frame to trigger transition
         this._container.classList.remove('hidden');
