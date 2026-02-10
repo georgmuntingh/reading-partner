@@ -628,7 +628,7 @@ class ReadingPartnerApp {
                     } else {
                         const movedPrev = this._readerView?.previousPage();
                         if (!movedPrev) {
-                            this._navigateToPrevChapter();
+                            this._navigateToPrevChapter({ goToLastPage: true });
                         }
                     }
                     break;
@@ -851,7 +851,7 @@ class ReadingPartnerApp {
             onHighlight: (startIndex, endIndex, text, color) => {
                 this._addHighlight(startIndex, endIndex, text, color);
             },
-            onPrevChapter: () => this._navigateToPrevChapter(),
+            onPrevChapter: () => this._navigateToPrevChapter({ goToLastPage: true }),
             onNextChapter: () => this._navigateToNextChapter()
         });
 
@@ -2108,10 +2108,12 @@ class ReadingPartnerApp {
 
     /**
      * Navigate to the previous chapter
+     * @param {Object} [options]
+     * @param {boolean} [options.goToLastPage=false] - If true, jump to the last page of the previous chapter
      */
-    async _navigateToPrevChapter() {
+    async _navigateToPrevChapter({ goToLastPage = false } = {}) {
         if (!this._currentBook || this._currentChapterIndex <= 0) return;
-        await this._navigateToChapter(this._currentChapterIndex - 1, { pushHistory: true });
+        await this._navigateToChapter(this._currentChapterIndex - 1, { pushHistory: true, goToLastPage });
     }
 
     /**
@@ -2126,7 +2128,7 @@ class ReadingPartnerApp {
      * Navigate to a chapter
      * @param {number} chapterIndex
      */
-    async _navigateToChapter(chapterIndex, { pushHistory = true } = {}) {
+    async _navigateToChapter(chapterIndex, { pushHistory = true, goToLastPage = false } = {}) {
         if (chapterIndex === this._currentChapterIndex) {
             return;
         }
@@ -2158,9 +2160,17 @@ class ReadingPartnerApp {
         // Update navigation
         this._navigation.setCurrentChapter(chapterIndex);
 
-        // Reset to first sentence
-        this._audioController.goToSentence(0);
-        this._readerView.highlightSentence(0);
+        // Position within the chapter
+        if (goToLastPage) {
+            this._readerView.lastPage();
+            // Set audio to last sentence on that page
+            const lastSentenceIndex = (this._currentBook.chapters[chapterIndex].sentences?.length || 1) - 1;
+            this._audioController.goToSentence(lastSentenceIndex);
+            this._readerView.highlightSentence(lastSentenceIndex);
+        } else {
+            this._audioController.goToSentence(0);
+            this._readerView.highlightSentence(0);
+        }
     }
 
     /**
