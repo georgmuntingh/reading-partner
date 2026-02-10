@@ -287,6 +287,17 @@ export class ReaderView {
             clone.style.overflow = 'hidden';
             clone.style.height = `${this._pageHeight}px`;
 
+            // Add bottom padding so the last page can scroll to the correct position.
+            // Without this, the browser clamps scrollTop when content is shorter than
+            // (pageNum + 1) * pageHeight, causing overlap with the previous page.
+            const neededHeight = (pageNum + 1) * this._pageHeight;
+            if (this._textContent.scrollHeight < neededHeight) {
+                const spacer = document.createElement('div');
+                spacer.style.height = `${neededHeight - this._textContent.scrollHeight}px`;
+                spacer.style.flexShrink = '0';
+                clone.appendChild(spacer);
+            }
+
             content.innerHTML = '';
             content.appendChild(clone);
 
@@ -699,10 +710,23 @@ export class ReaderView {
     }
 
     /**
-     * Go to next page (advances by 1 page, shifting the multi-column view)
+     * Go to next page.
+     * In non-centered multi-column mode, advances by N pages (one full window).
+     * Otherwise advances by 1 page.
      * @returns {boolean} Whether navigation occurred
      */
     nextPage() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns > 1 && !this._columnAutoCenter) {
+            // Non-centered multi-column: jump to the next window of N pages
+            const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
+            const nextWindowStart = windowStart + effectiveColumns;
+            if (nextWindowStart < this._totalPages) {
+                this._goToPageInternal(nextWindowStart);
+                return true;
+            }
+            return false;
+        }
         if (this._currentPage < this._totalPages - 1) {
             this._goToPageInternal(this._currentPage + 1);
             return true;
@@ -711,10 +735,23 @@ export class ReaderView {
     }
 
     /**
-     * Go to previous page (goes back by 1 page, shifting the multi-column view)
+     * Go to previous page.
+     * In non-centered multi-column mode, goes back by N pages (one full window).
+     * Otherwise goes back by 1 page.
      * @returns {boolean} Whether navigation occurred
      */
     previousPage() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+        if (effectiveColumns > 1 && !this._columnAutoCenter) {
+            // Non-centered multi-column: jump to the previous window of N pages
+            const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
+            const prevWindowStart = windowStart - effectiveColumns;
+            if (prevWindowStart >= 0) {
+                this._goToPageInternal(prevWindowStart);
+                return true;
+            }
+            return false;
+        }
         if (this._currentPage > 0) {
             this._goToPageInternal(this._currentPage - 1);
             return true;
@@ -790,11 +827,24 @@ export class ReaderView {
      * Update page navigation button states
      */
     _updatePageButtons() {
+        const effectiveColumns = this._getEffectiveColumnCount();
+        const isNonCenteredMultiColumn = effectiveColumns > 1 && !this._columnAutoCenter;
+
         if (this._prevBtn) {
-            this._prevBtn.disabled = this._currentPage <= 0;
+            if (isNonCenteredMultiColumn) {
+                const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
+                this._prevBtn.disabled = windowStart <= 0;
+            } else {
+                this._prevBtn.disabled = this._currentPage <= 0;
+            }
         }
         if (this._nextBtn) {
-            this._nextBtn.disabled = this._currentPage >= this._totalPages - 1;
+            if (isNonCenteredMultiColumn) {
+                const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
+                this._nextBtn.disabled = windowStart + effectiveColumns >= this._totalPages;
+            } else {
+                this._nextBtn.disabled = this._currentPage >= this._totalPages - 1;
+            }
         }
     }
 
