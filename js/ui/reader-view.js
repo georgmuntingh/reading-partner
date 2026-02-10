@@ -17,8 +17,10 @@ export class ReaderView {
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
      * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
      * @param {(startIndex: number, endIndex: number, text: string) => void} [options.onHighlight] - Callback when user highlights text
+     * @param {() => void} [options.onPrevChapter] - Callback when navigating to previous chapter
+     * @param {() => void} [options.onNextChapter] - Callback when navigating to next chapter
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight, onPrevChapter, onNextChapter }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
@@ -27,6 +29,8 @@ export class ReaderView {
         this._onLinkClick = onLinkClick;
         this._onImageClick = onImageClick;
         this._onHighlight = onHighlight;
+        this._onPrevChapter = onPrevChapter;
+        this._onNextChapter = onNextChapter;
 
         this._textContent = container.querySelector('#text-content') || container;
         this._pageContainer = container.querySelector('#page-container');
@@ -48,6 +52,19 @@ export class ReaderView {
         this._pageToSentences = new Map(); // Maps page number to array of sentence indices
         this._isCalculatingPages = false;
 
+        // Chapter boundary state
+        this._isFirstChapter = true;
+        this._isLastChapter = true;
+        this._prevBtnMode = 'page'; // 'page' or 'chapter'
+        this._nextBtnMode = 'page'; // 'page' or 'chapter'
+        this._pendingGoToLastPage = false; // Set before rendering to jump to last page after layout
+
+        // SVG icons for page vs chapter navigation buttons
+        this._PAGE_ARROW_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>';
+        this._PAGE_ARROW_SVG_NEXT = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>';
+        this._CHAPTER_ARROW_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 18 11 12 17 6"/><line x1="7" y1="6" x2="7" y2="18"/></svg>';
+        this._CHAPTER_ARROW_SVG_NEXT = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 18 13 12 7 6"/><line x1="17" y1="6" x2="17" y2="18"/></svg>';
+
         // Multi-column state
         this._columnCount = 1;
         this._columnAutoCenter = true;
@@ -60,12 +77,19 @@ export class ReaderView {
         this._highlightToolbar = null;
         this._createHighlightToolbar();
 
+        // Touch/swipe state
+        this._touchStartX = 0;
+        this._touchStartY = 0;
+        this._touchStartTime = 0;
+        this._isSwiping = false;
+
         // Use event delegation for click handling
         this._setupEventDelegation();
         this._setupPageNavigation();
         this._setupResizeHandler();
         this._setupTextSelection();
         this._setupMultiColumnContainer();
+        this._setupSwipeNavigation();
     }
 
     // ========== Multi-Column Support ==========
@@ -351,15 +375,84 @@ export class ReaderView {
     }
 
     /**
-     * Setup page navigation button handlers
+     * Setup page navigation button handlers.
+     * Buttons act as page nav normally, but switch to chapter nav at chapter boundaries.
      */
     _setupPageNavigation() {
         if (this._prevBtn) {
-            this._prevBtn.addEventListener('click', () => this.previousPage());
+            this._prevBtn.addEventListener('click', () => {
+                if (this._prevBtnMode === 'chapter') {
+                    this._onPrevChapter?.();
+                } else {
+                    this.previousPage();
+                }
+            });
         }
         if (this._nextBtn) {
-            this._nextBtn.addEventListener('click', () => this.nextPage());
+            this._nextBtn.addEventListener('click', () => {
+                if (this._nextBtnMode === 'chapter') {
+                    this._onNextChapter?.();
+                } else {
+                    this.nextPage();
+                }
+            });
         }
+    }
+
+    /**
+     * Setup swipe gesture navigation for touch devices.
+     * Swipe left = next page (or next chapter at end), swipe right = previous page (or prev chapter at start).
+     */
+    _setupSwipeNavigation() {
+        const target = this._pageContainer || this._container;
+
+        target.addEventListener('touchstart', (e) => {
+            // Ignore multi-touch (pinch zoom etc.)
+            if (e.touches.length !== 1) return;
+            this._touchStartX = e.touches[0].clientX;
+            this._touchStartY = e.touches[0].clientY;
+            this._touchStartTime = Date.now();
+            this._isSwiping = false;
+        }, { passive: true });
+
+        target.addEventListener('touchmove', (e) => {
+            if (e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - this._touchStartX;
+            const dy = e.touches[0].clientY - this._touchStartY;
+            // If horizontal movement dominates, mark as swiping
+            if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                this._isSwiping = true;
+            }
+        }, { passive: true });
+
+        target.addEventListener('touchend', (e) => {
+            if (!this._isSwiping) return;
+
+            const touch = e.changedTouches[0];
+            const dx = touch.clientX - this._touchStartX;
+            const dy = touch.clientY - this._touchStartY;
+            const elapsed = Date.now() - this._touchStartTime;
+
+            // Require: minimum horizontal distance, dominantly horizontal, completed within 600ms
+            const MIN_DISTANCE = 50;
+            if (Math.abs(dx) < MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 1.2 || elapsed > 600) {
+                return;
+            }
+
+            if (dx < 0) {
+                // Swipe left → next page or next chapter
+                const moved = this.nextPage();
+                if (!moved && !this._isLastChapter) {
+                    this._onNextChapter?.();
+                }
+            } else {
+                // Swipe right → previous page or previous chapter
+                const moved = this.previousPage();
+                if (!moved && !this._isFirstChapter) {
+                    this._onPrevChapter?.();
+                }
+            }
+        }, { passive: true });
     }
 
     /**
@@ -393,6 +486,25 @@ export class ReaderView {
         if (this._titleElement) {
             this._titleElement.textContent = title;
         }
+    }
+
+    /**
+     * Set chapter boundary info so page nav buttons can transform into chapter nav at edges
+     * @param {boolean} isFirstChapter - Whether the current chapter is the first
+     * @param {boolean} isLastChapter - Whether the current chapter is the last
+     */
+    setChapterBoundaries(isFirstChapter, isLastChapter) {
+        this._isFirstChapter = isFirstChapter;
+        this._isLastChapter = isLastChapter;
+        this._updatePageButtons();
+    }
+
+    /**
+     * Request that after the next render/page-calculation, the view jumps to the last page.
+     * Must be called before renderSentences / setSentences.
+     */
+    goToLastPageAfterRender() {
+        this._pendingGoToLastPage = true;
     }
 
     /**
@@ -438,11 +550,15 @@ export class ReaderView {
 
         // Calculate pagination after content is rendered
         // Use double requestAnimationFrame to ensure layout is complete
+        const pendingLastPage = this._pendingGoToLastPage;
+        this._pendingGoToLastPage = false;
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 this._calculatePages();
-                // Navigate to page containing current sentence
-                if (currentIndex > 0) {
+                // Navigate to the appropriate page after layout
+                if (pendingLastPage) {
+                    this._currentPage = Math.max(0, this._totalPages - 1);
+                } else if (currentIndex > 0) {
                     const page = this._sentenceToPage.get(currentIndex);
                     if (page !== undefined) {
                         this._currentPage = page;
@@ -824,26 +940,61 @@ export class ReaderView {
     }
 
     /**
-     * Update page navigation button states
+     * Update page navigation button states.
+     * When at the first/last page of a chapter, transform the button into
+     * a chapter navigation button (with a different icon and style) instead
+     * of disabling it.
      */
     _updatePageButtons() {
         const effectiveColumns = this._getEffectiveColumnCount();
         const isNonCenteredMultiColumn = effectiveColumns > 1 && !this._columnAutoCenter;
 
+        let atStart, atEnd;
+        if (isNonCenteredMultiColumn) {
+            const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
+            atStart = windowStart <= 0;
+            atEnd = windowStart + effectiveColumns >= this._totalPages;
+        } else {
+            atStart = this._currentPage <= 0;
+            atEnd = this._currentPage >= this._totalPages - 1;
+        }
+
         if (this._prevBtn) {
-            if (isNonCenteredMultiColumn) {
-                const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
-                this._prevBtn.disabled = windowStart <= 0;
+            if (atStart && !this._isFirstChapter) {
+                // At start of chapter but not first chapter: show "prev chapter" button
+                this._prevBtnMode = 'chapter';
+                this._prevBtn.disabled = false;
+                this._prevBtn.innerHTML = this._CHAPTER_ARROW_SVG;
+                this._prevBtn.setAttribute('aria-label', 'Previous chapter');
+                this._prevBtn.setAttribute('title', 'Previous chapter');
+                this._prevBtn.classList.add('page-nav-chapter');
             } else {
-                this._prevBtn.disabled = this._currentPage <= 0;
+                // Normal page nav (or disabled at first chapter start)
+                this._prevBtnMode = 'page';
+                this._prevBtn.disabled = atStart;
+                this._prevBtn.innerHTML = this._PAGE_ARROW_SVG;
+                this._prevBtn.setAttribute('aria-label', 'Previous page');
+                this._prevBtn.removeAttribute('title');
+                this._prevBtn.classList.remove('page-nav-chapter');
             }
         }
         if (this._nextBtn) {
-            if (isNonCenteredMultiColumn) {
-                const windowStart = Math.floor(this._currentPage / effectiveColumns) * effectiveColumns;
-                this._nextBtn.disabled = windowStart + effectiveColumns >= this._totalPages;
+            if (atEnd && !this._isLastChapter) {
+                // At end of chapter but not last chapter: show "next chapter" button
+                this._nextBtnMode = 'chapter';
+                this._nextBtn.disabled = false;
+                this._nextBtn.innerHTML = this._CHAPTER_ARROW_SVG_NEXT;
+                this._nextBtn.setAttribute('aria-label', 'Next chapter');
+                this._nextBtn.setAttribute('title', 'Next chapter');
+                this._nextBtn.classList.add('page-nav-chapter');
             } else {
-                this._nextBtn.disabled = this._currentPage >= this._totalPages - 1;
+                // Normal page nav (or disabled at last chapter end)
+                this._nextBtnMode = 'page';
+                this._nextBtn.disabled = atEnd;
+                this._nextBtn.innerHTML = this._PAGE_ARROW_SVG_NEXT;
+                this._nextBtn.setAttribute('aria-label', 'Next page');
+                this._nextBtn.removeAttribute('title');
+                this._nextBtn.classList.remove('page-nav-chapter');
             }
         }
     }

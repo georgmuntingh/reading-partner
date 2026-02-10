@@ -151,6 +151,20 @@
     cursor: not-allowed;
 }
 
+/* Chapter navigation mode for page nav buttons */
+.page-nav-btn.page-nav-chapter {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+    opacity: 0.85;
+}
+
+.page-nav-btn.page-nav-chapter:hover {
+    opacity: 1;
+    background-color: var(--primary-hover);
+    border-color: var(--primary-hover);
+}
+
 .page-nav-prev {
     left: 0;
 }

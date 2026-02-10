@@ -626,7 +626,10 @@ class ReadingPartnerApp {
                     if (e.shiftKey) {
                         this._navigateToPrevChapter();
                     } else {
-                        this._readerView?.previousPage();
+                        const movedPrev = this._readerView?.previousPage();
+                        if (!movedPrev) {
+                            this._navigateToPrevChapter({ goToLastPage: true });
+                        }
                     }
                     break;
                 case 'PageDown':
@@ -634,7 +637,10 @@ class ReadingPartnerApp {
                     if (e.shiftKey) {
                         this._navigateToNextChapter();
                     } else {
-                        this._readerView?.nextPage();
+                        const movedNext = this._readerView?.nextPage();
+                        if (!movedNext) {
+                            this._navigateToNextChapter();
+                        }
                     }
                     break;
                 case 'Home':
@@ -844,7 +850,9 @@ class ReadingPartnerApp {
             },
             onHighlight: (startIndex, endIndex, text, color) => {
                 this._addHighlight(startIndex, endIndex, text, color);
-            }
+            },
+            onPrevChapter: () => this._navigateToPrevChapter({ goToLastPage: true }),
+            onNextChapter: () => this._navigateToNextChapter()
         });
 
         // Initialize AudioController
@@ -1058,6 +1066,11 @@ class ReadingPartnerApp {
         // Update UI with loaded content - pass HTML for full rendering
         this._readerView.renderSentences(sentences, 0, html);
         this._readerView.scrollToTop();
+
+        // Tell the reader view about chapter boundaries so page-nav buttons
+        // can transform into chapter-nav buttons at the edges
+        const totalChapters = this._currentBook.chapters.length;
+        this._readerView.setChapterBoundaries(chapterIndex <= 0, chapterIndex >= totalChapters - 1);
 
         // Apply highlights for this chapter
         if (this._readingState) {
@@ -2095,10 +2108,12 @@ class ReadingPartnerApp {
 
     /**
      * Navigate to the previous chapter
+     * @param {Object} [options]
+     * @param {boolean} [options.goToLastPage=false] - If true, jump to the last page of the previous chapter
      */
-    async _navigateToPrevChapter() {
+    async _navigateToPrevChapter({ goToLastPage = false } = {}) {
         if (!this._currentBook || this._currentChapterIndex <= 0) return;
-        await this._navigateToChapter(this._currentChapterIndex - 1, { pushHistory: true });
+        await this._navigateToChapter(this._currentChapterIndex - 1, { pushHistory: true, goToLastPage });
     }
 
     /**
@@ -2113,7 +2128,7 @@ class ReadingPartnerApp {
      * Navigate to a chapter
      * @param {number} chapterIndex
      */
-    async _navigateToChapter(chapterIndex, { pushHistory = true } = {}) {
+    async _navigateToChapter(chapterIndex, { pushHistory = true, goToLastPage = false } = {}) {
         if (chapterIndex === this._currentChapterIndex) {
             return;
         }
@@ -2138,6 +2153,11 @@ class ReadingPartnerApp {
 
         // Update state
         this._readingState.goToChapter(chapterIndex, 0);
+
+        // Tell reader view to jump to last page after content renders (before loading)
+        if (goToLastPage) {
+            this._readerView.goToLastPageAfterRender();
+        }
 
         // Load chapter
         await this._loadChapter(chapterIndex, false);
