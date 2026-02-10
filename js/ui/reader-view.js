@@ -57,6 +57,7 @@ export class ReaderView {
         this._isLastChapter = true;
         this._prevBtnMode = 'page'; // 'page' or 'chapter'
         this._nextBtnMode = 'page'; // 'page' or 'chapter'
+        this._pendingGoToLastPage = false; // Set before rendering to jump to last page after layout
 
         // SVG icons for page vs chapter navigation buttons
         this._PAGE_ARROW_SVG = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>';
@@ -499,6 +500,14 @@ export class ReaderView {
     }
 
     /**
+     * Request that after the next render/page-calculation, the view jumps to the last page.
+     * Must be called before renderSentences / setSentences.
+     */
+    goToLastPageAfterRender() {
+        this._pendingGoToLastPage = true;
+    }
+
+    /**
      * Set content for the chapter - supports both HTML and sentences-only mode
      * @param {string[]} sentences
      * @param {number} [currentIndex=0]
@@ -541,11 +550,15 @@ export class ReaderView {
 
         // Calculate pagination after content is rendered
         // Use double requestAnimationFrame to ensure layout is complete
+        const pendingLastPage = this._pendingGoToLastPage;
+        this._pendingGoToLastPage = false;
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 this._calculatePages();
-                // Navigate to page containing current sentence
-                if (currentIndex > 0) {
+                // Navigate to the appropriate page after layout
+                if (pendingLastPage) {
+                    this._currentPage = Math.max(0, this._totalPages - 1);
+                } else if (currentIndex > 0) {
                     const page = this._sentenceToPage.get(currentIndex);
                     if (page !== undefined) {
                         this._currentPage = page;

@@ -2154,23 +2154,20 @@ class ReadingPartnerApp {
         // Update state
         this._readingState.goToChapter(chapterIndex, 0);
 
+        // Tell reader view to jump to last page after content renders (before loading)
+        if (goToLastPage) {
+            this._readerView.goToLastPageAfterRender();
+        }
+
         // Load chapter
         await this._loadChapter(chapterIndex, false);
 
         // Update navigation
         this._navigation.setCurrentChapter(chapterIndex);
 
-        // Position within the chapter
-        if (goToLastPage) {
-            this._readerView.lastPage();
-            // Set audio to last sentence on that page
-            const lastSentenceIndex = (this._currentBook.chapters[chapterIndex].sentences?.length || 1) - 1;
-            this._audioController.goToSentence(lastSentenceIndex);
-            this._readerView.highlightSentence(lastSentenceIndex);
-        } else {
-            this._audioController.goToSentence(0);
-            this._readerView.highlightSentence(0);
-        }
+        // Reset to first sentence
+        this._audioController.goToSentence(0);
+        this._readerView.highlightSentence(0);
     }
 
     /**
