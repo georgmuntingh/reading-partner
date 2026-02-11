@@ -21,6 +21,7 @@ import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
 import { ChapterOverview } from './ui/chapter-overview.js';
+import { SearchPanel } from './ui/search-panel.js';
 import { NavigationHistory } from './state/navigation-history.js';
 
 class ReadingPartnerApp {
@@ -76,6 +77,7 @@ class ReadingPartnerApp {
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
         this._chapterOverview = null;
+        this._searchPanel = null;
 
         // Navigation history (back/forward)
         this._navigationHistory = null;
@@ -215,6 +217,28 @@ class ReadingPartnerApp {
                 onChapterSelect: (chapterIndex) => this._onOverviewChapterSelect(chapterIndex)
             }
         );
+
+        // Initialize Search Panel
+        this._searchPanel = new SearchPanel(
+            { container: document.getElementById('search-panel') },
+            {
+                onClose: () => this._onSearchClose(),
+                onResultSelect: (chapterIndex, sentenceIndex) => this._onSearchResultSelect(chapterIndex, sentenceIndex),
+                loadChapter: (chapterIndex) => this._readingState.loadChapter(chapterIndex),
+                getBook: () => this._currentBook
+            }
+        );
+
+        // Setup search button
+        this._elements.searchBtn?.addEventListener('click', () => {
+            this._toggleSearchPanel();
+        });
+
+        // Setup search overlay (dims background)
+        const searchOverlay = document.getElementById('search-overlay');
+        searchOverlay?.addEventListener('click', () => {
+            this._searchPanel.close();
+        });
 
         // Setup page number click to open chapter overview
         this._elements.pageNumber = document.getElementById('page-number');
@@ -356,6 +380,7 @@ class ReadingPartnerApp {
             fullscreenCollapseIcon: document.getElementById('fullscreen-collapse-icon'),
 
             // Header actions
+            searchBtn: document.getElementById('search-btn'),
             loadBookBtn: document.getElementById('load-book-btn'),
 
             // Navigation history buttons
@@ -586,6 +611,21 @@ class ReadingPartnerApp {
         document.addEventListener('keydown', (e) => {
             // Only handle shortcuts when reader is visible
             if (!this._elements.readerScreen.classList.contains('active')) {
+                return;
+            }
+
+            // Ctrl+F / Cmd+F: Toggle search (works even when typing)
+            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyF') {
+                e.preventDefault();
+                this._toggleSearchPanel();
+                return;
+            }
+
+            // Escape: Close search panel if open
+            if (e.code === 'Escape' && this._searchPanel?.isOpen()) {
+                e.preventDefault();
+                this._searchPanel.close();
+                document.getElementById('search-overlay')?.classList.remove('active');
                 return;
             }
 
@@ -2399,6 +2439,99 @@ class ReadingPartnerApp {
         this._readerView.highlightSentence(highlight.startSentenceIndex);
         this._playbackChapterIndex = highlight.chapterIndex;
         this._playbackSentenceIndex = highlight.startSentenceIndex;
+    }
+
+    // ========== Search ==========
+
+    /**
+     * Toggle the search panel and its background overlay
+     */
+    _toggleSearchPanel() {
+        const overlay = document.getElementById('search-overlay');
+        if (this._searchPanel.isOpen()) {
+            this._searchPanel.close();
+            overlay?.classList.remove('active');
+        } else {
+            this._searchPanel.open();
+            overlay?.classList.add('active');
+        }
+    }
+
+    /**
+     * Handle search result selection.
+     * Navigates to the chapter/sentence with history integration,
+     * similar to link following / bookmark navigation.
+     * @param {number} chapterIndex
+     * @param {number} sentenceIndex
+     */
+    async _onSearchResultSelect(chapterIndex, sentenceIndex) {
+        // Push current position to history before navigating
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+
+        // Decouple view (search navigation is view-only, like link following)
+        this._viewDecoupled = true;
+        this._updateNavHistoryButtons();
+
+        // Load chapter if different
+        if (chapterIndex !== this._currentChapterIndex) {
+            await this._loadChapter(chapterIndex, false, { viewOnly: true });
+            this._navigation.setCurrentChapter(chapterIndex);
+        }
+
+        // Apply inline search highlights for this chapter
+        this._applySearchHighlightsForChapter(chapterIndex, sentenceIndex);
+
+        // Navigate to the sentence's page and scroll into view
+        // Use double requestAnimationFrame to match pagination timing
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this._readerView?.scrollToSentence(sentenceIndex);
+            });
+        });
+    }
+
+    /**
+     * Apply search inline highlights for a specific chapter.
+     * Filters results to only those in the given chapter and tells the
+     * reader view to highlight them.
+     * @param {number} chapterIndex
+     * @param {number} activeSentenceIndex - The focused result's sentence index (-1 for none)
+     */
+    _applySearchHighlightsForChapter(chapterIndex, activeSentenceIndex = -1) {
+        if (!this._searchPanel || !this._readerView) return;
+
+        const query = this._searchPanel.getQuery();
+        if (!query || query.trim().length < 2) {
+            this._readerView.clearSearchHighlights();
+            return;
+        }
+
+        const allResults = this._searchPanel.getResults();
+        const chapterResults = allResults.filter(r => r.chapterIndex === chapterIndex);
+
+        this._readerView.applySearchHighlights(
+            query,
+            this._searchPanel.isCaseSensitive(),
+            this._searchPanel.isWholeWord(),
+            chapterResults,
+            activeSentenceIndex
+        );
+    }
+
+    /**
+     * Handle search panel close.
+     * Clears all inline highlights.
+     */
+    _onSearchClose() {
+        this._readerView?.clearSearchHighlights();
+        // Hide search overlay
+        document.getElementById('search-overlay')?.classList.remove('active');
     }
 
     /**

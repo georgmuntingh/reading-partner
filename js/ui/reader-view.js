@@ -1546,6 +1546,170 @@ export class ReaderView {
         }
     }
 
+    // ========== Search Highlighting ==========
+
+    /**
+     * Apply search highlights to sentences in the current chapter.
+     * Wraps matched text in <mark> elements with appropriate classes.
+     *
+     * @param {string} query - The search query
+     * @param {boolean} caseSensitive - Whether to match case-sensitively
+     * @param {boolean} wholeWord - Whether to match whole words only
+     * @param {Array<{sentenceIndex: number}>} results - Results for this chapter (only sentenceIndex needed)
+     * @param {number} activeResultSentenceIndex - Sentence index of the currently active result (-1 for none)
+     */
+    applySearchHighlights(query, caseSensitive, wholeWord, results, activeResultSentenceIndex) {
+        if (!query || results.length === 0) {
+            this.clearSearchHighlights();
+            return;
+        }
+
+        // Build regex for highlighting
+        let flags = 'g';
+        if (!caseSensitive) flags += 'i';
+        let pattern = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (wholeWord) {
+            pattern = `\\b${pattern}\\b`;
+        }
+        const regex = new RegExp(pattern, flags);
+
+        // Get the set of sentence indices that have results
+        const resultSentences = new Set(results.map(r => r.sentenceIndex));
+
+        // Process each sentence span in the master content
+        const sentenceEls = this._textContent.querySelectorAll('.sentence[data-index]');
+        sentenceEls.forEach(el => {
+            const idx = parseInt(el.dataset.index, 10);
+
+            // Remove any previous search highlights from this element
+            this._clearSearchHighlightsFromElement(el);
+
+            if (!resultSentences.has(idx)) return;
+
+            const isActive = idx === activeResultSentenceIndex;
+
+            // Walk text nodes and wrap matches
+            this._highlightTextMatches(el, regex, isActive);
+        });
+
+        // Refresh multi-column display
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
+    }
+
+    /**
+     * Clear all search highlights from the reader view
+     */
+    clearSearchHighlights() {
+        const marks = this._textContent.querySelectorAll('.search-highlight, .search-highlight-active');
+        marks.forEach(mark => {
+            const parent = mark.parentNode;
+            while (mark.firstChild) {
+                parent.insertBefore(mark.firstChild, mark);
+            }
+            parent.removeChild(mark);
+            parent.normalize(); // Merge adjacent text nodes
+        });
+
+        // Refresh multi-column display
+        if (this._getEffectiveColumnCount() > 1) {
+            this._updateMultiColumnDisplay();
+        }
+    }
+
+    /**
+     * Remove search highlight marks from a single element
+     * @param {HTMLElement} el
+     */
+    _clearSearchHighlightsFromElement(el) {
+        const marks = el.querySelectorAll('.search-highlight, .search-highlight-active');
+        marks.forEach(mark => {
+            const parent = mark.parentNode;
+            while (mark.firstChild) {
+                parent.insertBefore(mark.firstChild, mark);
+            }
+            parent.removeChild(mark);
+        });
+        el.normalize();
+    }
+
+    /**
+     * Walk text nodes in an element and wrap regex matches in <mark> elements
+     * @param {HTMLElement} el
+     * @param {RegExp} regex
+     * @param {boolean} isActive - Whether this is the active/focused result
+     */
+    _highlightTextMatches(el, regex, isActive) {
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+        const textNodes = [];
+        let node;
+        while ((node = walker.nextNode())) {
+            textNodes.push(node);
+        }
+
+        for (const textNode of textNodes) {
+            const text = textNode.nodeValue;
+            regex.lastIndex = 0;
+            const matches = [];
+            let m;
+            while ((m = regex.exec(text)) !== null) {
+                matches.push({ index: m.index, length: m[0].length });
+            }
+
+            if (matches.length === 0) continue;
+
+            // Build replacement fragments
+            const frag = document.createDocumentFragment();
+            let lastEnd = 0;
+
+            for (const match of matches) {
+                // Text before match
+                if (match.index > lastEnd) {
+                    frag.appendChild(document.createTextNode(text.substring(lastEnd, match.index)));
+                }
+
+                // The match itself
+                const mark = document.createElement('mark');
+                mark.className = isActive ? 'search-highlight-active' : 'search-highlight';
+                mark.textContent = text.substring(match.index, match.index + match.length);
+                frag.appendChild(mark);
+
+                lastEnd = match.index + match.length;
+            }
+
+            // Remaining text
+            if (lastEnd < text.length) {
+                frag.appendChild(document.createTextNode(text.substring(lastEnd)));
+            }
+
+            textNode.parentNode.replaceChild(frag, textNode);
+        }
+    }
+
+    /**
+     * Scroll to a sentence by index, navigating to the correct page.
+     * Used by search to navigate to a specific result.
+     * @param {number} sentenceIndex
+     * @returns {boolean} Whether the sentence was found
+     */
+    scrollToSentence(sentenceIndex) {
+        const page = this._sentenceToPage.get(sentenceIndex);
+        if (page === undefined) return false;
+
+        this._goToPageInternal(page, true);
+
+        // Scroll the sentence element into the visible area
+        const el = this._textContent.querySelector(`.sentence[data-index="${sentenceIndex}"]`);
+        if (el) {
+            // Briefly add a visual indicator
+            el.classList.add('link-target');
+            setTimeout(() => el.classList.remove('link-target'), 2000);
+        }
+
+        return true;
+    }
+
     /**
      * Cleanup event listeners
      */
