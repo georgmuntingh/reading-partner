@@ -879,8 +879,21 @@ class ReadingPartnerApp {
             container: this._elements.readerContent,
             titleElement: this._elements.chapterTitle,
             bookTitleElement: this._elements.bookTitle,
-            onSentenceClick: (index) => {
-                this._audioController?.goToSentence(index);
+            onSentenceClick: async (index) => {
+                if (this._viewDecoupled) {
+                    // Re-couple: user clicked a sentence in a chapter they
+                    // navigated to via search/link, so switch audio to this chapter
+                    this._viewDecoupled = false;
+                    this._pause();
+                    const sentences = await this._readingState.loadChapter(this._currentChapterIndex);
+                    this._audioController.setSentences(sentences, index);
+                    this._playbackChapterIndex = this._currentChapterIndex;
+                    this._playbackSentenceIndex = index;
+                    this._readingState.goToChapter(this._currentChapterIndex, index);
+                    this._updateNavHistoryButtons();
+                } else {
+                    this._audioController?.goToSentence(index);
+                }
             },
             onLinkClick: (href) => {
                 this._handleInternalLink(href);
