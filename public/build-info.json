@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-09T09:44:27.250Z",
-  "commit": "450cec92d317885c3034c62fb9c9651eb1f54e97",
-  "commitShort": "450cec9",
-  "branch": "claude/add-navigation-buttons-gn5Vj",
-  "lastCommitDate": "2026-02-09T09:58:14+01:00"
+  "buildTime": "2026-02-11T10:38:01.621Z",
+  "commit": "12bc80f769b2417062ba58614aa865c4296d8523",
+  "commitShort": "12bc80f",
+  "branch": "claude/add-book-search-feature-R5NQD",
+  "lastCommitDate": "2026-02-11T10:29:43+00:00"
 }
