@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-11T10:29:13.490Z",
-  "commit": "8ffed4d5142c20133ba5f89b509cd2c6f47199a5",
-  "commitShort": "8ffed4d",
+  "buildTime": "2026-02-11T10:38:01.621Z",
+  "commit": "12bc80f769b2417062ba58614aa865c4296d8523",
+  "commitShort": "12bc80f",
   "branch": "claude/add-book-search-feature-R5NQD",
-  "lastCommitDate": "2026-02-11T10:18:59+00:00"
+  "lastCommitDate": "2026-02-11T10:29:43+00:00"
 }

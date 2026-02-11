@@ -886,7 +886,8 @@ class ReadingPartnerApp {
                     this._viewDecoupled = false;
                     this._pause();
                     const sentences = await this._readingState.loadChapter(this._currentChapterIndex);
-                    this._audioController.setSentences(sentences, index);
+                    this._audioController.setSentences(sentences, 0);
+                    this._audioController.goToSentence(index);
                     this._playbackChapterIndex = this._currentChapterIndex;
                     this._playbackSentenceIndex = index;
                     this._readingState.goToChapter(this._currentChapterIndex, index);
