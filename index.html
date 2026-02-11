@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Reading Partner - TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-BfeO8lVY.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-CcmfrSxx.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-BEBN8CTY.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-BWXQ9vU7.css">
 </head>
 <body>
     <div id="app">
@@ -100,6 +100,12 @@
                     </button>
                 </div>
                 <div class="book-title" id="book-title">Book Title</div>
+                <button class="btn-icon" id="search-btn" aria-label="Search in book" title="Search in book">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                </button>
                 <button class="btn-icon" id="load-book-btn" aria-label="Load new book" title="Load new book">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
@@ -254,6 +260,12 @@
                 <!-- Quiz history will be rendered here -->
             </div>
         </div>
+    </div>
+
+    <!-- Search Panel -->
+    <div id="search-overlay" class="search-overlay"></div>
+    <div id="search-panel" class="search-panel">
+        <!-- Content will be rendered by SearchPanel component -->
     </div>
 
     <!-- TTS Status Overlay -->
