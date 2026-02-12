@@ -871,7 +871,43 @@ export class TTSEngine {
                 { id: 'bm_daniel', name: 'Daniel (British Male)' },
                 { id: 'bm_fable', name: 'Fable (British Male)' },
                 { id: 'bm_george', name: 'George (British Male)' },
-                { id: 'bm_lewis', name: 'Lewis (British Male)' }
+                { id: 'bm_lewis', name: 'Lewis (British Male)' },
+
+                // Japanese
+                { id: 'jf_alpha', name: 'Alpha (Japanese Female)' },
+                { id: 'jf_gongitsune', name: 'Gongitsune (Japanese Female)' },
+                { id: 'jf_nezumi', name: 'Nezumi (Japanese Female)' },
+                { id: 'jm_kumo', name: 'Kumo (Japanese Male)' },
+
+                // Chinese (Mandarin)
+                { id: 'zf_xiaobei', name: 'Xiaobei (Chinese Female)' },
+                { id: 'zf_xiaoni', name: 'Xiaoni (Chinese Female)' },
+                { id: 'zf_xiaoxuan', name: 'Xiaoxuan (Chinese Female)' },
+                { id: 'zm_yunjian', name: 'Yunjian (Chinese Male)' },
+                { id: 'zm_yunxi', name: 'Yunxi (Chinese Male)' },
+                { id: 'zm_yunyang', name: 'Yunyang (Chinese Male)' },
+
+                // French
+                { id: 'ff_siwis', name: 'Siwis (French Female)' },
+
+                // Hindi
+                { id: 'hf_alpha', name: 'Alpha (Hindi Female)' },
+                { id: 'hf_beta', name: 'Beta (Hindi Female)' },
+                { id: 'hm_omega', name: 'Omega (Hindi Male)' },
+                { id: 'hm_psi', name: 'Psi (Hindi Male)' },
+
+                // Italian
+                { id: 'if_sara', name: 'Sara (Italian Female)' },
+                { id: 'im_nicola', name: 'Nicola (Italian Male)' },
+
+                // Portuguese (Brazilian)
+                { id: 'pf_dora', name: 'Dora (Portuguese Female)' },
+                { id: 'pm_alex', name: 'Alex (Portuguese Male)' },
+                { id: 'pm_santa', name: 'Santa (Portuguese Male)' },
+
+                // Spanish
+                { id: 'sf_dalia', name: 'Dalia (Spanish Female)' },
+                { id: 'sm_agustin', name: 'Agustin (Spanish Male)' }
             ];
         } else {
             // Web Speech voices
@@ -881,6 +917,34 @@ export class TTSEngine {
                 name: v.name
             }));
         }
+    }
+
+    /**
+     * Language code to Kokoro voice prefix mapping.
+     * Returns the first available Kokoro voice for a language.
+     * Falls back to null if no Kokoro voice is available (use Web Speech API).
+     * @param {string} langCode - ISO 639-1 language code (e.g. 'ja', 'zh', 'fr')
+     * @returns {string|null} Kokoro voice ID, or null if unsupported
+     */
+    getVoiceForLanguage(langCode) {
+        const prefixMap = {
+            'en': 'af_', // American English by default
+            'ja': 'jf_',
+            'zh': 'zf_',
+            'fr': 'ff_',
+            'hi': 'hf_',
+            'it': 'if_',
+            'pt': 'pf_',
+            'es': 'sf_',
+        };
+
+        const prefix = prefixMap[langCode];
+        if (!prefix) return null;
+
+        // Find the first voice matching this prefix
+        const voices = this.getAvailableVoices();
+        const match = voices.find(v => v.id.startsWith(prefix));
+        return match ? match.id : null;
     }
 
     /**

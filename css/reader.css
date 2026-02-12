@@ -454,6 +454,18 @@
     color: #831843;
 }
 
+.highlight-toolbar-divider {
+    width: 1px;
+    height: 20px;
+    background-color: rgba(255, 255, 255, 0.3);
+    margin: 0 2px;
+}
+
+.highlight-btn-lookup {
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+}
+
 /* Paragraph spacing - fallback for sentences-only mode */
 .paragraph {
     margin-bottom: var(--spacing-lg);

@@ -22,6 +22,9 @@ import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
 import { ChapterOverview } from './ui/chapter-overview.js';
 import { SearchPanel } from './ui/search-panel.js';
+import { LookupDrawer } from './ui/lookup-drawer.js';
+import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
+import { lookupService } from './services/lookup-service.js';
 import { NavigationHistory } from './state/navigation-history.js';
 
 class ReadingPartnerApp {
@@ -78,6 +81,8 @@ class ReadingPartnerApp {
         this._bookLoaderModal = null;
         this._chapterOverview = null;
         this._searchPanel = null;
+        this._lookupDrawer = null;
+        this._lookupHistoryOverlay = null;
 
         // Navigation history (back/forward)
         this._navigationHistory = null;
@@ -131,7 +136,8 @@ class ReadingPartnerApp {
                 onBookmarkDelete: (id) => this._deleteBookmark(id),
                 onAddBookmark: () => this._addBookmark(),
                 onHighlightSelect: (highlight) => this._navigateToHighlight(highlight),
-                onHighlightDelete: (id) => this._deleteHighlight(id)
+                onHighlightDelete: (id) => this._deleteHighlight(id),
+                onViewLookupHistory: () => this._showLookupHistory()
             }
         );
 
@@ -185,8 +191,23 @@ class ReadingPartnerApp {
         // Setup settings button
         this._elements.settingsBtn = document.getElementById('settings-btn');
         this._elements.settingsBtn?.addEventListener('click', () => {
-            this._settingsModal.setSettings({ readingHistorySize: this._readingHistorySize, ...this._qaSettings, ...this._quizSettings });
+            this._settingsModal.setSettings({ readingHistorySize: this._readingHistorySize, lookupLanguage: lookupService.getTargetLanguage(), ...this._qaSettings, ...this._quizSettings });
             this._settingsModal.show();
+        });
+
+        // Initialize Lookup Drawer (bottom sheet for word/phrase lookups)
+        this._lookupDrawer = new LookupDrawer({
+            onPronounce: (phrase, langCode) => lookupService.pronounce(phrase, langCode),
+            onShowHistory: () => this._showLookupHistory()
+        });
+
+        // Initialize Lookup History Overlay
+        this._lookupHistoryOverlay = new LookupHistoryOverlay({
+            onPronounce: (phrase, langCode) => lookupService.pronounce(phrase, langCode),
+            onDelete: async (id) => {
+                await lookupService.deleteLookup(id);
+                this._refreshLookupNav();
+            }
         });
 
         // Initialize Image Viewer Modal
@@ -833,6 +854,7 @@ class ReadingPartnerApp {
             this._navigation.setBook(this._currentBook, position.chapterIndex);
             this._navigation.setBookmarks(this._readingState.getBookmarks());
             this._navigation.setHighlights(this._readingState.getHighlights());
+            this._refreshLookupNav();
 
             // Load quiz history
             this._loadQuizHistory();
@@ -904,6 +926,9 @@ class ReadingPartnerApp {
             },
             onHighlight: (startIndex, endIndex, text, color) => {
                 this._addHighlight(startIndex, endIndex, text, color);
+            },
+            onLookup: (text, sentenceIndex) => {
+                this._performLookup(text, sentenceIndex);
             },
             onPrevChapter: () => this._navigateToPrevChapter({ goToLastPage: true }),
             onNextChapter: () => this._navigateToNextChapter()
@@ -1851,6 +1876,12 @@ class ReadingPartnerApp {
                 await storage.saveSetting('normalizeAbbreviations', settings.normalizeAbbreviations);
             }
 
+            // Save lookup settings
+            if (settings.lookupLanguage !== undefined) {
+                lookupService.setTargetLanguage(settings.lookupLanguage);
+                await storage.saveSetting('lookupLanguage', settings.lookupLanguage);
+            }
+
             // Save quiz settings
             if (settings.quizMode !== undefined) {
                 this._quizSettings.quizMode = settings.quizMode;
@@ -2579,6 +2610,92 @@ class ReadingPartnerApp {
         }
     }
 
+    // ========== Word/Phrase Lookup ==========
+
+    /**
+     * Perform a word/phrase lookup
+     * @param {string} text - The selected text
+     * @param {number} sentenceIndex - The sentence index of the selection
+     */
+    async _performLookup(text, sentenceIndex) {
+        if (!llmClient.hasApiKey()) {
+            this._lookupDrawer.showLoading(text);
+            this._lookupDrawer.showError('Please set an OpenRouter API key in Settings to use word lookup.');
+            return;
+        }
+
+        if (!this._currentBook) return;
+
+        // Show loading state in drawer
+        this._lookupDrawer.showLoading(text);
+
+        // Get surrounding sentence for context
+        const chapter = this._currentBook.chapters?.[this._currentChapterIndex];
+        const sentences = chapter?.sentences || [];
+        const contextSentence = sentences[sentenceIndex] || '';
+
+        try {
+            const entry = await lookupService.lookup({
+                phrase: text,
+                sentenceContext: contextSentence,
+                bookId: this._currentBook.id,
+                chapterIndex: this._currentChapterIndex,
+                sentenceIndex,
+                bookMeta: {
+                    title: this._currentBook.title,
+                    author: this._currentBook.author
+                }
+            });
+
+            this._lookupDrawer.showResult(entry);
+            this._refreshLookupNav();
+        } catch (error) {
+            console.error('Lookup failed:', error);
+            this._lookupDrawer.showError(error.message || 'Lookup failed. Please try again.');
+        }
+    }
+
+    /**
+     * Show the lookup history overlay
+     */
+    async _showLookupHistory() {
+        try {
+            const lookups = await lookupService.getAllLookups();
+
+            // Build books map for grouping
+            const books = {};
+            if (this._currentBook) {
+                books[this._currentBook.id] = {
+                    title: this._currentBook.title,
+                    author: this._currentBook.author
+                };
+            }
+            // Also try to get titles from lookup entries themselves
+            for (const lookup of lookups) {
+                if (!books[lookup.bookId]) {
+                    books[lookup.bookId] = { title: lookup.bookId };
+                }
+            }
+
+            this._lookupHistoryOverlay.show(lookups, books);
+        } catch (error) {
+            console.error('Failed to load lookup history:', error);
+        }
+    }
+
+    /**
+     * Refresh the lookups list in the navigation panel
+     */
+    async _refreshLookupNav() {
+        if (!this._currentBook || !this._navigation) return;
+        try {
+            const lookups = await lookupService.getBookLookups(this._currentBook.id);
+            this._navigation.setLookups(lookups);
+        } catch (error) {
+            console.error('Failed to refresh lookup nav:', error);
+        }
+    }
+
     /**
      * Load settings from storage
      */
@@ -2660,6 +2777,12 @@ class ReadingPartnerApp {
             if (normalizeNumbers !== null) normalizationSettings.normalizeNumbers = normalizeNumbers;
             if (normalizeAbbreviations !== null) normalizationSettings.normalizeAbbreviations = normalizeAbbreviations;
 
+            // Load lookup settings
+            const lookupLanguage = await storage.getSetting('lookupLanguage');
+            if (lookupLanguage !== null) {
+                lookupService.setTargetLanguage(lookupLanguage);
+            }
+
             // Load quiz settings
             const quizMode = await storage.getSetting('quizMode');
             if (quizMode !== null) this._quizSettings.quizMode = quizMode;
@@ -2701,6 +2824,7 @@ class ReadingPartnerApp {
                 speed: this._savedSpeed,
                 ...typographySettings,
                 ...normalizationSettings,
+                lookupLanguage: lookupLanguage !== null ? lookupLanguage : 'auto',
                 mediaSessionVolume: mediaSessionVolume !== null ? mediaSessionVolume : undefined,
                 mediaSessionDuration: mediaSessionDuration !== null ? mediaSessionDuration : undefined
             });

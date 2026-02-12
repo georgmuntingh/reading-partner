@@ -17,10 +17,11 @@ export class ReaderView {
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
      * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
      * @param {(startIndex: number, endIndex: number, text: string) => void} [options.onHighlight] - Callback when user highlights text
+     * @param {(text: string, sentenceIndex: number) => void} [options.onLookup] - Callback when user looks up a word/phrase
      * @param {() => void} [options.onPrevChapter] - Callback when navigating to previous chapter
      * @param {() => void} [options.onNextChapter] - Callback when navigating to next chapter
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight, onPrevChapter, onNextChapter }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight, onLookup, onPrevChapter, onNextChapter }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
@@ -29,6 +30,7 @@ export class ReaderView {
         this._onLinkClick = onLinkClick;
         this._onImageClick = onImageClick;
         this._onHighlight = onHighlight;
+        this._onLookup = onLookup;
         this._onPrevChapter = onPrevChapter;
         this._onNextChapter = onNextChapter;
 
@@ -1313,6 +1315,13 @@ export class ReaderView {
                     <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
                 </svg>
             </button>
+            <span class="highlight-toolbar-divider"></span>
+            <button class="highlight-btn highlight-btn-lookup" title="Look up">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </button>
         `;
         document.body.appendChild(this._highlightToolbar);
 
@@ -1324,8 +1333,12 @@ export class ReaderView {
         this._highlightToolbar.addEventListener('click', (e) => {
             const btn = e.target.closest('.highlight-btn');
             if (btn) {
-                const color = btn.dataset.color;
-                this._createHighlightFromSelection(color);
+                if (btn.classList.contains('highlight-btn-lookup')) {
+                    this._lookupFromSelection();
+                } else {
+                    const color = btn.dataset.color;
+                    this._createHighlightFromSelection(color);
+                }
             }
         });
     }
@@ -1481,6 +1494,31 @@ export class ReaderView {
 
         // Notify callback
         this._onHighlight?.(startIndex, endIndex, text, color);
+    }
+
+    /**
+     * Look up the current text selection
+     */
+    _lookupFromSelection() {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const startSentence = this._findSentenceElement(range.startContainer);
+        const text = selection.toString().trim();
+
+        if (!text) return;
+
+        const sentenceIndex = startSentence ? parseInt(startSentence.dataset.index, 10) : 0;
+
+        // Clear selection and hide toolbar
+        selection.removeAllRanges();
+        this._hideHighlightToolbar();
+
+        // Notify callback with the selected text and sentence index
+        this._onLookup?.(text, sentenceIndex);
     }
 
     /**

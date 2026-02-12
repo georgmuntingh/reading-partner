@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'reading-partner-db';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 // Store names
 const STORES = {
@@ -12,7 +12,8 @@ const STORES = {
     POSITIONS: 'positions',
     BOOKMARKS: 'bookmarks',
     SETTINGS: 'settings',
-    HIGHLIGHTS: 'highlights'
+    HIGHLIGHTS: 'highlights',
+    LOOKUPS: 'lookups'
 };
 
 export class StorageService {
@@ -119,6 +120,13 @@ export class StorageService {
                 if (!db.objectStoreNames.contains(STORES.HIGHLIGHTS)) {
                     const highlightStore = db.createObjectStore(STORES.HIGHLIGHTS, { keyPath: 'id' });
                     highlightStore.createIndex('bookId', 'bookId', { unique: false });
+                }
+
+                // Lookups store (word/phrase dictionary lookups)
+                if (!db.objectStoreNames.contains(STORES.LOOKUPS)) {
+                    const lookupStore = db.createObjectStore(STORES.LOOKUPS, { keyPath: 'id' });
+                    lookupStore.createIndex('bookId', 'bookId', { unique: false });
+                    lookupStore.createIndex('timestamp', 'timestamp', { unique: false });
                 }
 
                 console.log('Database schema created/upgraded to version', DB_VERSION);
@@ -355,6 +363,82 @@ export class StorageService {
     async deleteHighlight(id) {
         const transaction = this._db.transaction([STORES.HIGHLIGHTS], 'readwrite');
         const store = transaction.objectStore(STORES.HIGHLIGHTS);
+
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    // ========== Lookups ==========
+
+    /**
+     * Save a lookup entry
+     * @param {Object} lookup - { id, bookId, chapterIndex, sentenceIndex, phrase, context, result, timestamp }
+     * @returns {Promise<void>}
+     */
+    async saveLookup(lookup) {
+        const transaction = this._db.transaction([STORES.LOOKUPS], 'readwrite');
+        const store = transaction.objectStore(STORES.LOOKUPS);
+
+        lookup.timestamp = lookup.timestamp || Date.now();
+
+        return new Promise((resolve, reject) => {
+            const request = store.put(lookup);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all lookups for a book (sorted by timestamp descending)
+     * @param {string} bookId
+     * @returns {Promise<Object[]>}
+     */
+    async getLookups(bookId) {
+        const transaction = this._db.transaction([STORES.LOOKUPS], 'readonly');
+        const store = transaction.objectStore(STORES.LOOKUPS);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(bookId);
+            request.onsuccess = () => {
+                const results = request.result || [];
+                results.sort((a, b) => b.timestamp - a.timestamp);
+                resolve(results);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all lookups across all books (sorted by timestamp descending)
+     * @returns {Promise<Object[]>}
+     */
+    async getAllLookups() {
+        const transaction = this._db.transaction([STORES.LOOKUPS], 'readonly');
+        const store = transaction.objectStore(STORES.LOOKUPS);
+
+        return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => {
+                const results = request.result || [];
+                results.sort((a, b) => b.timestamp - a.timestamp);
+                resolve(results);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete a lookup
+     * @param {string} id
+     * @returns {Promise<void>}
+     */
+    async deleteLookup(id) {
+        const transaction = this._db.transaction([STORES.LOOKUPS], 'readwrite');
+        const store = transaction.objectStore(STORES.LOOKUPS);
 
         return new Promise((resolve, reject) => {
             const request = store.delete(id);

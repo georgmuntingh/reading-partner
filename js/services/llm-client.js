@@ -320,6 +320,136 @@ export class LLMClient {
         }
     }
 
+    // ========== Word Lookup Methods ==========
+
+    /**
+     * Look up a word or phrase with structured JSON output
+     * @param {Object} options
+     * @param {string} options.phrase - The word or phrase to look up
+     * @param {string} options.sentenceContext - The surrounding sentence for context
+     * @param {string} [options.targetLanguage='auto'] - Target language for translation ('auto' = LLM decides)
+     * @param {{ title?: string, author?: string }} [options.bookMeta] - Book metadata
+     * @returns {Promise<Object>} Parsed lookup result
+     */
+    async lookupWord(options) {
+        if (!this._apiKey) {
+            throw new Error('API key not set');
+        }
+
+        const { phrase, sentenceContext, targetLanguage = 'auto', bookMeta } = options;
+
+        this._abortController = new AbortController();
+
+        const targetLangInstruction = targetLanguage === 'auto'
+            ? `Determine the most helpful language for the user based on context. If the phrase is in a foreign language, translate to English. If it's in English, provide the definition in English.`
+            : `Translate/define for a reader whose native language is ${targetLanguage}.`;
+
+        const systemPrompt = `You are a multilingual dictionary and translation assistant for a reading app. The user has selected a word or phrase while reading.
+
+${targetLangInstruction}
+
+Respond with ONLY a valid JSON object (no markdown fences, no extra text):
+{
+  "phrase": "the exact phrase looked up",
+  "sourceLanguage": "detected source language (e.g. English, Japanese, Norwegian)",
+  "sourceLanguageCode": "ISO 639-1 code (e.g. en, ja, no, nl, zh, fr)",
+  "partOfSpeech": "noun/verb/adjective/etc. or null if not applicable",
+  "pronunciation": "pronunciation guide (IPA or romanization for non-Latin scripts, e.g. furigana for Japanese)",
+  "definition": "clear, concise definition in the source language",
+  "translation": "translation into the target language, or null if source=target",
+  "exampleSentence": "a short example sentence using the phrase, or null",
+  "domain": "specialized domain if applicable (e.g. biomedical, legal, computing), or null",
+  "notes": "any additional useful context (etymology, usage notes, cultural context), or null"
+}
+
+Requirements:
+- For Japanese/Chinese: include romanization (romaji/pinyin) in pronunciation
+- For technical/biomedical terms: always fill the domain field and give a clear layperson explanation
+- Keep definitions concise (1-2 sentences)
+- If the phrase is idiomatic, explain the idiomatic meaning`;
+
+        let userMessage = '';
+        if (bookMeta?.title) {
+            userMessage += `Book: ${bookMeta.title}`;
+            if (bookMeta.author) userMessage += ` by ${bookMeta.author}`;
+            userMessage += '\n\n';
+        }
+        userMessage += `Phrase to look up: "${phrase}"`;
+        if (sentenceContext) {
+            userMessage += `\n\nContext sentence: "${sentenceContext}"`;
+        }
+
+        let response;
+        try {
+            response = await fetch(this._endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this._apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': window.location.origin,
+                    'X-Title': 'Reading Partner'
+                },
+                body: JSON.stringify({
+                    model: this._model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userMessage }
+                    ],
+                    max_tokens: 500,
+                    temperature: 0.3
+                }),
+                signal: this._abortController.signal
+            });
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request aborted');
+            }
+            throw error;
+        } finally {
+            this._abortController = null;
+        }
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error?.message || `API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+
+        return this._parseLookupJSON(content);
+    }
+
+    /**
+     * Parse lookup JSON from LLM response
+     * @param {string} text - Raw LLM response
+     * @returns {Object}
+     */
+    _parseLookupJSON(text) {
+        let cleaned = text.trim();
+        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        cleaned = cleaned.trim();
+
+        try {
+            const parsed = JSON.parse(cleaned);
+            if (!parsed.phrase || !parsed.definition) {
+                throw new Error('Missing required fields (phrase, definition)');
+            }
+            return parsed;
+        } catch (parseError) {
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.phrase || parsed.definition) return parsed;
+                } catch (e) {
+                    // Fall through
+                }
+            }
+            throw new Error(`Failed to parse lookup response: ${parseError.message}`);
+        }
+    }
+
     // ========== Quiz Methods ==========
 
     /**
