@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-11T10:38:01.621Z",
-  "commit": "12bc80f769b2417062ba58614aa865c4296d8523",
-  "commitShort": "12bc80f",
-  "branch": "claude/add-book-search-feature-R5NQD",
-  "lastCommitDate": "2026-02-11T10:29:43+00:00"
+  "buildTime": "2026-02-12T17:29:51.932Z",
+  "commit": "c6137dfb93ada15bb2b24c3d7f54c6e882e3e13b",
+  "commitShort": "c6137df",
+  "branch": "claude/word-lookup-translation-7s7J4",
+  "lastCommitDate": "2026-02-11T11:46:02+01:00"
 }
