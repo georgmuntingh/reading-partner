@@ -1357,6 +1357,16 @@ export class ReaderView {
                 this._hideHighlightToolbar();
             }
         });
+
+        // Suppress native context menu on reader content so the app's
+        // highlight/lookup toolbar is usable on mobile (Android Chrome
+        // shows its own menu on long-press that covers the custom toolbar).
+        const suppressContextMenu = (e) => {
+            if (this._isWithinReaderContent(e.target) || this._highlightToolbar.contains(e.target)) {
+                e.preventDefault();
+            }
+        };
+        document.addEventListener('contextmenu', suppressContextMenu);
     }
 
     /**

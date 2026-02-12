@@ -107,6 +107,7 @@
     padding: 2px 50px;
     box-sizing: border-box;
     line-height: 1.8;
+    -webkit-touch-callout: none;
 }
 
 /* Page container for pagination */
