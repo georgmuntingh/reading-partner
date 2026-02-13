@@ -17,10 +17,11 @@ export class ReaderView {
      * @param {(href: string) => void} [options.onLinkClick] - Callback when an internal EPUB link is clicked
      * @param {(src: string, alt: string) => void} [options.onImageClick] - Callback when an image is clicked
      * @param {(startIndex: number, endIndex: number, text: string) => void} [options.onHighlight] - Callback when user highlights text
+     * @param {(text: string, sentenceIndex: number) => void} [options.onLookup] - Callback when user looks up a word/phrase
      * @param {() => void} [options.onPrevChapter] - Callback when navigating to previous chapter
      * @param {() => void} [options.onNextChapter] - Callback when navigating to next chapter
      */
-    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight, onPrevChapter, onNextChapter }) {
+    constructor({ container, titleElement, bookTitleElement, onSentenceClick, onPageChange, onLinkClick, onImageClick, onHighlight, onLookup, onPrevChapter, onNextChapter }) {
         this._container = container;
         this._titleElement = titleElement;
         this._bookTitleElement = bookTitleElement;
@@ -29,6 +30,7 @@ export class ReaderView {
         this._onLinkClick = onLinkClick;
         this._onImageClick = onImageClick;
         this._onHighlight = onHighlight;
+        this._onLookup = onLookup;
         this._onPrevChapter = onPrevChapter;
         this._onNextChapter = onNextChapter;
 
@@ -104,6 +106,7 @@ export class ReaderView {
         this._textContent.parentElement.insertBefore(this._multiColumnContainer, this._textContent.nextSibling);
 
         // Event delegation for cloned column viewports
+        // Single click: images and links only
         this._multiColumnContainer.addEventListener('click', (e) => {
             // Check for image clicks
             const imgEl = e.target.closest('img');
@@ -129,14 +132,19 @@ export class ReaderView {
                     return;
                 }
             }
+        });
 
-            // Check for sentence clicks
+        // Double-click: select sentence for playback
+        this._multiColumnContainer.addEventListener('dblclick', (e) => {
             const sentenceEl = e.target.closest('.sentence');
             if (sentenceEl && sentenceEl.dataset.index !== undefined) {
                 const index = parseInt(sentenceEl.dataset.index, 10);
                 this._onSentenceClick?.(index);
             }
         });
+
+        // Long-press: select sentence for playback (touch devices)
+        this._setupLongPress(this._multiColumnContainer);
     }
 
     /**
@@ -334,6 +342,9 @@ export class ReaderView {
      * Setup event delegation for sentence clicks, image clicks, and internal link interception
      */
     _setupEventDelegation() {
+        // Single click: only handle images and links.
+        // Sentence selection for playback uses long-press / double-click
+        // so that single taps allow normal text selection for highlight/lookup.
         this._textContent.addEventListener('click', (e) => {
             // Check for image clicks first (before links, as images might be inside links)
             const imgEl = e.target.closest('img');
@@ -365,13 +376,77 @@ export class ReaderView {
                     return;
                 }
             }
+        });
 
+        // Double-click: select sentence for playback
+        this._textContent.addEventListener('dblclick', (e) => {
             const sentenceEl = e.target.closest('.sentence');
             if (sentenceEl && sentenceEl.dataset.index !== undefined) {
                 const index = parseInt(sentenceEl.dataset.index, 10);
                 this._onSentenceClick?.(index);
             }
         });
+
+        // Long-press: select sentence for playback (touch devices)
+        this._setupLongPress(this._textContent);
+    }
+
+    /**
+     * Setup long-press detection on an element for sentence selection.
+     * A long-press is a touch held for 500ms+ without significant movement.
+     * @param {HTMLElement} element
+     */
+    _setupLongPress(element) {
+        let longPressTimer = null;
+        let startX = 0;
+        let startY = 0;
+        let fired = false;
+
+        element.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            fired = false;
+
+            const target = e.target;
+            longPressTimer = setTimeout(() => {
+                fired = true;
+                const sentenceEl = target.closest('.sentence');
+                if (sentenceEl && sentenceEl.dataset.index !== undefined) {
+                    const index = parseInt(sentenceEl.dataset.index, 10);
+                    // Clear any text selection that started forming
+                    window.getSelection()?.removeAllRanges();
+                    this._hideHighlightToolbar();
+                    this._onSentenceClick?.(index);
+                }
+            }, 500);
+        }, { passive: true });
+
+        element.addEventListener('touchmove', (e) => {
+            if (longPressTimer && e.touches.length === 1) {
+                const dx = e.touches[0].clientX - startX;
+                const dy = e.touches[0].clientY - startY;
+                // Cancel if finger moved more than 10px
+                if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+        }, { passive: true });
+
+        element.addEventListener('touchend', () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, { passive: true });
+
+        element.addEventListener('touchcancel', () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, { passive: true });
     }
 
     /**
@@ -1313,6 +1388,13 @@ export class ReaderView {
                     <path d="M15.243 3.515l5.242 5.242-12.02 12.02H3.222v-5.243l12.02-12.02zm1.414-1.414l2.829 2.828-1.415 1.414-2.828-2.828 1.414-1.414z"/>
                 </svg>
             </button>
+            <span class="highlight-toolbar-divider"></span>
+            <button class="highlight-btn highlight-btn-lookup" title="Look up">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </button>
         `;
         document.body.appendChild(this._highlightToolbar);
 
@@ -1324,8 +1406,12 @@ export class ReaderView {
         this._highlightToolbar.addEventListener('click', (e) => {
             const btn = e.target.closest('.highlight-btn');
             if (btn) {
-                const color = btn.dataset.color;
-                this._createHighlightFromSelection(color);
+                if (btn.classList.contains('highlight-btn-lookup')) {
+                    this._lookupFromSelection();
+                } else {
+                    const color = btn.dataset.color;
+                    this._createHighlightFromSelection(color);
+                }
             }
         });
     }
@@ -1344,6 +1430,16 @@ export class ReaderView {
                 this._hideHighlightToolbar();
             }
         });
+
+        // Suppress native context menu on reader content so the app's
+        // highlight/lookup toolbar is usable on mobile (Android Chrome
+        // shows its own menu on long-press that covers the custom toolbar).
+        const suppressContextMenu = (e) => {
+            if (this._isWithinReaderContent(e.target) || this._highlightToolbar.contains(e.target)) {
+                e.preventDefault();
+            }
+        };
+        document.addEventListener('contextmenu', suppressContextMenu);
     }
 
     /**
@@ -1481,6 +1577,31 @@ export class ReaderView {
 
         // Notify callback
         this._onHighlight?.(startIndex, endIndex, text, color);
+    }
+
+    /**
+     * Look up the current text selection
+     */
+    _lookupFromSelection() {
+        const selection = window.getSelection();
+        if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+            return;
+        }
+
+        const range = selection.getRangeAt(0);
+        const startSentence = this._findSentenceElement(range.startContainer);
+        const text = selection.toString().trim();
+
+        if (!text) return;
+
+        const sentenceIndex = startSentence ? parseInt(startSentence.dataset.index, 10) : 0;
+
+        // Clear selection and hide toolbar
+        selection.removeAllRanges();
+        this._hideHighlightToolbar();
+
+        // Notify callback with the selected text and sentence index
+        this._onLookup?.(text, sentenceIndex);
     }
 
     /**

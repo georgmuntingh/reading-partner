@@ -16,6 +16,7 @@ export class NavigationPanel {
      * @param {() => void} callbacks.onAddBookmark
      * @param {(highlight: Object) => void} callbacks.onHighlightSelect
      * @param {(highlightId: string) => void} callbacks.onHighlightDelete
+     * @param {() => void} [callbacks.onViewLookupHistory] - Open full lookup history overlay
      */
     constructor(options, callbacks) {
         this._panel = options.panel;
@@ -27,6 +28,7 @@ export class NavigationPanel {
         this._currentChapterIndex = 0;
         this._bookmarks = [];
         this._highlights = [];
+        this._lookups = []; // Recent lookup entries for current book
         this._quizHistory = []; // Array of { chapterIndex, questions[] }
 
         this._setupEventListeners();
@@ -59,6 +61,15 @@ export class NavigationPanel {
         if (addBookmarkBtn) {
             addBookmarkBtn.addEventListener('click', () => {
                 this._callbacks.onAddBookmark?.();
+            });
+        }
+
+        // View lookup history button
+        const viewLookupHistoryBtn = this._panel.querySelector('#view-lookup-history-btn');
+        if (viewLookupHistoryBtn) {
+            viewLookupHistoryBtn.addEventListener('click', () => {
+                this.close();
+                this._callbacks.onViewLookupHistory?.();
             });
         }
     }
@@ -102,6 +113,15 @@ export class NavigationPanel {
     }
 
     /**
+     * Set lookups for the current book
+     * @param {Object[]} lookups - Array of lookup entries (most recent first)
+     */
+    setLookups(lookups) {
+        this._lookups = lookups;
+        this._renderLookups();
+    }
+
+    /**
      * Set quiz history data
      * @param {Object[]} quizHistory - Array of { chapterIndex, questions[] }
      */
@@ -121,6 +141,7 @@ export class NavigationPanel {
         this._renderChapters();
         this._renderBookmarks();
         this._renderHighlights();
+        this._renderLookups();
         this._renderQuizHistory();
     }
 
@@ -273,6 +294,46 @@ export class NavigationPanel {
             });
 
             highlightsList.appendChild(item);
+        });
+    }
+
+    /**
+     * Render recent lookups for the current book
+     */
+    _renderLookups() {
+        const lookupsList = this._panel.querySelector('#lookups-list');
+        if (!lookupsList) {
+            return;
+        }
+
+        if (!this._lookups || this._lookups.length === 0) {
+            lookupsList.innerHTML = '<div class="nav-empty">No lookups yet</div>';
+            return;
+        }
+
+        lookupsList.innerHTML = '';
+
+        // Show most recent 20 lookups
+        const recent = this._lookups.slice(0, 20);
+        recent.forEach(lookup => {
+            const item = document.createElement('div');
+            item.className = 'nav-item lookup-nav-item';
+
+            const r = lookup.result || {};
+            const phrase = this._escapeHtml(r.phrase || lookup.phrase);
+            const definition = r.definition
+                ? this._escapeHtml(r.definition.length > 60 ? r.definition.substring(0, 60) + '...' : r.definition)
+                : '';
+            const lang = r.sourceLanguage ? `<span class="lookup-nav-lang">${this._escapeHtml(r.sourceLanguage)}</span>` : '';
+
+            item.innerHTML = `
+                <div class="lookup-nav-content">
+                    <div class="lookup-nav-phrase">${phrase} ${lang}</div>
+                    <div class="lookup-nav-def">${definition}</div>
+                </div>
+            `;
+
+            lookupsList.appendChild(item);
         });
     }
 

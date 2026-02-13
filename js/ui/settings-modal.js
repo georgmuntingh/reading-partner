@@ -51,6 +51,8 @@ export class SettingsModal {
                 themes: false
             },
             quizSystemPrompt: '',
+            // Lookup settings
+            lookupLanguage: 'auto',
             // Reading history
             readingHistorySize: 3,
             // Multi-column layout
@@ -223,6 +225,34 @@ export class SettingsModal {
                                 Expand Abbreviations
                             </label>
                             <p class="form-hint">Expand common abbreviations (e.g., "Dr." → "Doctor", "St." → "Street")</p>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>Word Lookup</h3>
+
+                        <div class="form-group">
+                            <label for="settings-lookup-language">Translation Target Language</label>
+                            <select id="settings-lookup-language" class="form-select">
+                                <option value="auto">Auto (LLM decides)</option>
+                                <option value="English">English</option>
+                                <option value="Norwegian">Norwegian</option>
+                                <option value="Dutch">Dutch</option>
+                                <option value="Japanese">Japanese</option>
+                                <option value="German">German</option>
+                                <option value="French">French</option>
+                                <option value="Spanish">Spanish</option>
+                                <option value="Portuguese">Portuguese</option>
+                                <option value="Italian">Italian</option>
+                                <option value="Chinese">Chinese</option>
+                                <option value="Korean">Korean</option>
+                                <option value="Hindi">Hindi</option>
+                                <option value="Russian">Russian</option>
+                                <option value="Arabic">Arabic</option>
+                                <option value="Swedish">Swedish</option>
+                                <option value="Danish">Danish</option>
+                            </select>
+                            <p class="form-hint">Select text and tap "Look up" in the toolbar to look up words and phrases. When set to Auto, the LLM determines the best language for definitions/translations based on context.</p>
                         </div>
                     </div>
 
@@ -447,6 +477,7 @@ export class SettingsModal {
             fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
             fastApiStatus: this._container.querySelector('#settings-fastapi-status'),
             ttsBackendHint: this._container.querySelector('#settings-tts-backend-hint'),
+            lookupLanguage: this._container.querySelector('#settings-lookup-language'),
             normalizeText: this._container.querySelector('#settings-normalize-text'),
             normalizeNumbers: this._container.querySelector('#settings-normalize-numbers'),
             normalizeAbbreviations: this._container.querySelector('#settings-normalize-abbreviations'),
@@ -753,6 +784,8 @@ export class SettingsModal {
             normalizeText: this._elements.normalizeText.checked,
             normalizeNumbers: this._elements.normalizeNumbers.checked,
             normalizeAbbreviations: this._elements.normalizeAbbreviations.checked,
+            // Lookup settings
+            lookupLanguage: this._elements.lookupLanguage.value,
             // Quiz settings
             quizMode: this._elements.quizMode.value,
             quizGuided: this._elements.quizGuided.checked,
@@ -909,6 +942,9 @@ export class SettingsModal {
         this._elements.normalizeText.checked = this._settings.normalizeText !== false;
         this._elements.normalizeNumbers.checked = this._settings.normalizeNumbers !== false;
         this._elements.normalizeAbbreviations.checked = this._settings.normalizeAbbreviations !== false;
+
+        // Load lookup settings
+        this._elements.lookupLanguage.value = this._settings.lookupLanguage || 'auto';
 
         // Load quiz settings
         this._elements.quizMode.value = this._settings.quizMode || 'multiple-choice';
