@@ -106,6 +106,7 @@ export class ReaderView {
         this._textContent.parentElement.insertBefore(this._multiColumnContainer, this._textContent.nextSibling);
 
         // Event delegation for cloned column viewports
+        // Single click: images and links only
         this._multiColumnContainer.addEventListener('click', (e) => {
             // Check for image clicks
             const imgEl = e.target.closest('img');
@@ -131,14 +132,19 @@ export class ReaderView {
                     return;
                 }
             }
+        });
 
-            // Check for sentence clicks
+        // Double-click: select sentence for playback
+        this._multiColumnContainer.addEventListener('dblclick', (e) => {
             const sentenceEl = e.target.closest('.sentence');
             if (sentenceEl && sentenceEl.dataset.index !== undefined) {
                 const index = parseInt(sentenceEl.dataset.index, 10);
                 this._onSentenceClick?.(index);
             }
         });
+
+        // Long-press: select sentence for playback (touch devices)
+        this._setupLongPress(this._multiColumnContainer);
     }
 
     /**
@@ -336,6 +342,9 @@ export class ReaderView {
      * Setup event delegation for sentence clicks, image clicks, and internal link interception
      */
     _setupEventDelegation() {
+        // Single click: only handle images and links.
+        // Sentence selection for playback uses long-press / double-click
+        // so that single taps allow normal text selection for highlight/lookup.
         this._textContent.addEventListener('click', (e) => {
             // Check for image clicks first (before links, as images might be inside links)
             const imgEl = e.target.closest('img');
@@ -367,13 +376,77 @@ export class ReaderView {
                     return;
                 }
             }
+        });
 
+        // Double-click: select sentence for playback
+        this._textContent.addEventListener('dblclick', (e) => {
             const sentenceEl = e.target.closest('.sentence');
             if (sentenceEl && sentenceEl.dataset.index !== undefined) {
                 const index = parseInt(sentenceEl.dataset.index, 10);
                 this._onSentenceClick?.(index);
             }
         });
+
+        // Long-press: select sentence for playback (touch devices)
+        this._setupLongPress(this._textContent);
+    }
+
+    /**
+     * Setup long-press detection on an element for sentence selection.
+     * A long-press is a touch held for 500ms+ without significant movement.
+     * @param {HTMLElement} element
+     */
+    _setupLongPress(element) {
+        let longPressTimer = null;
+        let startX = 0;
+        let startY = 0;
+        let fired = false;
+
+        element.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) return;
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            fired = false;
+
+            const target = e.target;
+            longPressTimer = setTimeout(() => {
+                fired = true;
+                const sentenceEl = target.closest('.sentence');
+                if (sentenceEl && sentenceEl.dataset.index !== undefined) {
+                    const index = parseInt(sentenceEl.dataset.index, 10);
+                    // Clear any text selection that started forming
+                    window.getSelection()?.removeAllRanges();
+                    this._hideHighlightToolbar();
+                    this._onSentenceClick?.(index);
+                }
+            }, 500);
+        }, { passive: true });
+
+        element.addEventListener('touchmove', (e) => {
+            if (longPressTimer && e.touches.length === 1) {
+                const dx = e.touches[0].clientX - startX;
+                const dy = e.touches[0].clientY - startY;
+                // Cancel if finger moved more than 10px
+                if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+        }, { passive: true });
+
+        element.addEventListener('touchend', () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, { passive: true });
+
+        element.addEventListener('touchcancel', () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        }, { passive: true });
     }
 
     /**
