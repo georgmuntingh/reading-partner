@@ -5,6 +5,7 @@
 
 import { storage } from '../services/storage.js';
 import { getParser, getParserForFile, detectFileType } from '../services/parser-factory.js';
+import { PlainTextParser } from '../services/plain-text-parser.js';
 
 export class ReadingStateController {
     /**
@@ -86,6 +87,69 @@ export class ReadingStateController {
 
         // Load highlights
         this._highlights = await storage.getHighlights(book.id);
+
+        return book;
+    }
+
+    /**
+     * Load pasted text content as a book
+     * @param {string} text - The pasted text content
+     * @param {string} format - Detected format: 'html', 'markdown', or 'plaintext'
+     * @param {string} title - Title for the content
+     * @returns {Promise<Object>} book
+     */
+    async loadPastedContent(text, format, title) {
+        let parser;
+        let book;
+
+        if (format === 'html') {
+            parser = getParser('html');
+            // Create a minimal File-like object for the HTML parser
+            const blob = new Blob([text], { type: 'text/html' });
+            const file = new File([blob], `${title}.html`, { type: 'text/html' });
+            book = await parser.loadFromFile(file);
+            book.fileType = 'html';
+        } else if (format === 'markdown') {
+            parser = getParser('markdown');
+            const blob = new Blob([text], { type: 'text/markdown' });
+            const file = new File([blob], `${title}.md`, { type: 'text/markdown' });
+            book = await parser.loadFromFile(file);
+            book.fileType = 'markdown';
+        } else {
+            // Plain text
+            parser = getParser('plaintext');
+            book = await parser.loadFromText(text, title);
+            book.fileType = 'plaintext';
+        }
+
+        // Override with user-specified title
+        book.title = title;
+
+        // Generate a unique ID for pasted content
+        book.id = this._generateBookId('pasted_' + title);
+
+        // Store source information
+        book.source = {
+            type: 'pasted',
+            format
+        };
+
+        // Store raw text as fileData
+        book.fileData = text;
+
+        // Save to storage
+        await storage.saveBook(book);
+
+        this._currentBook = book;
+
+        // Fresh position for new pasted content
+        this._position = { chapterIndex: 0, sentenceIndex: 0 };
+
+        // Load bookmarks (none for new content)
+        this._bookmarks = [];
+
+        // Load highlights (none for new content)
+        this._highlights = [];
 
         return book;
     }

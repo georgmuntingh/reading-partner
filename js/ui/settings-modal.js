@@ -1019,12 +1019,15 @@ export class SettingsModal {
         voices.forEach(voice => {
             const option = document.createElement('option');
             option.value = voice.id;
-            option.textContent = voice.name;
+            option.textContent = voice.disabled
+                ? `${voice.name} (FastAPI only)`
+                : voice.name;
+            option.disabled = !!voice.disabled;
             this._elements.voice.appendChild(option);
         });
 
-        // Restore previous selection if it exists
-        if (voices.some(v => v.id === currentValue)) {
+        // Restore previous selection if it exists and is not disabled
+        if (voices.some(v => v.id === currentValue && !v.disabled)) {
             this._elements.voice.value = currentValue;
         }
     }

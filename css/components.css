@@ -1930,6 +1930,209 @@
     color: #92400e;
 }
 
+/* Paste Text Section */
+.paste-toggle-wrapper {
+    text-align: center;
+    margin-top: var(--spacing-sm);
+}
+
+.paste-toggle-btn {
+    background: none;
+    border: none;
+    color: var(--primary-color);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    transition: color 0.2s ease;
+}
+
+.paste-toggle-btn:hover {
+    color: var(--primary-hover);
+    text-decoration: underline;
+}
+
+.paste-text-section {
+    margin-top: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.paste-title-row {
+    display: flex;
+}
+
+.paste-title-row .form-input {
+    width: 100%;
+}
+
+.paste-text-input {
+    width: 100%;
+    min-height: 150px;
+    max-height: 300px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-family: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.paste-text-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.paste-text-input::placeholder {
+    color: var(--text-secondary);
+}
+
+.paste-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+}
+
+.paste-format-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-color);
+    color: var(--text-secondary);
+    letter-spacing: 0.03em;
+}
+
+.paste-format-html {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.paste-format-markdown {
+    background-color: #dcfce7;
+    color: #166534;
+}
+
+.paste-format-plaintext {
+    background-color: #f0f0f0;
+    color: #555;
+}
+
+.paste-char-count {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.paste-char-over {
+    color: var(--error-color, #dc2626);
+    font-weight: 600;
+}
+
+/* Paste Preview */
+.paste-preview-section {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.paste-preview-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background-color: var(--bg-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.paste-preview {
+    padding: var(--spacing-sm) var(--spacing-md);
+    max-height: 160px;
+    overflow-y: auto;
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    line-height: 1.6;
+    background-color: var(--surface-color);
+}
+
+.paste-preview p {
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+.paste-preview p:last-child {
+    margin-bottom: 0;
+}
+
+.paste-preview h1,
+.paste-preview h2,
+.paste-preview h3,
+.paste-preview h4,
+.paste-preview h5,
+.paste-preview h6 {
+    margin: 0 0 var(--spacing-xs) 0;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.paste-preview h1 { font-size: var(--font-size-lg); }
+.paste-preview h2 { font-size: var(--font-size-base); }
+.paste-preview h3 { font-size: var(--font-size-sm); }
+
+.paste-preview ul,
+.paste-preview ol {
+    margin: 0 0 var(--spacing-sm) 0;
+    padding-left: var(--spacing-lg);
+}
+
+.paste-preview code {
+    background-color: var(--bg-color);
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    font-size: 0.9em;
+}
+
+.paste-preview pre {
+    background-color: var(--bg-color);
+    padding: var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    font-size: var(--font-size-xs);
+}
+
+.paste-preview blockquote {
+    border-left: 3px solid var(--border-color);
+    padding-left: var(--spacing-sm);
+    margin: 0 0 var(--spacing-sm) 0;
+    color: var(--text-secondary);
+}
+
+.paste-preview img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Paste icon in resume list */
+.resume-paste-icon {
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 2px;
+    color: var(--primary-color);
+}
+
+/* Format badge for plain text */
+.format-plaintext {
+    background-color: #f0f0f0;
+    color: #555;
+}
+
 /* Gutenberg Search Styles */
 .gutenberg-search-section {
     margin-bottom: var(--spacing-md);

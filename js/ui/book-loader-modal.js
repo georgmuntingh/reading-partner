@@ -4,8 +4,15 @@
  */
 
 import { FORMAT_LABELS } from '../services/parser-factory.js';
+import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
+import { marked } from 'marked';
 
 export class BookLoaderModal {
+    /**
+     * Maximum size for pasted content (2 MB)
+     */
+    static PASTE_MAX_BYTES = 2 * 1024 * 1024;
+
     /**
      * @param {Object} options
      * @param {HTMLElement} options.container - Container element for the modal
@@ -14,11 +21,13 @@ export class BookLoaderModal {
      * @param {(file: File, source: Object) => void} callbacks.onFileSelect - File selected from device
      * @param {(bookId: string) => void} callbacks.onGutenbergLoad - Load from Gutenberg
      * @param {(savedState: Object) => void} callbacks.onResumeBook - Resume a previously read book
+     * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
      */
     constructor(options, callbacks) {
         this._container = options.container;
         this._callbacks = callbacks;
         this._readingHistory = [];
+        this._pasteExpanded = false;
 
         this._buildUI();
         this._setupEventListeners();
@@ -61,6 +70,26 @@ export class BookLoaderModal {
                         <button class="btn btn-primary book-source-btn" id="browse-local-btn">
                             Browse Files
                         </button>
+                        <div class="paste-toggle-wrapper">
+                            <button class="paste-toggle-btn" id="paste-toggle-btn">or paste text directly</button>
+                        </div>
+                        <div class="paste-text-section hidden" id="paste-text-section">
+                            <div class="paste-title-row">
+                                <input type="text" id="paste-title-input" class="form-input" placeholder="Title (optional - auto-generated from content)">
+                            </div>
+                            <textarea id="paste-text-input" class="paste-text-input" placeholder="Paste your Markdown, HTML, or plain text here..." rows="8"></textarea>
+                            <div class="paste-meta-row">
+                                <span class="paste-format-badge" id="paste-format-badge">Plain Text</span>
+                                <span class="paste-char-count" id="paste-char-count">0 / 2,000,000 chars</span>
+                            </div>
+                            <div class="paste-preview-section hidden" id="paste-preview-section">
+                                <div class="paste-preview-label">Preview</div>
+                                <div class="paste-preview" id="paste-preview"></div>
+                            </div>
+                            <button class="btn btn-primary book-source-btn" id="paste-load-btn" disabled>
+                                Load Pasted Text
+                            </button>
+                        </div>
                     </div>
 
                     <div class="book-source-divider">
@@ -138,6 +167,16 @@ export class BookLoaderModal {
             continueReading: this._container.querySelector('#modal-continue-reading'),
             fileInput: this._container.querySelector('#book-loader-file-input'),
             browseLocalBtn: this._container.querySelector('#browse-local-btn'),
+            // Paste text elements
+            pasteToggleBtn: this._container.querySelector('#paste-toggle-btn'),
+            pasteSection: this._container.querySelector('#paste-text-section'),
+            pasteTitleInput: this._container.querySelector('#paste-title-input'),
+            pasteTextInput: this._container.querySelector('#paste-text-input'),
+            pasteFormatBadge: this._container.querySelector('#paste-format-badge'),
+            pasteCharCount: this._container.querySelector('#paste-char-count'),
+            pastePreviewSection: this._container.querySelector('#paste-preview-section'),
+            pastePreview: this._container.querySelector('#paste-preview'),
+            pasteLoadBtn: this._container.querySelector('#paste-load-btn'),
             // Search elements
             searchInput: this._container.querySelector('#gutenberg-search-input'),
             searchBtn: this._container.querySelector('#gutenberg-search-btn'),
@@ -200,6 +239,27 @@ export class BookLoaderModal {
             e.target.value = '';
         });
 
+        // Paste text toggle
+        this._elements.pasteToggleBtn.addEventListener('click', () => {
+            this._togglePasteSection();
+        });
+
+        // Paste text input - update preview, format badge, and char count
+        this._pasteInputDebounce = null;
+        this._elements.pasteTextInput.addEventListener('input', () => {
+            this._updatePasteMeta();
+            // Debounce preview rendering
+            clearTimeout(this._pasteInputDebounce);
+            this._pasteInputDebounce = setTimeout(() => {
+                this._updatePastePreview();
+            }, 300);
+        });
+
+        // Paste load button
+        this._elements.pasteLoadBtn.addEventListener('click', () => {
+            this._submitPastedText();
+        });
+
         // Load from Gutenberg button
         this._elements.loadGutenbergBtn.addEventListener('click', () => {
             this._loadFromGutenberg();
@@ -236,6 +296,191 @@ export class BookLoaderModal {
                 }
             }
         });
+    }
+
+    /**
+     * Toggle the paste text section visibility
+     */
+    _togglePasteSection() {
+        this._pasteExpanded = !this._pasteExpanded;
+        if (this._pasteExpanded) {
+            this._elements.pasteSection.classList.remove('hidden');
+            this._elements.pasteToggleBtn.textContent = 'hide paste area';
+            this._elements.pasteTextInput.focus();
+        } else {
+            this._elements.pasteSection.classList.add('hidden');
+            this._elements.pasteToggleBtn.textContent = 'or paste text directly';
+        }
+    }
+
+    /**
+     * Update paste metadata (format badge, char count, load button state)
+     */
+    _updatePasteMeta() {
+        const text = this._elements.pasteTextInput.value;
+        const byteLength = new TextEncoder().encode(text).length;
+        const maxBytes = BookLoaderModal.PASTE_MAX_BYTES;
+
+        // Update char count
+        const charDisplay = text.length.toLocaleString();
+        const maxDisplay = maxBytes.toLocaleString();
+        this._elements.pasteCharCount.textContent = `${charDisplay} / ${maxDisplay} chars`;
+
+        // Color the count if over limit
+        if (byteLength > maxBytes) {
+            this._elements.pasteCharCount.classList.add('paste-char-over');
+        } else {
+            this._elements.pasteCharCount.classList.remove('paste-char-over');
+        }
+
+        // Update format badge
+        if (text.trim()) {
+            const format = detectPastedFormat(text);
+            this._elements.pasteFormatBadge.textContent = getFormatLabel(format);
+            this._elements.pasteFormatBadge.className = `paste-format-badge paste-format-${format}`;
+        } else {
+            this._elements.pasteFormatBadge.textContent = 'Plain Text';
+            this._elements.pasteFormatBadge.className = 'paste-format-badge';
+        }
+
+        // Enable/disable load button
+        this._elements.pasteLoadBtn.disabled = !text.trim() || byteLength > maxBytes;
+    }
+
+    /**
+     * Update the live preview of pasted content
+     */
+    _updatePastePreview() {
+        const text = this._elements.pasteTextInput.value.trim();
+
+        if (!text) {
+            this._elements.pastePreviewSection.classList.add('hidden');
+            this._elements.pastePreview.innerHTML = '';
+            return;
+        }
+
+        this._elements.pastePreviewSection.classList.remove('hidden');
+
+        const format = detectPastedFormat(text);
+        // Only preview first ~2000 characters for performance
+        const previewText = text.substring(0, 2000);
+        let previewHtml = '';
+
+        try {
+            switch (format) {
+                case 'html':
+                    previewHtml = this._sanitizePreviewHtml(previewText);
+                    break;
+                case 'markdown':
+                    previewHtml = this._sanitizePreviewHtml(marked.parse(previewText));
+                    break;
+                case 'plaintext':
+                default:
+                    previewHtml = this._plainTextToPreviewHtml(previewText);
+                    break;
+            }
+        } catch {
+            previewHtml = this._plainTextToPreviewHtml(previewText);
+        }
+
+        this._elements.pastePreview.innerHTML = previewHtml;
+    }
+
+    /**
+     * Sanitize HTML for safe preview rendering
+     * @param {string} html
+     * @returns {string}
+     */
+    _sanitizePreviewHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const body = doc.body;
+
+        // Remove dangerous elements
+        body.querySelectorAll('script, style, iframe, object, embed, link').forEach(el => el.remove());
+
+        // Remove event handler attributes
+        body.querySelectorAll('*').forEach(el => {
+            const attrs = [...el.attributes];
+            for (const attr of attrs) {
+                if (attr.name.startsWith('on') || attr.name === 'style') {
+                    el.removeAttribute(attr.name);
+                }
+            }
+        });
+
+        return body.innerHTML;
+    }
+
+    /**
+     * Convert plain text to HTML for preview
+     * @param {string} text
+     * @returns {string}
+     */
+    _plainTextToPreviewHtml(text) {
+        const escaped = this._escapeHtml(text);
+        const paragraphs = escaped.split(/\n{2,}/);
+        return paragraphs
+            .map(p => p.trim())
+            .filter(p => p.length > 0)
+            .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+            .join('');
+    }
+
+    /**
+     * Submit pasted text content
+     */
+    _submitPastedText() {
+        const text = this._elements.pasteTextInput.value;
+        if (!text.trim()) {
+            this._showError('Please paste some text content');
+            return;
+        }
+
+        const byteLength = new TextEncoder().encode(text).length;
+        if (byteLength > BookLoaderModal.PASTE_MAX_BYTES) {
+            this._showError(`Content exceeds the ${(BookLoaderModal.PASTE_MAX_BYTES / 1024 / 1024).toFixed(0)} MB size limit`);
+            return;
+        }
+
+        const format = detectPastedFormat(text);
+        const userTitle = this._elements.pasteTitleInput.value.trim();
+        const title = userTitle || this._autoGenerateTitle(text, format);
+
+        this._hideError();
+        this._callbacks.onPasteText?.(text, format, title);
+    }
+
+    /**
+     * Auto-generate a title from the pasted content
+     * @param {string} text
+     * @param {string} format
+     * @returns {string}
+     */
+    _autoGenerateTitle(text, format) {
+        // Try to extract heading from content
+        if (format === 'markdown') {
+            const headingMatch = text.match(/^#\s+(.+)$/m);
+            if (headingMatch) {
+                return headingMatch[1].trim().substring(0, 100);
+            }
+        }
+
+        if (format === 'html') {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(text, 'text/html');
+            const title = doc.querySelector('title')?.textContent?.trim();
+            if (title) return title.substring(0, 100);
+            const h1 = doc.querySelector('h1')?.textContent?.trim();
+            if (h1) return h1.substring(0, 100);
+        }
+
+        // Fall back to first line or first few words
+        const firstLine = text.trim().split('\n')[0].replace(/^#+\s*/, '').trim();
+        if (firstLine.length <= 60) {
+            return firstLine || 'Pasted Text';
+        }
+        return firstLine.substring(0, 57) + '...';
     }
 
     /**
@@ -449,9 +694,15 @@ export class BookLoaderModal {
             const ftLabel = FORMAT_LABELS[ft] || ft.toUpperCase();
             const formatBadge = `<span class="format-badge format-badge-sm format-${ft}">${ftLabel}</span>`;
 
+            const pasteIcon = savedState.source?.type === 'pasted'
+                ? '<svg class="resume-paste-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> '
+                : '';
+
             let sourceText = '';
             if (savedState.source?.type === 'gutenberg') {
                 sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
+            } else if (savedState.source?.type === 'pasted') {
+                sourceText = ' <span class="resume-source">pasted</span>';
             }
 
             const stats = [];
@@ -466,7 +717,7 @@ export class BookLoaderModal {
             html += `
                 <div class="modal-resume-item" data-book-id="${this._escapeHtml(savedState.bookId)}">
                     <div class="resume-info">
-                        <div class="resume-detail">${formatBadge} "${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
+                        <div class="resume-detail">${formatBadge} ${pasteIcon}"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
                         <div class="resume-time">Last read ${timeAgo}</div>
                     </div>
                     <button class="btn btn-primary btn-sm resume-btn">Resume</button>
@@ -529,6 +780,20 @@ export class BookLoaderModal {
         this._hideLoading();
         this._hideError();
 
+        // Reset paste section
+        this._elements.pasteTextInput.value = '';
+        this._elements.pasteTitleInput.value = '';
+        this._elements.pasteSection.classList.add('hidden');
+        this._elements.pastePreviewSection.classList.add('hidden');
+        this._elements.pastePreview.innerHTML = '';
+        this._elements.pasteLoadBtn.disabled = true;
+        this._elements.pasteToggleBtn.textContent = 'or paste text directly';
+        this._elements.pasteFormatBadge.textContent = 'Plain Text';
+        this._elements.pasteFormatBadge.className = 'paste-format-badge';
+        this._elements.pasteCharCount.textContent = `0 / ${BookLoaderModal.PASTE_MAX_BYTES.toLocaleString()} chars`;
+        this._elements.pasteCharCount.classList.remove('paste-char-over');
+        this._pasteExpanded = false;
+
         // Render the continue reading section
         this._renderContinueReading();
 
@@ -574,6 +839,7 @@ export class BookLoaderModal {
         this._elements.loading.classList.remove('hidden');
         this._elements.browseLocalBtn.disabled = true;
         this._elements.loadGutenbergBtn.disabled = true;
+        this._elements.pasteLoadBtn.disabled = true;
     }
 
     /**
@@ -583,6 +849,10 @@ export class BookLoaderModal {
         this._elements.loading.classList.add('hidden');
         this._elements.browseLocalBtn.disabled = false;
         this._elements.loadGutenbergBtn.disabled = false;
+        // Re-enable paste button only if there's content
+        const text = this._elements.pasteTextInput.value;
+        const byteLength = new TextEncoder().encode(text).length;
+        this._elements.pasteLoadBtn.disabled = !text.trim() || byteLength > BookLoaderModal.PASTE_MAX_BYTES;
     }
 
     /**
@@ -622,5 +892,6 @@ export class BookLoaderModal {
      */
     destroy() {
         document.removeEventListener('keydown', this._escapeHandler);
+        clearTimeout(this._pasteInputDebounce);
     }
 }
