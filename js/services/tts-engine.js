@@ -871,43 +871,7 @@ export class TTSEngine {
                 { id: 'bm_daniel', name: 'Daniel (British Male)' },
                 { id: 'bm_fable', name: 'Fable (British Male)' },
                 { id: 'bm_george', name: 'George (British Male)' },
-                { id: 'bm_lewis', name: 'Lewis (British Male)' },
-
-                // Japanese
-                { id: 'jf_alpha', name: 'Alpha (Japanese Female)' },
-                { id: 'jf_gongitsune', name: 'Gongitsune (Japanese Female)' },
-                { id: 'jf_nezumi', name: 'Nezumi (Japanese Female)' },
-                { id: 'jm_kumo', name: 'Kumo (Japanese Male)' },
-
-                // Chinese (Mandarin)
-                { id: 'zf_xiaobei', name: 'Xiaobei (Chinese Female)' },
-                { id: 'zf_xiaoni', name: 'Xiaoni (Chinese Female)' },
-                { id: 'zf_xiaoxuan', name: 'Xiaoxuan (Chinese Female)' },
-                { id: 'zm_yunjian', name: 'Yunjian (Chinese Male)' },
-                { id: 'zm_yunxi', name: 'Yunxi (Chinese Male)' },
-                { id: 'zm_yunyang', name: 'Yunyang (Chinese Male)' },
-
-                // French
-                { id: 'ff_siwis', name: 'Siwis (French Female)' },
-
-                // Hindi
-                { id: 'hf_alpha', name: 'Alpha (Hindi Female)' },
-                { id: 'hf_beta', name: 'Beta (Hindi Female)' },
-                { id: 'hm_omega', name: 'Omega (Hindi Male)' },
-                { id: 'hm_psi', name: 'Psi (Hindi Male)' },
-
-                // Italian
-                { id: 'if_sara', name: 'Sara (Italian Female)' },
-                { id: 'im_nicola', name: 'Nicola (Italian Male)' },
-
-                // Portuguese (Brazilian)
-                { id: 'pf_dora', name: 'Dora (Portuguese Female)' },
-                { id: 'pm_alex', name: 'Alex (Portuguese Male)' },
-                { id: 'pm_santa', name: 'Santa (Portuguese Male)' },
-
-                // Spanish
-                { id: 'sf_dalia', name: 'Dalia (Spanish Female)' },
-                { id: 'sm_agustin', name: 'Agustin (Spanish Male)' }
+                { id: 'bm_lewis', name: 'Lewis (British Male)' }
             ];
         } else {
             // Web Speech voices
@@ -929,13 +893,6 @@ export class TTSEngine {
     getVoiceForLanguage(langCode) {
         const prefixMap = {
             'en': 'af_', // American English by default
-            'ja': 'jf_',
-            'zh': 'zf_',
-            'fr': 'ff_',
-            'hi': 'hf_',
-            'it': 'if_',
-            'pt': 'pf_',
-            'es': 'sf_',
         };
 
         const prefix = prefixMap[langCode];
