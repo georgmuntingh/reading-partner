@@ -225,7 +225,8 @@ class ReadingPartnerApp {
                 onClose: () => this._bookLoaderModal.hide(),
                 onFileSelect: (file, source) => this._handleFileSelect(file, source),
                 onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId),
-                onResumeBook: (savedState) => this._handleResumeFromModal(savedState)
+                onResumeBook: (savedState) => this._handleResumeFromModal(savedState),
+                onPasteText: (text, format, title) => this._handlePasteText(text, format, title)
             }
         );
 
@@ -491,6 +492,94 @@ class ReadingPartnerApp {
 
         // Load the book
         await this._loadBook(file, source);
+    }
+
+    /**
+     * Handle pasted text from the book loader modal
+     * @param {string} text
+     * @param {string} format
+     * @param {string} title
+     */
+    async _handlePasteText(text, format, title) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+
+        if (isFromReader) {
+            this._pause();
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
+            }
+            this._quizController?.resetSession();
+            this._currentChapterIndex = 0;
+        }
+
+        // Hide the modal
+        this._bookLoaderModal.hide();
+
+        const { loadingIndicator, loadingText } = this._elements;
+
+        try {
+            if (isFromReader) {
+                this._showTTSStatus('Loading pasted content...');
+            } else {
+                loadingIndicator.classList.remove('hidden');
+                loadingText.textContent = 'Parsing pasted content...';
+            }
+
+            this._currentBook = await this._readingState.loadPastedContent(text, format, title);
+
+            if (!this._currentBook.chapters.length) {
+                throw new Error('No readable content found in pasted text');
+            }
+
+            if (isFromReader) {
+                this._showTTSStatus('Preparing reader...');
+            } else {
+                loadingText.textContent = 'Preparing reader...';
+            }
+
+            if (!this._controls) {
+                this._initializeReader();
+            } else {
+                this._readerView.setBookTitle(this._currentBook.title);
+                this._controls.setEnabled(true);
+                this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
+            }
+
+            this._navigationHistory?.clear();
+            this._viewDecoupled = false;
+
+            const position = this._readingState.getCurrentPosition();
+            await this._loadChapter(position.chapterIndex, false);
+
+            this._navigation.setBook(this._currentBook, position.chapterIndex);
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+            this._navigation.setHighlights(this._readingState.getHighlights());
+            this._refreshLookupNav();
+            this._loadQuizHistory();
+
+            this._showScreen('reader');
+            this._saveCookieState();
+
+            if (isFromReader) {
+                this._hideTTSStatus();
+                this._showToast(`Loaded "${this._currentBook.title}"`);
+            }
+        } catch (error) {
+            console.error('Failed to load pasted content:', error);
+            if (isFromReader) {
+                this._hideTTSStatus();
+                this._showToast(`Failed to load: ${error.message}`);
+            } else {
+                loadingIndicator.classList.add('hidden');
+                this._bookLoaderModal.show();
+                this._bookLoaderModal.showError(error.message);
+            }
+        }
     }
 
     /**
