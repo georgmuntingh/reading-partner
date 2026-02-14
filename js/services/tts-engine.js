@@ -832,10 +832,13 @@ export class TTSEngine {
 
     /**
      * Get available voices
-     * @returns {Array<{id: string, name: string}>}
+     * @returns {Array<{id: string, name: string, disabled?: boolean}>}
      */
     getAvailableVoices() {
         if (this._useKokoro) {
+            // Non-English voices require the FastAPI backend
+            const needsFastAPI = this._backend !== 'kokoro-fastapi';
+
             // Kokoro voices - organized by accent and gender
             return [
                 // American Female
@@ -871,7 +874,43 @@ export class TTSEngine {
                 { id: 'bm_daniel', name: 'Daniel (British Male)' },
                 { id: 'bm_fable', name: 'Fable (British Male)' },
                 { id: 'bm_george', name: 'George (British Male)' },
-                { id: 'bm_lewis', name: 'Lewis (British Male)' }
+                { id: 'bm_lewis', name: 'Lewis (British Male)' },
+
+                // Japanese (FastAPI only)
+                { id: 'jf_alpha', name: 'Alpha (Japanese Female)', disabled: needsFastAPI },
+                { id: 'jf_gongitsune', name: 'Gongitsune (Japanese Female)', disabled: needsFastAPI },
+                { id: 'jf_nezumi', name: 'Nezumi (Japanese Female)', disabled: needsFastAPI },
+                { id: 'jm_kumo', name: 'Kumo (Japanese Male)', disabled: needsFastAPI },
+
+                // Chinese Mandarin (FastAPI only)
+                { id: 'zf_xiaobei', name: 'Xiaobei (Chinese Female)', disabled: needsFastAPI },
+                { id: 'zf_xiaoni', name: 'Xiaoni (Chinese Female)', disabled: needsFastAPI },
+                { id: 'zf_xiaoxuan', name: 'Xiaoxuan (Chinese Female)', disabled: needsFastAPI },
+                { id: 'zm_yunjian', name: 'Yunjian (Chinese Male)', disabled: needsFastAPI },
+                { id: 'zm_yunxi', name: 'Yunxi (Chinese Male)', disabled: needsFastAPI },
+                { id: 'zm_yunyang', name: 'Yunyang (Chinese Male)', disabled: needsFastAPI },
+
+                // French (FastAPI only)
+                { id: 'ff_siwis', name: 'Siwis (French Female)', disabled: needsFastAPI },
+
+                // Hindi (FastAPI only)
+                { id: 'hf_alpha', name: 'Alpha (Hindi Female)', disabled: needsFastAPI },
+                { id: 'hf_beta', name: 'Beta (Hindi Female)', disabled: needsFastAPI },
+                { id: 'hm_omega', name: 'Omega (Hindi Male)', disabled: needsFastAPI },
+                { id: 'hm_psi', name: 'Psi (Hindi Male)', disabled: needsFastAPI },
+
+                // Italian (FastAPI only)
+                { id: 'if_sara', name: 'Sara (Italian Female)', disabled: needsFastAPI },
+                { id: 'im_nicola', name: 'Nicola (Italian Male)', disabled: needsFastAPI },
+
+                // Portuguese Brazilian (FastAPI only)
+                { id: 'pf_dora', name: 'Dora (Portuguese Female)', disabled: needsFastAPI },
+                { id: 'pm_alex', name: 'Alex (Portuguese Male)', disabled: needsFastAPI },
+                { id: 'pm_santa', name: 'Santa (Portuguese Male)', disabled: needsFastAPI },
+
+                // Spanish (FastAPI only)
+                { id: 'sf_dalia', name: 'Dalia (Spanish Female)', disabled: needsFastAPI },
+                { id: 'sm_agustin', name: 'Agustin (Spanish Male)', disabled: needsFastAPI }
             ];
         } else {
             // Web Speech voices
@@ -893,6 +932,13 @@ export class TTSEngine {
     getVoiceForLanguage(langCode) {
         const prefixMap = {
             'en': 'af_', // American English by default
+            'ja': 'jf_',
+            'zh': 'zf_',
+            'fr': 'ff_',
+            'hi': 'hf_',
+            'it': 'if_',
+            'pt': 'pf_',
+            'es': 'sf_',
         };
 
         const prefix = prefixMap[langCode];

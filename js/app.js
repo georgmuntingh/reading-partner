@@ -1792,10 +1792,13 @@ class ReadingPartnerApp {
                 this._showTTSStatus('TTS ready (Browser)');
             }
 
-            // Refresh voice list
+            // Refresh voice list (disabled state depends on backend)
+            const voices = ttsEngine.getAvailableVoices();
             if (this._controls) {
-                const voices = ttsEngine.getAvailableVoices();
                 this._controls.setVoices(voices);
+            }
+            if (this._settingsModal) {
+                this._settingsModal.setVoices(voices);
             }
 
             setTimeout(() => this._hideTTSStatus(), 3000);
