@@ -6,6 +6,7 @@
 import { FORMAT_LABELS } from '../services/parser-factory.js';
 import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
 import { marked } from 'marked';
+import { llmClient } from '../services/llm-client.js';
 
 export class BookLoaderModal {
     /**
@@ -22,12 +23,17 @@ export class BookLoaderModal {
      * @param {(bookId: string) => void} callbacks.onGutenbergLoad - Load from Gutenberg
      * @param {(savedState: Object) => void} callbacks.onResumeBook - Resume a previously read book
      * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
+     * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
      */
     constructor(options, callbacks) {
         this._container = options.container;
         this._callbacks = callbacks;
         this._readingHistory = [];
         this._pasteExpanded = false;
+        this._generateExpanded = false;
+        this._isGenerating = false;
+        this._lastGenerateParams = null;
+        this._lastGenerateResult = null;
 
         this._buildUI();
         this._setupEventListeners();
@@ -141,6 +147,100 @@ export class BookLoaderModal {
                         </p>
                     </div>
 
+                    <div class="book-source-divider">
+                        <span>or</span>
+                    </div>
+
+                    <!-- Generate Text with LLM -->
+                    <div class="book-source-option" id="generate-text-option">
+                        <div class="book-source-header">
+                            <div class="book-source-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                    <path d="M2 17l10 5 10-5"/>
+                                    <path d="M2 12l10 5 10-5"/>
+                                </svg>
+                            </div>
+                            <div class="book-source-info">
+                                <h3>Generate Text with AI</h3>
+                                <p>Create reading content using LLM</p>
+                            </div>
+                        </div>
+                        <div class="generate-text-body" id="generate-text-body">
+                            <div class="generate-disabled-notice hidden" id="generate-disabled-notice">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="12" y1="8" x2="12" y2="12"/>
+                                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                                </svg>
+                                <span>Configure an API key in Settings to enable text generation.</span>
+                            </div>
+                            <div class="generate-form" id="generate-form">
+                                <div class="generate-form-group">
+                                    <label for="generate-description">Description</label>
+                                    <textarea id="generate-description" class="form-input generate-description" placeholder="Describe what the text should be about..." rows="3"></textarea>
+                                </div>
+                                <div class="generate-form-row">
+                                    <div class="generate-form-group generate-form-half">
+                                        <label for="generate-language">Language</label>
+                                        <select id="generate-language" class="form-select">
+                                            <option value="English">English</option>
+                                            <option value="Japanese">Japanese</option>
+                                            <option value="Norwegian">Norwegian</option>
+                                            <option value="Dutch">Dutch</option>
+                                        </select>
+                                    </div>
+                                    <div class="generate-form-group generate-form-half">
+                                        <label for="generate-length">Length</label>
+                                        <select id="generate-length" class="form-select">
+                                            <option value="short">Short (~300 words)</option>
+                                            <option value="medium" selected>Medium (~1000 words)</option>
+                                            <option value="long">Long (~3000 words)</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="generate-form-row">
+                                    <div class="generate-form-group generate-form-half">
+                                        <label for="generate-format">Format</label>
+                                        <select id="generate-format" class="form-select">
+                                            <option value="markdown" selected>Markdown</option>
+                                            <option value="html">HTML</option>
+                                        </select>
+                                    </div>
+                                    <div class="generate-form-group generate-form-half">
+                                        <label for="generate-genre">Genre</label>
+                                        <select id="generate-genre" class="form-select">
+                                            <option value="none" selected>None</option>
+                                            <option value="short_story">Short Story</option>
+                                            <option value="essay">Essay</option>
+                                            <option value="news_article">News Article</option>
+                                            <option value="childrens_story">Children's Story</option>
+                                            <option value="technical">Technical</option>
+                                            <option value="blog_post">Blog Post</option>
+                                            <option value="letter">Letter</option>
+                                            <option value="poem">Poem</option>
+                                            <option value="dialogue">Dialogue</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <button class="btn btn-primary book-source-btn" id="generate-btn" disabled>
+                                    Generate
+                                </button>
+                            </div>
+                            <div class="generate-preview-section hidden" id="generate-preview-section">
+                                <div class="generate-preview-header">
+                                    <div class="generate-preview-label">Preview</div>
+                                    <div class="generate-preview-title" id="generate-preview-title"></div>
+                                </div>
+                                <div class="generate-preview" id="generate-preview"></div>
+                                <div class="generate-preview-actions">
+                                    <button class="btn btn-secondary" id="generate-regenerate-btn">Regenerate</button>
+                                    <button class="btn btn-primary" id="generate-load-btn">Load Text</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Loading State -->
                     <div id="book-loader-loading" class="book-loader-loading hidden">
                         <div class="spinner"></div>
@@ -177,6 +277,21 @@ export class BookLoaderModal {
             pastePreviewSection: this._container.querySelector('#paste-preview-section'),
             pastePreview: this._container.querySelector('#paste-preview'),
             pasteLoadBtn: this._container.querySelector('#paste-load-btn'),
+            // Generate text elements
+            generateOption: this._container.querySelector('#generate-text-option'),
+            generateDisabledNotice: this._container.querySelector('#generate-disabled-notice'),
+            generateForm: this._container.querySelector('#generate-form'),
+            generateDescription: this._container.querySelector('#generate-description'),
+            generateLanguage: this._container.querySelector('#generate-language'),
+            generateLength: this._container.querySelector('#generate-length'),
+            generateFormat: this._container.querySelector('#generate-format'),
+            generateGenre: this._container.querySelector('#generate-genre'),
+            generateBtn: this._container.querySelector('#generate-btn'),
+            generatePreviewSection: this._container.querySelector('#generate-preview-section'),
+            generatePreviewTitle: this._container.querySelector('#generate-preview-title'),
+            generatePreview: this._container.querySelector('#generate-preview'),
+            generateRegenerateBtn: this._container.querySelector('#generate-regenerate-btn'),
+            generateLoadBtn: this._container.querySelector('#generate-load-btn'),
             // Search elements
             searchInput: this._container.querySelector('#gutenberg-search-input'),
             searchBtn: this._container.querySelector('#gutenberg-search-btn'),
@@ -282,6 +397,26 @@ export class BookLoaderModal {
             if (e.key === 'Enter') {
                 this._searchGutenberg();
             }
+        });
+
+        // Generate text - enable button when description is non-empty
+        this._elements.generateDescription.addEventListener('input', () => {
+            this._updateGenerateBtn();
+        });
+
+        // Generate button
+        this._elements.generateBtn.addEventListener('click', () => {
+            this._generateText();
+        });
+
+        // Regenerate button
+        this._elements.generateRegenerateBtn.addEventListener('click', () => {
+            this._generateText();
+        });
+
+        // Load generated text button
+        this._elements.generateLoadBtn.addEventListener('click', () => {
+            this._submitGeneratedText();
         });
 
         // Click on search results
@@ -663,6 +798,111 @@ export class BookLoaderModal {
     }
 
     /**
+     * Update the generate button enabled state
+     */
+    _updateGenerateBtn() {
+        const hasDesc = this._elements.generateDescription.value.trim().length > 0;
+        this._elements.generateBtn.disabled = !hasDesc || this._isGenerating;
+    }
+
+    /**
+     * Update the generate section based on LLM availability
+     */
+    _updateGenerateAvailability() {
+        const hasKey = llmClient.hasApiKey();
+        if (hasKey) {
+            this._elements.generateDisabledNotice.classList.add('hidden');
+            this._elements.generateForm.classList.remove('generate-form-disabled');
+            this._elements.generateDescription.disabled = false;
+            this._elements.generateLanguage.disabled = false;
+            this._elements.generateLength.disabled = false;
+            this._elements.generateFormat.disabled = false;
+            this._elements.generateGenre.disabled = false;
+            this._updateGenerateBtn();
+        } else {
+            this._elements.generateDisabledNotice.classList.remove('hidden');
+            this._elements.generateForm.classList.add('generate-form-disabled');
+            this._elements.generateDescription.disabled = true;
+            this._elements.generateLanguage.disabled = true;
+            this._elements.generateLength.disabled = true;
+            this._elements.generateFormat.disabled = true;
+            this._elements.generateGenre.disabled = true;
+            this._elements.generateBtn.disabled = true;
+        }
+    }
+
+    /**
+     * Generate text using the LLM
+     */
+    async _generateText() {
+        const description = this._elements.generateDescription.value.trim();
+        if (!description) return;
+
+        this._isGenerating = true;
+        this._elements.generateBtn.disabled = true;
+        this._elements.generateBtn.textContent = 'Generating...';
+        this._elements.generateRegenerateBtn.disabled = true;
+        this._elements.generatePreviewSection.classList.add('hidden');
+        this._hideError();
+
+        const params = {
+            description,
+            language: this._elements.generateLanguage.value,
+            length: this._elements.generateLength.value,
+            format: this._elements.generateFormat.value,
+            genre: this._elements.generateGenre.value
+        };
+        this._lastGenerateParams = params;
+
+        try {
+            const result = await llmClient.generateText(params);
+            this._lastGenerateResult = result;
+
+            // Show preview
+            this._elements.generatePreviewTitle.textContent = result.title;
+
+            let previewHtml = '';
+            if (params.format === 'html') {
+                previewHtml = this._sanitizePreviewHtml(result.content);
+            } else {
+                previewHtml = this._sanitizePreviewHtml(marked.parse(result.content));
+            }
+            this._elements.generatePreview.innerHTML = previewHtml;
+            this._elements.generatePreviewSection.classList.remove('hidden');
+        } catch (error) {
+            if (error.message !== 'Request aborted') {
+                this._showError(`Generation failed: ${error.message}`);
+            }
+        } finally {
+            this._isGenerating = false;
+            this._elements.generateBtn.textContent = 'Generate';
+            this._elements.generateRegenerateBtn.disabled = false;
+            this._updateGenerateBtn();
+        }
+    }
+
+    /**
+     * Submit the generated text to be loaded into the reader
+     */
+    _submitGeneratedText() {
+        if (!this._lastGenerateResult || !this._lastGenerateParams) return;
+
+        const { title, content } = this._lastGenerateResult;
+        const format = this._lastGenerateParams.format;
+        const meta = {
+            source: 'llm-generated',
+            model: llmClient.getModel(),
+            language: this._lastGenerateParams.language,
+            length: this._lastGenerateParams.length,
+            genre: this._lastGenerateParams.genre,
+            description: this._lastGenerateParams.description
+        };
+
+        this._hideError();
+        this._callbacks.onGenerateText?.(content, format, title, meta);
+    }
+
+    /**
      * Set the reading history to display in the "Continue reading" section
      * @param {Object[]} history - Array of saved book states
      */
@@ -696,6 +936,8 @@ export class BookLoaderModal {
 
             const pasteIcon = savedState.source?.type === 'pasted'
                 ? '<svg class="resume-paste-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> '
+                : savedState.source?.type === 'llm-generated'
+                ? '<svg class="resume-paste-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> '
                 : '';
 
             let sourceText = '';
@@ -703,6 +945,8 @@ export class BookLoaderModal {
                 sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
             } else if (savedState.source?.type === 'pasted') {
                 sourceText = ' <span class="resume-source">pasted</span>';
+            } else if (savedState.source?.type === 'llm-generated') {
+                sourceText = ' <span class="resume-source">AI generated</span>';
             }
 
             const stats = [];
@@ -794,6 +1038,22 @@ export class BookLoaderModal {
         this._elements.pasteCharCount.classList.remove('paste-char-over');
         this._pasteExpanded = false;
 
+        // Reset generate section
+        this._elements.generateDescription.value = '';
+        this._elements.generateLanguage.value = 'English';
+        this._elements.generateLength.value = 'medium';
+        this._elements.generateFormat.value = 'markdown';
+        this._elements.generateGenre.value = 'none';
+        this._elements.generatePreviewSection.classList.add('hidden');
+        this._elements.generatePreview.innerHTML = '';
+        this._elements.generatePreviewTitle.textContent = '';
+        this._elements.generateBtn.textContent = 'Generate';
+        this._elements.generateRegenerateBtn.disabled = false;
+        this._isGenerating = false;
+        this._lastGenerateParams = null;
+        this._lastGenerateResult = null;
+        this._updateGenerateAvailability();
+
         // Render the continue reading section
         this._renderContinueReading();
 
@@ -840,6 +1100,8 @@ export class BookLoaderModal {
         this._elements.browseLocalBtn.disabled = true;
         this._elements.loadGutenbergBtn.disabled = true;
         this._elements.pasteLoadBtn.disabled = true;
+        this._elements.generateBtn.disabled = true;
+        this._elements.generateLoadBtn.disabled = true;
     }
 
     /**
@@ -853,6 +1115,9 @@ export class BookLoaderModal {
         const text = this._elements.pasteTextInput.value;
         const byteLength = new TextEncoder().encode(text).length;
         this._elements.pasteLoadBtn.disabled = !text.trim() || byteLength > BookLoaderModal.PASTE_MAX_BYTES;
+        // Re-enable generate buttons
+        this._updateGenerateBtn();
+        this._elements.generateLoadBtn.disabled = false;
     }
 
     /**
