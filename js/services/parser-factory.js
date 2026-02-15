@@ -7,6 +7,7 @@ import { EPUBParser } from './epub-parser.js';
 import { MarkdownParser } from './markdown-parser.js';
 import { HTMLParser } from './html-parser.js';
 import { PlainTextParser } from './plain-text-parser.js';
+import { PDFParser } from './pdf-parser.js';
 
 /** @type {Map<string, import('./format-parser.js').FormatParser>} */
 const parserInstances = new Map();
@@ -20,6 +21,7 @@ const EXTENSION_MAP = {
     '.markdown': 'markdown',
     '.html': 'html',
     '.htm': 'html',
+    '.pdf': 'pdf',
 };
 
 /**
@@ -35,6 +37,7 @@ export const FORMAT_LABELS = {
     markdown: 'Markdown',
     html: 'HTML',
     plaintext: 'Text',
+    pdf: 'PDF',
 };
 
 /**
@@ -75,6 +78,9 @@ export function getParser(fileType) {
             break;
         case 'plaintext':
             parser = new PlainTextParser();
+            break;
+        case 'pdf':
+            parser = new PDFParser();
             break;
         default:
             throw new Error(`Unsupported file format: ${fileType}`);

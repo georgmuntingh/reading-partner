@@ -47,7 +47,7 @@
                 </div>
 
                 <div class="upload-area" id="upload-area">
-                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
+                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm,.pdf" hidden>
                     <div class="upload-icon">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
@@ -59,10 +59,11 @@
                         <span class="format-badge format-epub">EPUB</span>
                         <span class="format-badge format-md">MD</span>
                         <span class="format-badge format-html">HTML</span>
+                        <span class="format-badge format-pdf">PDF</span>
                     </p>
                     <p class="or">or</p>
                     <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select File</button>
-                    <p class="upload-hint">Supports EPUB, Markdown, and HTML files</p>
+                    <p class="upload-hint">Supports EPUB, Markdown, HTML, and PDF files</p>
                 </div>
 
                 <div id="loading-indicator" class="loading hidden">
@@ -323,6 +324,13 @@
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.9.155/build/pdf.min.mjs" type="module"></script>
+    <script type="module">
+        // Initialize pdf.js worker
+        import * as pdfjsModule from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.9.155/build/pdf.min.mjs';
+        pdfjsModule.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.9.155/build/pdf.worker.min.mjs';
+        window.pdfjsLib = pdfjsModule;
+    </script>
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

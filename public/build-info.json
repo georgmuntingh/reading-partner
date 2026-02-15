@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-15T16:01:24.615Z",
-  "commit": "4ff149846cf560c3c467e4eee05bd78680ed20ed",
-  "commitShort": "4ff1498",
-  "branch": "claude/add-llm-text-generation-n54TF",
-  "lastCommitDate": "2026-02-15T00:02:34+01:00"
+  "buildTime": "2026-02-15T19:31:44.088Z",
+  "commit": "73f1774c6cce857a4bcb622fc87907bcd08cb86b",
+  "commitShort": "73f1774",
+  "branch": "claude/add-url-pdf-support-OM6qL",
+  "lastCommitDate": "2026-02-15T19:30:23+01:00"
 }
