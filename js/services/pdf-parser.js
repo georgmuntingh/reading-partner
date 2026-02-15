@@ -32,7 +32,9 @@ export class PDFParser extends FormatParser {
         console.time('PDFParser.loadFromFile');
 
         const arrayBuffer = await file.arrayBuffer();
-        this._rawData = arrayBuffer;
+        // Copy the buffer before pdf.js detaches it during processing
+        const storageCopy = arrayBuffer.slice(0);
+        this._rawData = storageCopy;
 
         // Generate book ID
         const idSource = file.name + file.size + file.lastModified;
@@ -63,7 +65,7 @@ export class PDFParser extends FormatParser {
             author: 'Unknown Author',
             coverImage: null,
             chapters,
-            fileData: arrayBuffer,
+            fileData: storageCopy,
             fileType: 'pdf',
             lastOpened: Date.now()
         };
