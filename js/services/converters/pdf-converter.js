@@ -75,9 +75,13 @@ function _pageToMarkdown(textContent, viewport) {
     // Group text items into lines based on vertical position (y-coordinate)
     const lines = _groupIntoLines(items, viewport);
 
-    // Build markdown from lines
+    // Build markdown by accumulating body text lines into paragraphs.
+    // PDF line breaks within a paragraph are joined with spaces so that
+    // the resulting Markdown has flowing text (no embedded newlines that
+    // would break sentence detection in the downstream pipeline).
     const markdownParts = [];
-    let prevLineBottom = null;
+    let currentParagraph = [];
+    let prevLineY = null; // baseline y of the previous line
 
     for (const line of lines) {
         if (!line.text.trim()) continue;
@@ -86,27 +90,42 @@ function _pageToMarkdown(textContent, viewport) {
         const isLarger = lineSize > medianFontSize * 1.25;
         const isMuchLarger = lineSize > medianFontSize * 1.6;
 
-        // Detect paragraph breaks from vertical gaps
-        if (prevLineBottom !== null) {
-            const gap = prevLineBottom - line.top; // pdf.js y increases upward
-            const lineHeight = lineSize * 1.2;
-            if (gap > lineHeight * 1.8) {
-                // Large gap → paragraph break
-                markdownParts.push('');
+        // Detect paragraph breaks from baseline-to-baseline distance
+        let isParaBreak = false;
+        if (prevLineY !== null) {
+            const baselineDistance = prevLineY - line.top; // positive going down
+            // Normal line spacing is ~1.2–1.5x font size; a gap above ~1.8x
+            // indicates an extra vertical skip (paragraph break, section gap, etc.)
+            if (baselineDistance > lineSize * 1.8) {
+                isParaBreak = true;
             }
         }
 
         const trimmedText = line.text.trim();
 
-        if (isMuchLarger) {
-            markdownParts.push(`# ${trimmedText}`);
-        } else if (isLarger) {
-            markdownParts.push(`## ${trimmedText}`);
-        } else {
-            markdownParts.push(trimmedText);
+        // Flush accumulated paragraph on break or heading
+        if ((isParaBreak || isLarger || isMuchLarger) && currentParagraph.length > 0) {
+            markdownParts.push(currentParagraph.join(' '));
+            markdownParts.push('');
+            currentParagraph = [];
         }
 
-        prevLineBottom = line.bottom;
+        if (isMuchLarger) {
+            markdownParts.push(`# ${trimmedText}`);
+            markdownParts.push('');
+        } else if (isLarger) {
+            markdownParts.push(`## ${trimmedText}`);
+            markdownParts.push('');
+        } else {
+            currentParagraph.push(trimmedText);
+        }
+
+        prevLineY = line.top;
+    }
+
+    // Flush remaining paragraph
+    if (currentParagraph.length > 0) {
+        markdownParts.push(currentParagraph.join(' '));
     }
 
     return markdownParts.join('\n');
