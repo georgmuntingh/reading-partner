@@ -731,6 +731,143 @@ Requirements:
         return fullResponse;
     }
 
+    // ========== Text Generation Methods ==========
+
+    /**
+     * Generate a text (Markdown or HTML) with title using a single LLM call.
+     * Returns structured JSON with title and content fields.
+     * @param {Object} options
+     * @param {string} options.description - What the text should be about
+     * @param {string} options.language - Target language (e.g. 'English', 'Japanese')
+     * @param {string} options.length - 'short' (~300 words), 'medium' (~1000 words), 'long' (~3000 words)
+     * @param {string} options.format - 'markdown' or 'html'
+     * @param {string|null} [options.genre] - Optional genre (e.g. 'short_story', 'essay')
+     * @returns {Promise<{ title: string, content: string }>}
+     */
+    async generateText(options) {
+        if (!this._apiKey) {
+            throw new Error('API key not set');
+        }
+
+        const { description, language, length, format, genre } = options;
+
+        this._abortController = new AbortController();
+
+        const wordCounts = { short: '~300', medium: '~1000', long: '~3000' };
+        const targetWords = wordCounts[length] || wordCounts.medium;
+
+        let genreInstruction = '';
+        if (genre && genre !== 'none') {
+            const genreLabels = {
+                short_story: 'a short story',
+                essay: 'an essay',
+                news_article: 'a news article',
+                childrens_story: "a children's story",
+                technical: 'a technical document',
+                blog_post: 'a blog post',
+                letter: 'a letter',
+                poem: 'a poem',
+                dialogue: 'a dialogue'
+            };
+            genreInstruction = `\nThe genre/style should be: ${genreLabels[genre] || genre}.`;
+        }
+
+        let formatInstruction;
+        if (format === 'html') {
+            formatInstruction = `Write the content as valid HTML (do NOT include <html>, <head>, or <body> tags — just the inner content starting with headings, paragraphs, etc.). You may use <ruby> tags for furigana where appropriate for Japanese text. Use semantic HTML elements like <h1>, <h2>, <p>, <ul>, <ol>, <blockquote>, etc.`;
+        } else {
+            formatInstruction = `Write the content in Markdown format. Use headings (#, ##), paragraphs, lists, blockquotes, and other Markdown formatting as appropriate.`;
+        }
+
+        const systemPrompt = `You are a creative text generator for a reading application. Generate a text based on the user's description.
+
+${formatInstruction}
+
+Requirements:
+- Write entirely in ${language}
+- Target length: ${targetWords} words${genreInstruction}
+- Use section headings to structure longer texts
+- The text should be well-written, engaging, and suitable for reading practice
+
+Respond with ONLY a valid JSON object (no markdown fences, no extra text):
+{
+  "title": "a concise, descriptive title for the text in ${language}",
+  "content": "the full ${format} content of the text"
+}`;
+
+        const userMessage = `Generate a text about: ${description}`;
+
+        let response;
+        try {
+            response = await fetch(this._endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this._apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': window.location.origin,
+                    'X-Title': 'Reading Partner'
+                },
+                body: JSON.stringify({
+                    model: this._model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userMessage }
+                    ],
+                    max_tokens: length === 'long' ? 8000 : length === 'medium' ? 4000 : 1500,
+                    temperature: 0.8
+                }),
+                signal: this._abortController.signal
+            });
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw new Error('Request aborted');
+            }
+            throw error;
+        } finally {
+            this._abortController = null;
+        }
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error?.message || `API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content || '';
+
+        return this._parseGeneratedTextJSON(content);
+    }
+
+    /**
+     * Parse generated text JSON from LLM response
+     * @param {string} text - Raw LLM response
+     * @returns {{ title: string, content: string }}
+     */
+    _parseGeneratedTextJSON(text) {
+        let cleaned = text.trim();
+        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+        cleaned = cleaned.trim();
+
+        try {
+            const parsed = JSON.parse(cleaned);
+            if (!parsed.title || !parsed.content) {
+                throw new Error('Missing required fields (title, content)');
+            }
+            return { title: parsed.title, content: parsed.content };
+        } catch (parseError) {
+            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.title && parsed.content) return { title: parsed.title, content: parsed.content };
+                } catch (e) {
+                    // Fall through
+                }
+            }
+            throw new Error(`Failed to parse generated text: ${parseError.message}`);
+        }
+    }
+
     /**
      * Validate an API key by making a test request
      * @param {string} apiKey

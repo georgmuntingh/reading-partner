@@ -2133,6 +2133,182 @@
     color: #555;
 }
 
+/* ========== Generate Text Section ========== */
+
+.generate-text-body {
+    margin-top: var(--spacing-sm);
+}
+
+.generate-disabled-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    background-color: rgba(249, 115, 22, 0.08);
+    border: 1px solid rgba(249, 115, 22, 0.25);
+    border-radius: var(--radius-md);
+    color: #c2410c;
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.generate-disabled-notice svg {
+    flex-shrink: 0;
+}
+
+.generate-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.generate-form.generate-form-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.generate-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.generate-form-group label {
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.generate-form-row {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.generate-form-half {
+    flex: 1;
+    min-width: 0;
+}
+
+.generate-description {
+    width: 100%;
+    min-height: 70px;
+    max-height: 160px;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: var(--font-size-sm);
+    font-family: inherit;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.generate-description:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.generate-description::placeholder {
+    color: var(--text-secondary);
+}
+
+.generate-preview-section {
+    margin-top: var(--spacing-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.generate-preview-header {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background-color: var(--bg-color);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.generate-preview-label {
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.generate-preview-title {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-color);
+    margin-top: 2px;
+}
+
+.generate-preview {
+    padding: var(--spacing-sm) var(--spacing-md);
+    max-height: 200px;
+    overflow-y: auto;
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    line-height: 1.6;
+    background-color: var(--surface-color);
+}
+
+.generate-preview p {
+    margin: 0 0 var(--spacing-sm) 0;
+}
+
+.generate-preview p:last-child {
+    margin-bottom: 0;
+}
+
+.generate-preview h1,
+.generate-preview h2,
+.generate-preview h3,
+.generate-preview h4,
+.generate-preview h5,
+.generate-preview h6 {
+    margin: 0 0 var(--spacing-xs) 0;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.generate-preview h1 { font-size: var(--font-size-lg); }
+.generate-preview h2 { font-size: var(--font-size-base); }
+.generate-preview h3 { font-size: var(--font-size-sm); }
+
+.generate-preview ul,
+.generate-preview ol {
+    margin: 0 0 var(--spacing-sm) 0;
+    padding-left: var(--spacing-lg);
+}
+
+.generate-preview blockquote {
+    border-left: 3px solid var(--border-color);
+    padding-left: var(--spacing-sm);
+    margin: 0 0 var(--spacing-sm) 0;
+    color: var(--text-secondary);
+}
+
+.generate-preview ruby {
+    ruby-position: over;
+}
+
+.generate-preview rt {
+    font-size: 0.6em;
+    color: var(--text-secondary);
+}
+
+.generate-preview-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+}
+
+.generate-preview-actions .btn {
+    flex: 1;
+}
+
 /* Gutenberg Search Styles */
 .gutenberg-search-section {
     margin-bottom: var(--spacing-md);
