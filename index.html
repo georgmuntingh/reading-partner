@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Reading Partner - TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-Dd5XOE5y.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-C2QDwnec.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-tFK5M7uA.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-CC7qA49j.css">
 </head>
 <body>
     <div id="app">
@@ -46,7 +46,7 @@
                 </div>
 
                 <div class="upload-area" id="upload-area">
-                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
+                    <input type="file" id="file-input" accept=".epub,.md,.markdown,.html,.htm,.pdf" hidden>
                     <div class="upload-icon">
                         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
@@ -58,10 +58,11 @@
                         <span class="format-badge format-epub">EPUB</span>
                         <span class="format-badge format-md">MD</span>
                         <span class="format-badge format-html">HTML</span>
+                        <span class="format-badge format-pdf">PDF</span>
                     </p>
                     <p class="or">or</p>
                     <button class="btn btn-primary btn-lg" id="select-ebook-btn">Select File</button>
-                    <p class="upload-hint">Supports EPUB, Markdown, and HTML files</p>
+                    <p class="upload-hint">Supports EPUB, Markdown, HTML, and PDF files</p>
                 </div>
 
                 <div id="loading-indicator" class="loading hidden">
@@ -322,5 +323,6 @@
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.9.155/build/pdf.min.mjs" type="module"></script>
 </body>
 </html>
