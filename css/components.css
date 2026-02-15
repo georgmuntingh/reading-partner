@@ -1930,6 +1930,26 @@
     color: #92400e;
 }
 
+.format-pdf {
+    background-color: #fce7f3;
+    color: #9d174d;
+}
+
+/* URL Load Section */
+.url-input-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.url-input-row .form-input {
+    flex: 1;
+}
+
+.url-hint {
+    margin-top: var(--spacing-xs);
+}
+
 /* Paste Text Section */
 .paste-toggle-wrapper {
     text-align: center;

@@ -227,7 +227,8 @@ class ReadingPartnerApp {
                 onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId),
                 onResumeBook: (savedState) => this._handleResumeFromModal(savedState),
                 onPasteText: (text, format, title) => this._handlePasteText(text, format, title),
-                onGenerateText: (text, format, title, meta) => this._handleGenerateText(text, format, title, meta)
+                onGenerateText: (text, format, title, meta) => this._handleGenerateText(text, format, title, meta),
+                onURLLoad: (url) => this._handleURLLoad(url)
             }
         );
 
@@ -815,6 +816,132 @@ class ReadingPartnerApp {
             `Book ${gutenbergBookId} could not be loaded. The book might not be available as EPUB. ` +
             `Try downloading manually from https://www.gutenberg.org/ebooks/${gutenbergBookId}`
         );
+    }
+
+    /**
+     * Handle URL load from the book loader modal
+     * @param {string} url
+     */
+    async _handleURLLoad(url) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+
+        if (isFromReader) {
+            this._pause();
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
+            }
+            this._quizController?.resetSession();
+            this._currentChapterIndex = 0;
+        }
+
+        this._bookLoaderModal.showLoading('Fetching from URL...');
+
+        try {
+            const { file, source } = await this._downloadFromURL(url);
+            this._bookLoaderModal.hide();
+            await this._loadBook(file, source);
+        } catch (error) {
+            console.error('Failed to load from URL:', error);
+            this._bookLoaderModal.showError(error.message);
+        }
+    }
+
+    /**
+     * Download content from a URL using CORS proxies.
+     * Auto-detects content type from response headers and URL extension.
+     * @param {string} url
+     * @returns {Promise<{file: File, source: Object}>}
+     */
+    async _downloadFromURL(url) {
+        const corsProxies = [
+            (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
+            (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
+        ];
+
+        let lastError = null;
+
+        for (const proxyFn of corsProxies) {
+            try {
+                const proxiedUrl = proxyFn(url);
+                const response = await fetch(proxiedUrl);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+
+                const blob = await response.blob();
+                if (blob.size < 50) {
+                    throw new Error('Downloaded content is too small');
+                }
+
+                // Determine content type from response headers, URL, and content
+                const contentType = response.headers.get('content-type') || '';
+                const { extension, mimeType } = this._detectContentType(url, contentType, blob);
+
+                // Extract a filename from the URL
+                const urlPath = new URL(url).pathname;
+                const urlFilename = urlPath.split('/').pop() || 'document';
+                const filename = urlFilename.includes('.') ? urlFilename : `${urlFilename}${extension}`;
+
+                const file = new File([blob], filename, { type: mimeType });
+                const source = { type: 'url', url };
+                return { file, source };
+            } catch (error) {
+                lastError = error;
+                console.log(`Failed to load from URL via proxy:`, error.message);
+            }
+        }
+
+        throw new Error(
+            `Could not load content from URL. ${lastError?.message || 'All proxies failed.'}` +
+            ` The server may block cross-origin requests.`
+        );
+    }
+
+    /**
+     * Detect content type from URL extension and response Content-Type header.
+     * @param {string} url
+     * @param {string} contentType - Response Content-Type header
+     * @param {Blob} blob - Response body
+     * @returns {{ extension: string, mimeType: string }}
+     */
+    _detectContentType(url, contentType, blob) {
+        const lower = url.toLowerCase();
+        const ct = contentType.toLowerCase();
+
+        // Check URL extension first (most reliable for direct file links)
+        if (lower.endsWith('.pdf') || ct.includes('application/pdf')) {
+            return { extension: '.pdf', mimeType: 'application/pdf' };
+        }
+        if (lower.endsWith('.epub') || ct.includes('application/epub')) {
+            return { extension: '.epub', mimeType: 'application/epub+zip' };
+        }
+        if (lower.endsWith('.md') || lower.endsWith('.markdown')) {
+            return { extension: '.md', mimeType: 'text/markdown' };
+        }
+        if (lower.endsWith('.html') || lower.endsWith('.htm')) {
+            return { extension: '.html', mimeType: 'text/html' };
+        }
+
+        // Fall back to Content-Type header
+        if (ct.includes('text/markdown')) {
+            return { extension: '.md', mimeType: 'text/markdown' };
+        }
+        if (ct.includes('text/html') || ct.includes('application/xhtml')) {
+            return { extension: '.html', mimeType: 'text/html' };
+        }
+        if (ct.includes('text/plain')) {
+            // Could be markdown without proper MIME — check URL for hints
+            return { extension: '.html', mimeType: 'text/html' };
+        }
+
+        // Default to HTML (most URLs without extensions are web pages)
+        return { extension: '.html', mimeType: 'text/html' };
     }
 
     /**

@@ -24,6 +24,7 @@ export class BookLoaderModal {
      * @param {(savedState: Object) => void} callbacks.onResumeBook - Resume a previously read book
      * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
      * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
+     * @param {(url: string) => void} callbacks.onURLLoad - Load content from a URL
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -69,10 +70,10 @@ export class BookLoaderModal {
                             </div>
                             <div class="book-source-info">
                                 <h3>Load from Device</h3>
-                                <p>EPUB, Markdown, or HTML file</p>
+                                <p>EPUB, Markdown, HTML, or PDF file</p>
                             </div>
                         </div>
-                        <input type="file" id="book-loader-file-input" accept=".epub,.md,.markdown,.html,.htm" hidden>
+                        <input type="file" id="book-loader-file-input" accept=".epub,.md,.markdown,.html,.htm,.pdf" hidden>
                         <button class="btn btn-primary book-source-btn" id="browse-local-btn">
                             Browse Files
                         </button>
@@ -241,6 +242,34 @@ export class BookLoaderModal {
                         </div>
                     </div>
 
+                    <div class="book-source-divider">
+                        <span>or</span>
+                    </div>
+
+                    <!-- Load from URL Option -->
+                    <div class="book-source-option" id="url-load-option">
+                        <div class="book-source-header">
+                            <div class="book-source-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                                </svg>
+                            </div>
+                            <div class="book-source-info">
+                                <h3>Load from URL</h3>
+                                <p>HTML page, PDF, Markdown, or EPUB from the web</p>
+                            </div>
+                        </div>
+                        <div class="url-input-row">
+                            <input type="text" id="url-load-input" class="form-input" placeholder="https://example.com/document.pdf">
+                            <button class="btn btn-primary" id="url-load-btn">Load</button>
+                        </div>
+                        <p class="form-hint url-hint">
+                            Enter a URL to an HTML page, PDF, Markdown, or EPUB file.
+                            Content type is auto-detected from the response.
+                        </p>
+                    </div>
+
                     <!-- Loading State -->
                     <div id="book-loader-loading" class="book-loader-loading hidden">
                         <div class="spinner"></div>
@@ -292,6 +321,9 @@ export class BookLoaderModal {
             generatePreview: this._container.querySelector('#generate-preview'),
             generateRegenerateBtn: this._container.querySelector('#generate-regenerate-btn'),
             generateLoadBtn: this._container.querySelector('#generate-load-btn'),
+            // URL load elements
+            urlInput: this._container.querySelector('#url-load-input'),
+            urlLoadBtn: this._container.querySelector('#url-load-btn'),
             // Search elements
             searchInput: this._container.querySelector('#gutenberg-search-input'),
             searchBtn: this._container.querySelector('#gutenberg-search-btn'),
@@ -417,6 +449,18 @@ export class BookLoaderModal {
         // Load generated text button
         this._elements.generateLoadBtn.addEventListener('click', () => {
             this._submitGeneratedText();
+        });
+
+        // URL load button
+        this._elements.urlLoadBtn.addEventListener('click', () => {
+            this._loadFromURL();
+        });
+
+        // Enter key in URL input
+        this._elements.urlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this._loadFromURL();
+            }
         });
 
         // Click on search results
@@ -652,6 +696,28 @@ export class BookLoaderModal {
 
         this._hideError();
         this._callbacks.onGutenbergLoad?.(bookId);
+    }
+
+    /**
+     * Handle loading from a URL
+     */
+    _loadFromURL() {
+        const url = this._elements.urlInput.value.trim();
+        if (!url) {
+            this._showError('Please enter a URL');
+            return;
+        }
+
+        // Basic URL validation
+        try {
+            new URL(url);
+        } catch {
+            this._showError('Please enter a valid URL (e.g., https://example.com/document.pdf)');
+            return;
+        }
+
+        this._hideError();
+        this._callbacks.onURLLoad?.(url);
     }
 
     /**
