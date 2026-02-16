@@ -5,7 +5,7 @@
  */
 
 import { FormatParser } from './format-parser.js';
-import { splitIntoSentences } from '../utils/sentence-splitter.js';
+import { wrapSentencesInElement } from '../utils/sentence-wrapper.js';
 import { hashString } from '../utils/helpers.js';
 
 export class EPUBParser extends FormatParser {
@@ -259,7 +259,7 @@ export class EPUBParser extends FormatParser {
 
         // Wrap sentences in spans
         const sentences = [];
-        this._wrapSentencesInElement(body, sentences);
+        wrapSentencesInElement(body, sentences);
 
         // Wrap in epub-content div
         const wrapper = document.createElement('div');
@@ -492,142 +492,6 @@ export class EPUBParser extends FormatParser {
             return new Blob([blob], { type });
         }
         return blob;
-    }
-
-    /**
-     * Walk through element and wrap text content in sentence spans
-     * @param {Element} element
-     * @param {string[]} sentences - array to collect sentences
-     */
-    _wrapSentencesInElement(element, sentences) {
-        // Elements that should not have their text split
-        const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
-        // Inline elements where we should process children
-        const inlineTags = new Set(['A', 'SPAN', 'EM', 'STRONG', 'I', 'B', 'U', 'S', 'MARK', 'SUB', 'SUP', 'SMALL', 'BIG', 'CITE', 'Q', 'ABBR', 'TIME']);
-
-        const walker = document.createTreeWalker(
-            element,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode: (node) => {
-                    // Skip if parent is a skip tag
-                    let parent = node.parentNode;
-                    while (parent && parent !== element) {
-                        if (skipTags.has(parent.tagName)) {
-                            return NodeFilter.FILTER_REJECT;
-                        }
-                        parent = parent.parentNode;
-                    }
-                    // Skip if empty or whitespace only
-                    if (!node.textContent?.trim()) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            }
-        );
-
-        // Collect all text nodes first (to avoid modifying while iterating)
-        const textNodes = [];
-        while (walker.nextNode()) {
-            textNodes.push(walker.currentNode);
-        }
-
-        // Process each text node
-        for (const textNode of textNodes) {
-            this._wrapTextNodeSentences(textNode, sentences);
-        }
-    }
-
-    /**
-     * Wrap sentences within a text node
-     * @param {Text} textNode
-     * @param {string[]} sentences - array to collect sentences
-     */
-    _wrapTextNodeSentences(textNode, sentences) {
-        const text = textNode.textContent;
-        if (!text?.trim()) return;
-
-        // Split text into sentences
-        const nodeSentences = splitIntoSentences(text);
-        if (nodeSentences.length === 0) return;
-
-        // Create a document fragment to hold the new nodes
-        const fragment = document.createDocumentFragment();
-
-        let remainingText = text;
-
-        for (const sentence of nodeSentences) {
-            const trimmedSentence = sentence.trim();
-            if (!trimmedSentence) continue;
-
-            // Find where this sentence starts in remaining text
-            const sentenceIndex = remainingText.indexOf(trimmedSentence);
-            if (sentenceIndex === -1) {
-                // Sentence not found - might be normalized differently, try to match
-                const normalizedRemaining = remainingText.replace(/\s+/g, ' ');
-                const normalizedSentence = trimmedSentence.replace(/\s+/g, ' ');
-                const normalizedIndex = normalizedRemaining.indexOf(normalizedSentence);
-
-                if (normalizedIndex === -1) {
-                    // Still not found, add as plain text
-                    continue;
-                }
-
-                // Found in normalized version, find approximate position in original
-                const beforeText = remainingText.substring(0, normalizedIndex);
-                if (beforeText) {
-                    fragment.appendChild(document.createTextNode(beforeText));
-                }
-
-                // Create sentence span
-                const span = document.createElement('span');
-                span.className = 'sentence';
-                span.dataset.index = sentences.length.toString();
-                span.textContent = trimmedSentence;
-                fragment.appendChild(span);
-
-                // Add space after sentence
-                fragment.appendChild(document.createTextNode(' '));
-
-                sentences.push(trimmedSentence);
-
-                remainingText = remainingText.substring(normalizedIndex + normalizedSentence.length);
-                continue;
-            }
-
-            // Add any text before the sentence
-            if (sentenceIndex > 0) {
-                const beforeText = remainingText.substring(0, sentenceIndex);
-                fragment.appendChild(document.createTextNode(beforeText));
-            }
-
-            // Create sentence span
-            const span = document.createElement('span');
-            span.className = 'sentence';
-            span.dataset.index = sentences.length.toString();
-            span.textContent = trimmedSentence;
-            fragment.appendChild(span);
-
-            // Add space after sentence if there was whitespace
-            const afterIndex = sentenceIndex + trimmedSentence.length;
-            if (afterIndex < remainingText.length && /\s/.test(remainingText[afterIndex])) {
-                fragment.appendChild(document.createTextNode(' '));
-            }
-
-            sentences.push(trimmedSentence);
-
-            // Update remaining text
-            remainingText = remainingText.substring(afterIndex).replace(/^\s+/, '');
-        }
-
-        // Add any remaining text
-        if (remainingText.trim()) {
-            fragment.appendChild(document.createTextNode(remainingText));
-        }
-
-        // Replace the text node with the fragment
-        textNode.parentNode.replaceChild(fragment, textNode);
     }
 
     /**
