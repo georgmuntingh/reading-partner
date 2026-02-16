@@ -802,9 +802,13 @@ export class ReaderView {
         this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
         this._totalPages = Math.max(1, this._totalPages);
 
-        // Map each sentence to a page based on its position
+        // Map each sentence to a page based on its position.
+        // A sentence may have multiple spans (when it crosses inline elements);
+        // use the first span's position and avoid duplicate index entries.
         sentenceElements.forEach(el => {
             const index = parseInt(el.dataset.index, 10);
+            if (this._sentenceToPage.has(index)) return; // already mapped
+
             const elementTop = el.offsetTop;
             const page = Math.floor(elementTop / pageHeight);
 
@@ -1118,20 +1122,20 @@ export class ReaderView {
      */
     highlightSentence(index, scroll = true) {
         // Remove previous highlight on master content
-        const prevElement = this._textContent.querySelector(`.sentence[data-index="${this._currentIndex}"]`);
-        if (prevElement) {
-            prevElement.classList.remove('current');
-            prevElement.classList.add('played');
-        }
+        const prevElements = this._textContent.querySelectorAll(`.sentence[data-index="${this._currentIndex}"]`);
+        prevElements.forEach(el => {
+            el.classList.remove('current');
+            el.classList.add('played');
+        });
 
         this._currentIndex = index;
 
         // Add new highlight on master content
-        const element = this._textContent.querySelector(`.sentence[data-index="${index}"]`);
-        if (element) {
-            element.classList.remove('played');
-            element.classList.add('current');
-        }
+        const elements = this._textContent.querySelectorAll(`.sentence[data-index="${index}"]`);
+        elements.forEach(el => {
+            el.classList.remove('played');
+            el.classList.add('current');
+        });
 
         if (scroll) {
             // Navigate to page containing this sentence
@@ -1612,10 +1616,8 @@ export class ReaderView {
      */
     _applyHighlightToSentences(startIndex, endIndex, color = 'yellow') {
         for (let i = startIndex; i <= endIndex; i++) {
-            const el = this._textContent.querySelector(`.sentence[data-index="${i}"]`);
-            if (el) {
-                el.classList.add('user-highlight', `highlight-${color}`);
-            }
+            const els = this._textContent.querySelectorAll(`.sentence[data-index="${i}"]`);
+            els.forEach(el => el.classList.add('user-highlight', `highlight-${color}`));
         }
     }
 
@@ -1626,10 +1628,8 @@ export class ReaderView {
      */
     _removeHighlightFromSentences(startIndex, endIndex) {
         for (let i = startIndex; i <= endIndex; i++) {
-            const el = this._textContent.querySelector(`.sentence[data-index="${i}"]`);
-            if (el) {
-                el.classList.remove('user-highlight', 'highlight-yellow', 'highlight-green', 'highlight-blue', 'highlight-pink');
-            }
+            const els = this._textContent.querySelectorAll(`.sentence[data-index="${i}"]`);
+            els.forEach(el => el.classList.remove('user-highlight', 'highlight-yellow', 'highlight-green', 'highlight-blue', 'highlight-pink'));
         }
     }
 
@@ -1821,11 +1821,11 @@ export class ReaderView {
         this._goToPageInternal(page, true);
 
         // Scroll the sentence element into the visible area
-        const el = this._textContent.querySelector(`.sentence[data-index="${sentenceIndex}"]`);
-        if (el) {
-            // Briefly add a visual indicator
-            el.classList.add('link-target');
-            setTimeout(() => el.classList.remove('link-target'), 2000);
+        const els = this._textContent.querySelectorAll(`.sentence[data-index="${sentenceIndex}"]`);
+        if (els.length > 0) {
+            // Briefly add a visual indicator to all spans of this sentence
+            els.forEach(el => el.classList.add('link-target'));
+            setTimeout(() => els.forEach(el => el.classList.remove('link-target')), 2000);
         }
 
         return true;

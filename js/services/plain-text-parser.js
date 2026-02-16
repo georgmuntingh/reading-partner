@@ -6,7 +6,7 @@
  */
 
 import { FormatParser } from './format-parser.js';
-import { splitIntoSentences } from '../utils/sentence-splitter.js';
+import { wrapSentencesInElement } from '../utils/sentence-wrapper.js';
 import { hashString } from '../utils/helpers.js';
 
 export class PlainTextParser extends FormatParser {
@@ -218,7 +218,7 @@ export class PlainTextParser extends FormatParser {
         }
 
         const sentences = [];
-        this._wrapSentencesInElement(body, sentences);
+        wrapSentencesInElement(body, sentences);
 
         const wrapper = document.createElement('div');
         wrapper.className = 'plaintext-content';
@@ -227,89 +227,4 @@ export class PlainTextParser extends FormatParser {
         return { html: wrapper.outerHTML, sentences };
     }
 
-    /**
-     * Walk through element and wrap text content in sentence spans
-     * @param {Element} element
-     * @param {string[]} sentences
-     */
-    _wrapSentencesInElement(element, sentences) {
-        const skipTags = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
-
-        const walker = document.createTreeWalker(
-            element,
-            NodeFilter.SHOW_TEXT,
-            {
-                acceptNode: (node) => {
-                    let parent = node.parentNode;
-                    while (parent && parent !== element) {
-                        if (skipTags.has(parent.tagName)) {
-                            return NodeFilter.FILTER_REJECT;
-                        }
-                        parent = parent.parentNode;
-                    }
-                    if (!node.textContent?.trim()) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    return NodeFilter.FILTER_ACCEPT;
-                }
-            }
-        );
-
-        const textNodes = [];
-        while (walker.nextNode()) {
-            textNodes.push(walker.currentNode);
-        }
-
-        for (const textNode of textNodes) {
-            this._wrapTextNodeSentences(textNode, sentences);
-        }
-    }
-
-    /**
-     * Wrap sentences within a text node
-     * @param {Text} textNode
-     * @param {string[]} sentences
-     */
-    _wrapTextNodeSentences(textNode, sentences) {
-        const text = textNode.textContent;
-        if (!text?.trim()) return;
-
-        const nodeSentences = splitIntoSentences(text);
-        if (nodeSentences.length === 0) return;
-
-        const fragment = document.createDocumentFragment();
-        let remainingText = text;
-
-        for (const sentence of nodeSentences) {
-            const trimmedSentence = sentence.trim();
-            if (!trimmedSentence) continue;
-
-            const sentenceIndex = remainingText.indexOf(trimmedSentence);
-            if (sentenceIndex === -1) continue;
-
-            if (sentenceIndex > 0) {
-                fragment.appendChild(document.createTextNode(remainingText.substring(0, sentenceIndex)));
-            }
-
-            const span = document.createElement('span');
-            span.className = 'sentence';
-            span.dataset.index = sentences.length.toString();
-            span.textContent = trimmedSentence;
-            fragment.appendChild(span);
-
-            const afterIndex = sentenceIndex + trimmedSentence.length;
-            if (afterIndex < remainingText.length && /\s/.test(remainingText[afterIndex])) {
-                fragment.appendChild(document.createTextNode(' '));
-            }
-
-            sentences.push(trimmedSentence);
-            remainingText = remainingText.substring(afterIndex).replace(/^\s+/, '');
-        }
-
-        if (remainingText.trim()) {
-            fragment.appendChild(document.createTextNode(remainingText));
-        }
-
-        textNode.parentNode.replaceChild(fragment, textNode);
-    }
 }
