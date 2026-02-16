@@ -22,11 +22,20 @@ const BLOCK_TAGS = new Set([
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
 
 /**
+ * Normalize a tag name to uppercase for case-insensitive comparison.
+ * XHTML documents (used in EPUBs) have lowercase tag names, while HTML
+ * documents use uppercase. This ensures both are handled correctly.
+ */
+function tag(element) {
+    return element.tagName.toUpperCase();
+}
+
+/**
  * Check whether an element has any block-level children.
  */
 function hasBlockChildren(element) {
     for (const child of element.children) {
-        if (BLOCK_TAGS.has(child.tagName)) {
+        if (BLOCK_TAGS.has(tag(child))) {
             return true;
         }
     }
@@ -47,7 +56,7 @@ function collectTextNodes(root) {
             acceptNode(node) {
                 let parent = node.parentNode;
                 while (parent && parent !== root) {
-                    if (SKIP_TAGS.has(parent.tagName)) {
+                    if (SKIP_TAGS.has(tag(parent))) {
                         return NodeFilter.FILTER_REJECT;
                     }
                     parent = parent.parentNode;
@@ -211,7 +220,7 @@ function processLeafBlock(element, sentences) {
  * @param {string[]} sentences - array that collects plain-text sentences
  */
 export function wrapSentencesInElement(element, sentences) {
-    if (SKIP_TAGS.has(element.tagName)) return;
+    if (SKIP_TAGS.has(tag(element))) return;
 
     if (!hasBlockChildren(element)) {
         // Leaf block: contains only inline content — process as a unit.
@@ -220,8 +229,8 @@ export function wrapSentencesInElement(element, sentences) {
         // Container block: recurse into children.
         for (const child of Array.from(element.childNodes)) {
             if (child.nodeType === Node.ELEMENT_NODE) {
-                if (SKIP_TAGS.has(child.tagName)) continue;
-                if (BLOCK_TAGS.has(child.tagName)) {
+                if (SKIP_TAGS.has(tag(child))) continue;
+                if (BLOCK_TAGS.has(tag(child))) {
                     wrapSentencesInElement(child, sentences);
                 } else {
                     // Inline element at container level (rare but possible)
