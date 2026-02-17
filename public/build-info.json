@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-17T08:47:55.973Z",
-  "commit": "2093164f80191b06c816406ba894e956c971dcae",
-  "commitShort": "2093164",
-  "branch": "claude/fix-tts-page-sync-UfliO",
-  "lastCommitDate": "2026-02-16T21:41:18+01:00"
+  "buildTime": "2026-02-17T20:03:38.111Z",
+  "commit": "38052298f5bbec25de0f3cb04700e9d589c66fed",
+  "commitShort": "3805229",
+  "branch": "claude/webgpu-local-ai-inference-H9uei",
+  "lastCommitDate": "2026-02-17T10:15:18+01:00"
 }
