@@ -2409,7 +2409,10 @@ class ReadingPartnerApp {
             navForwardBtn.disabled = !this._navigationHistory?.canGoForward();
         }
         if (navHomeBtn) {
-            navHomeBtn.disabled = !this._viewDecoupled;
+            // Always enabled when a book is loaded so the user can recalibrate
+            // the view to the current playback position (e.g. after a resize
+            // causes the displayed page to drift from the TTS sentence).
+            navHomeBtn.disabled = !this._currentBook;
         }
     }
 
@@ -2486,8 +2489,9 @@ class ReadingPartnerApp {
      * Navigates back to the chapter/sentence currently being played.
      */
     async _goHome() {
-        if (!this._viewDecoupled) return;
-
+        // Always allow recalibration: re-couple the view and scroll to the
+        // current playback sentence.  When already coupled this acts as a
+        // "recalibrate" action, fixing any drift (e.g. after a resize).
         this._viewDecoupled = false;
 
         // Use the tracked playback position (not reading state, which may
