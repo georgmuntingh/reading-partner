@@ -3286,3 +3286,160 @@
         padding-bottom: calc(var(--spacing-lg) + env(safe-area-inset-bottom));
     }
 }
+
+/* ========== Model Download Modal ========== */
+
+.model-download-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.model-download-modal.hidden {
+    display: none;
+}
+
+.model-download-modal.visible {
+    opacity: 1;
+}
+
+.model-download-backdrop {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.model-download-dialog {
+    position: relative;
+    background: var(--surface-color);
+    border-radius: var(--radius-lg);
+    padding: var(--spacing-lg);
+    max-width: 420px;
+    width: calc(100% - var(--spacing-xl) * 2);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.model-download-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0 0 var(--spacing-md) 0;
+    color: var(--text-color);
+}
+
+.model-download-message {
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    margin: 0 0 var(--spacing-lg) 0;
+}
+
+.model-download-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+}
+
+.model-download-cancel-btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+
+.model-download-cancel-btn:hover {
+    background: var(--bg-color);
+}
+
+.model-download-confirm-btn {
+    padding: var(--spacing-sm) var(--spacing-md);
+    border: none;
+    border-radius: var(--radius-md);
+    background: var(--primary-color);
+    color: white;
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.model-download-confirm-btn:hover {
+    opacity: 0.9;
+}
+
+.model-download-status {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.model-download-status.error {
+    color: #dc2626;
+}
+
+.model-download-bar-container {
+    width: 100%;
+    height: 8px;
+    background: var(--bg-color);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: var(--spacing-xs);
+}
+
+.model-download-bar {
+    height: 100%;
+    background: var(--primary-color);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+.model-download-bar.error {
+    background: #dc2626;
+}
+
+.model-download-progress-text {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.model-download-done-message {
+    text-align: center;
+    color: #059669;
+    font-weight: 500;
+    font-size: var(--font-size-base);
+    padding: var(--spacing-md) 0;
+}
+
+/* ========== Model Status in Settings ========== */
+
+.model-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--bg-color);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.model-status-text {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}

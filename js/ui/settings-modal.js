@@ -3,7 +3,8 @@
  * Displays settings for TTS backend, API key, model selection, and Q&A context
  */
 
-import { OPENROUTER_MODELS, DEFAULT_MODEL } from '../services/llm-client.js';
+import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL } from '../services/llm-client.js';
+import { WHISPER_MODELS, DEFAULT_WHISPER_MODEL } from '../services/whisper-stt-service.js';
 import { mediaSessionManager } from '../services/media-session-manager.js';
 
 export class SettingsModal {
@@ -51,6 +52,14 @@ export class SettingsModal {
                 themes: false
             },
             quizSystemPrompt: '',
+            // STT settings
+            sttBackend: 'web-speech',
+            whisperModel: DEFAULT_WHISPER_MODEL,
+            whisperDevice: 'auto',
+            // LLM backend
+            llmBackend: 'openrouter',
+            localLlmModel: DEFAULT_LOCAL_MODEL,
+            localLlmDevice: 'auto',
             // Lookup settings
             lookupLanguage: 'auto',
             // Reading history
@@ -257,30 +266,112 @@ export class SettingsModal {
                     </div>
 
                     <div class="settings-section">
-                        <h3>Q&A Settings</h3>
+                        <h3>Speech Recognition</h3>
 
                         <div class="form-group">
-                            <label for="settings-api-key">OpenRouter API Key</label>
-                            <input type="password" id="settings-api-key" class="form-input" placeholder="sk-or-...">
-                            <p class="form-hint">
-                                Get your free API key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+                            <label for="settings-stt-backend">STT Backend</label>
+                            <select id="settings-stt-backend" class="form-select">
+                                <option value="web-speech">Web Speech API (Online)</option>
+                                <option value="whisper">Whisper (Local, On-Device)</option>
+                            </select>
+                            <p class="form-hint" id="settings-stt-backend-hint">
+                                Uses the browser's built-in speech recognition. Requires an internet connection.
                             </p>
                         </div>
 
+                        <div id="settings-whisper-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="settings-whisper-model">Whisper Model</label>
+                                <select id="settings-whisper-model" class="form-select">
+                                    ${WHISPER_MODELS.map(m => `
+                                        <option value="${m.id}">${m.name} (${m.size})</option>
+                                    `).join('')}
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-whisper-device">Inference Device</label>
+                                <select id="settings-whisper-device" class="form-select">
+                                    <option value="auto">Auto (WebGPU if available)</option>
+                                    <option value="webgpu">WebGPU</option>
+                                    <option value="wasm">WASM (CPU)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-whisper-status">
+                                    <span class="model-status-text">Model not loaded</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-whisper-download-btn">Download Model</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h3>Q&A Settings</h3>
+
                         <div class="form-group">
-                            <label for="settings-model">AI Model</label>
-                            <select id="settings-model" class="form-select">
-                                <optgroup label="Free Models">
-                                    ${OPENROUTER_MODELS.free.map(m => `
-                                        <option value="${m.id}">${m.name}</option>
-                                    `).join('')}
-                                </optgroup>
-                                <optgroup label="Paid Models">
-                                    ${OPENROUTER_MODELS.paid.map(m => `
-                                        <option value="${m.id}">${m.name}</option>
-                                    `).join('')}
-                                </optgroup>
+                            <label for="settings-llm-backend">LLM Backend</label>
+                            <select id="settings-llm-backend" class="form-select">
+                                <option value="openrouter">OpenRouter (Cloud)</option>
+                                <option value="local">Local (On-Device)</option>
                             </select>
+                            <p class="form-hint" id="settings-llm-backend-hint">
+                                Uses cloud AI models via OpenRouter. Requires an API key and internet connection.
+                            </p>
+                        </div>
+
+                        <div id="settings-openrouter-options">
+                            <div class="form-group">
+                                <label for="settings-api-key">OpenRouter API Key</label>
+                                <input type="password" id="settings-api-key" class="form-input" placeholder="sk-or-...">
+                                <p class="form-hint">
+                                    Get your free API key at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-model">AI Model</label>
+                                <select id="settings-model" class="form-select">
+                                    <optgroup label="Free Models">
+                                        ${OPENROUTER_MODELS.free.map(m => `
+                                            <option value="${m.id}">${m.name}</option>
+                                        `).join('')}
+                                    </optgroup>
+                                    <optgroup label="Paid Models">
+                                        ${OPENROUTER_MODELS.paid.map(m => `
+                                            <option value="${m.id}">${m.name}</option>
+                                        `).join('')}
+                                    </optgroup>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div id="settings-local-llm-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="settings-local-llm-model">Local Model</label>
+                                <select id="settings-local-llm-model" class="form-select">
+                                    ${LOCAL_LLM_MODELS.map(m => `
+                                        <option value="${m.id}">${m.name} (${m.size})</option>
+                                    `).join('')}
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-local-llm-device">Inference Device</label>
+                                <select id="settings-local-llm-device" class="form-select">
+                                    <option value="auto">Auto (WebGPU if available)</option>
+                                    <option value="webgpu">WebGPU</option>
+                                    <option value="wasm">WASM (CPU)</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-local-llm-status">
+                                    <span class="model-status-text">Model not loaded</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-local-llm-download-btn">Download Model</button>
+                                </div>
+                            </div>
                         </div>
 
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
@@ -488,6 +579,25 @@ export class SettingsModal {
             diagnosticStatus: this._container.querySelector('#diagnostic-status'),
             runDiagnosticsBtn: this._container.querySelector('#run-diagnostics-btn'),
             forceStartMediaBtn: this._container.querySelector('#force-start-media-btn'),
+            // STT backend
+            sttBackend: this._container.querySelector('#settings-stt-backend'),
+            sttBackendHint: this._container.querySelector('#settings-stt-backend-hint'),
+            whisperOptions: this._container.querySelector('#settings-whisper-options'),
+            whisperModel: this._container.querySelector('#settings-whisper-model'),
+            whisperDevice: this._container.querySelector('#settings-whisper-device'),
+            whisperStatus: this._container.querySelector('#settings-whisper-status'),
+            whisperStatusText: this._container.querySelector('#settings-whisper-status .model-status-text'),
+            whisperDownloadBtn: this._container.querySelector('#settings-whisper-download-btn'),
+            // LLM backend
+            llmBackend: this._container.querySelector('#settings-llm-backend'),
+            llmBackendHint: this._container.querySelector('#settings-llm-backend-hint'),
+            openrouterOptions: this._container.querySelector('#settings-openrouter-options'),
+            localLlmOptions: this._container.querySelector('#settings-local-llm-options'),
+            localLlmModel: this._container.querySelector('#settings-local-llm-model'),
+            localLlmDevice: this._container.querySelector('#settings-local-llm-device'),
+            localLlmStatus: this._container.querySelector('#settings-local-llm-status'),
+            localLlmStatusText: this._container.querySelector('#settings-local-llm-status .model-status-text'),
+            localLlmDownloadBtn: this._container.querySelector('#settings-local-llm-download-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
             fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
@@ -531,6 +641,32 @@ export class SettingsModal {
         // TTS backend change - toggle FastAPI URL visibility
         this._elements.ttsBackend.addEventListener('change', () => {
             this._updateBackendUI();
+        });
+
+        // STT backend change
+        this._elements.sttBackend.addEventListener('change', () => {
+            this._updateSTTBackendUI();
+        });
+
+        // LLM backend change
+        this._elements.llmBackend.addEventListener('change', () => {
+            this._updateLLMBackendUI();
+        });
+
+        // Whisper download button
+        this._elements.whisperDownloadBtn.addEventListener('click', () => {
+            this._callbacks.onWhisperDownload?.({
+                model: this._elements.whisperModel.value,
+                device: this._elements.whisperDevice.value
+            });
+        });
+
+        // Local LLM download button
+        this._elements.localLlmDownloadBtn.addEventListener('click', () => {
+            this._callbacks.onLocalLlmDownload?.({
+                model: this._elements.localLlmModel.value,
+                device: this._elements.localLlmDevice.value
+            });
         });
 
         // History size slider
@@ -655,6 +791,77 @@ export class SettingsModal {
             this._elements.fastApiStatus.style.color = this._fastApiAvailable
                 ? '#059669'
                 : '#dc2626';
+        }
+    }
+
+    /**
+     * Update STT backend UI visibility
+     */
+    _updateSTTBackendUI() {
+        const backend = this._elements.sttBackend.value;
+        const showWhisper = backend === 'whisper';
+        this._elements.whisperOptions.style.display = showWhisper ? '' : 'none';
+
+        const hints = {
+            'web-speech': "Uses the browser's built-in speech recognition. Requires an internet connection.",
+            'whisper': 'Runs the Whisper speech recognition model locally on your device. Works offline.'
+        };
+        this._elements.sttBackendHint.textContent = hints[backend] || '';
+    }
+
+    /**
+     * Update LLM backend UI visibility
+     */
+    _updateLLMBackendUI() {
+        const backend = this._elements.llmBackend.value;
+        const showOpenRouter = backend === 'openrouter';
+        const showLocal = backend === 'local';
+
+        this._elements.openrouterOptions.style.display = showOpenRouter ? '' : 'none';
+        this._elements.localLlmOptions.style.display = showLocal ? '' : 'none';
+
+        const hints = {
+            'openrouter': 'Uses cloud AI models via OpenRouter. Requires an API key and internet connection.',
+            'local': 'Runs a small language model locally on your device. Works offline but produces simpler responses.'
+        };
+        this._elements.llmBackendHint.textContent = hints[backend] || '';
+    }
+
+    /**
+     * Update Whisper model status display
+     * @param {{ loaded: boolean, loading: boolean, statusText?: string }} status
+     */
+    setWhisperStatus(status) {
+        if (status.loading) {
+            this._elements.whisperStatusText.textContent = status.statusText || 'Loading...';
+            this._elements.whisperDownloadBtn.style.display = 'none';
+        } else if (status.loaded) {
+            this._elements.whisperStatusText.textContent = status.statusText || 'Model ready';
+            this._elements.whisperStatusText.style.color = '#059669';
+            this._elements.whisperDownloadBtn.style.display = 'none';
+        } else {
+            this._elements.whisperStatusText.textContent = status.statusText || 'Model not loaded';
+            this._elements.whisperStatusText.style.color = '';
+            this._elements.whisperDownloadBtn.style.display = '';
+        }
+    }
+
+    /**
+     * Update Local LLM model status display
+     * @param {{ loaded: boolean, loading: boolean, statusText?: string }} status
+     */
+    setLocalLlmStatus(status) {
+        if (status.loading) {
+            this._elements.localLlmStatusText.textContent = status.statusText || 'Loading...';
+            this._elements.localLlmDownloadBtn.style.display = 'none';
+        } else if (status.loaded) {
+            this._elements.localLlmStatusText.textContent = status.statusText || 'Model ready';
+            this._elements.localLlmStatusText.style.color = '#059669';
+            this._elements.localLlmDownloadBtn.style.display = 'none';
+        } else {
+            this._elements.localLlmStatusText.textContent = status.statusText || 'Model not loaded';
+            this._elements.localLlmStatusText.style.color = '';
+            this._elements.localLlmDownloadBtn.style.display = '';
         }
     }
 
@@ -784,6 +991,14 @@ export class SettingsModal {
             normalizeText: this._elements.normalizeText.checked,
             normalizeNumbers: this._elements.normalizeNumbers.checked,
             normalizeAbbreviations: this._elements.normalizeAbbreviations.checked,
+            // STT settings
+            sttBackend: this._elements.sttBackend.value,
+            whisperModel: this._elements.whisperModel.value,
+            whisperDevice: this._elements.whisperDevice.value,
+            // LLM backend settings
+            llmBackend: this._elements.llmBackend.value,
+            localLlmModel: this._elements.localLlmModel.value,
+            localLlmDevice: this._elements.localLlmDevice.value,
             // Lookup settings
             lookupLanguage: this._elements.lookupLanguage.value,
             // Quiz settings
@@ -942,6 +1157,18 @@ export class SettingsModal {
         this._elements.normalizeText.checked = this._settings.normalizeText !== false;
         this._elements.normalizeNumbers.checked = this._settings.normalizeNumbers !== false;
         this._elements.normalizeAbbreviations.checked = this._settings.normalizeAbbreviations !== false;
+
+        // Load STT settings
+        this._elements.sttBackend.value = this._settings.sttBackend || 'web-speech';
+        this._elements.whisperModel.value = this._settings.whisperModel || DEFAULT_WHISPER_MODEL;
+        this._elements.whisperDevice.value = this._settings.whisperDevice || 'auto';
+        this._updateSTTBackendUI();
+
+        // Load LLM backend settings
+        this._elements.llmBackend.value = this._settings.llmBackend || 'openrouter';
+        this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
+        this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
+        this._updateLLMBackendUI();
 
         // Load lookup settings
         this._elements.lookupLanguage.value = this._settings.lookupLanguage || 'auto';
