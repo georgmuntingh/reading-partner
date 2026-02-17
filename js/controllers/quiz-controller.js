@@ -3,7 +3,7 @@
  * Orchestrates quiz generation, answer evaluation, hints, and TTS feedback
  */
 
-import { sttService } from '../services/stt-service.js';
+import { sttService as defaultSttService } from '../services/stt-service.js';
 import { llmClient } from '../services/llm-client.js';
 import { ttsEngine } from '../services/tts-engine.js';
 import { storage } from '../services/storage.js';
@@ -40,6 +40,9 @@ export class QuizController {
         this._onVoiceStart = options.onVoiceStart;
         this._onVoiceEnd = options.onVoiceEnd;
         this._onError = options.onError;
+
+        // STT service (injectable, defaults to Web Speech API singleton)
+        this._sttService = options.sttService || defaultSttService;
 
         // State
         this._state = QuizState.IDLE;
@@ -86,6 +89,14 @@ export class QuizController {
     }
 
     // ========== Settings ==========
+
+    /**
+     * Switch the STT service (e.g., from Web Speech to Whisper)
+     * @param {Object} sttService - STT service instance with same API
+     */
+    setSTTService(sttService) {
+        this._sttService = sttService;
+    }
 
     setBookMeta(bookMeta) {
         this._bookMeta = bookMeta;
@@ -378,18 +389,18 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
         this._stopTTS();
 
         // Wire up live transcription
-        const prevOnInterim = sttService.onInterimResult;
-        sttService.onInterimResult = (text) => {
+        const prevOnInterim = this._sttService.onInterimResult;
+        this._sttService.onInterimResult = (text) => {
             this._onTranscript?.(text);
         };
 
         this._onVoiceStart?.();
 
         try {
-            const answer = await sttService.startListening();
+            const answer = await this._sttService.startListening();
 
             // Restore previous callback and signal end
-            sttService.onInterimResult = prevOnInterim;
+            this._sttService.onInterimResult = prevOnInterim;
             this._onVoiceEnd?.();
 
             if (answer && answer.trim()) {
@@ -407,7 +418,7 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
             }
         } catch (error) {
             // Restore previous callback and signal end
-            sttService.onInterimResult = prevOnInterim;
+            this._sttService.onInterimResult = prevOnInterim;
             this._onVoiceEnd?.();
 
             if (error.message !== 'Speech recognition aborted') {
@@ -510,7 +521,7 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
      */
     stop() {
         this._isStopped = true;
-        sttService.abortListening();
+        this._sttService.abortListening();
         llmClient.abort();
         this._stopTTS();
         this._clearTTSState();
@@ -743,6 +754,6 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
      * @returns {boolean}
      */
     isSTTSupported() {
-        return sttService.isSupported();
+        return this._sttService.isSupported();
     }
 }
