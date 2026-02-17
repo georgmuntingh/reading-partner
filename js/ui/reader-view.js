@@ -157,7 +157,9 @@ export class ReaderView {
         const newCount = Math.max(1, Math.min(5, count));
         if (newCount === this._columnCount) return;
         this._columnCount = newCount;
-        this._updateMultiColumnMode();
+        // Recalculate pages: the sentence-to-page mapping depends on the
+        // column viewport width which changes with the column count.
+        this._recalculatePages();
     }
 
     /**
