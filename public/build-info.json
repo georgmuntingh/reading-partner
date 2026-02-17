@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-15T19:31:44.088Z",
-  "commit": "73f1774c6cce857a4bcb622fc87907bcd08cb86b",
-  "commitShort": "73f1774",
-  "branch": "claude/add-url-pdf-support-OM6qL",
-  "lastCommitDate": "2026-02-15T19:30:23+01:00"
+  "buildTime": "2026-02-17T08:47:55.973Z",
+  "commit": "2093164f80191b06c816406ba894e956c971dcae",
+  "commitShort": "2093164",
+  "branch": "claude/fix-tts-page-sync-UfliO",
+  "lastCommitDate": "2026-02-16T21:41:18+01:00"
 }
