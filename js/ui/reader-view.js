@@ -74,6 +74,8 @@ export class ReaderView {
         this._columnViewports = [];
         this._visiblePages = []; // Array of page numbers currently visible in columns
         this._MIN_COLUMN_WIDTH = 250; // Minimum column width in px
+        this._COLUMN_GAP = 24; // Must match CSS .multi-column-container gap
+        this._contentScrollHeight = 0; // scrollHeight measured at effective column width
 
         // Highlight toolbar
         this._highlightToolbar = null;
@@ -155,7 +157,9 @@ export class ReaderView {
         const newCount = Math.max(1, Math.min(5, count));
         if (newCount === this._columnCount) return;
         this._columnCount = newCount;
-        this._updateMultiColumnMode();
+        // Recalculate pages: the sentence-to-page mapping depends on the
+        // column viewport width which changes with the column count.
+        this._recalculatePages();
     }
 
     /**
@@ -322,10 +326,12 @@ export class ReaderView {
             // Add bottom padding so the last page can scroll to the correct position.
             // Without this, the browser clamps scrollTop when content is shorter than
             // (pageNum + 1) * pageHeight, causing overlap with the previous page.
+            // Use _contentScrollHeight (measured at column viewport width) for accuracy.
             const neededHeight = (pageNum + 1) * this._pageHeight;
-            if (this._textContent.scrollHeight < neededHeight) {
+            const refScrollHeight = this._contentScrollHeight || this._textContent.scrollHeight;
+            if (refScrollHeight < neededHeight) {
                 const spacer = document.createElement('div');
-                spacer.style.height = `${neededHeight - this._textContent.scrollHeight}px`;
+                spacer.style.height = `${neededHeight - refScrollHeight}px`;
                 spacer.style.flexShrink = '0';
                 clone.appendChild(spacer);
             }
@@ -757,6 +763,22 @@ export class ReaderView {
 
         console.time('ReaderView._calculatePages');
 
+        // When in multi-column mode, temporarily match the master content's width
+        // to the column viewport width so that offsetTop measurements reflect the
+        // actual text layout inside the narrower column clones.  Without this the
+        // master (max-width: 65ch) is wider, text wraps less, and the resulting
+        // page-to-sentence mapping drifts from what the clones display.
+        const effectiveColumns = this._getEffectiveColumnCount();
+        let savedMaxWidth = null;
+        if (effectiveColumns > 1) {
+            savedMaxWidth = this._textContent.style.maxWidth;
+            const containerWidth = (this._pageContainer || this._textContent.parentElement).clientWidth;
+            const columnWidth = (containerWidth - (effectiveColumns - 1) * this._COLUMN_GAP) / effectiveColumns;
+            this._textContent.style.maxWidth = `${columnWidth}px`;
+            // Force synchronous reflow so all subsequent measurements use the new width
+            void this._textContent.offsetHeight;
+        }
+
         // Use page container height as the reference (it's constrained by flexbox)
         // Fall back to text content if page container isn't available
         const referenceContainer = this._pageContainer || this._textContent.parentElement || this._textContent;
@@ -787,6 +809,13 @@ export class ReaderView {
             const fractionalPart = pageRatio % 1;
             this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
             this._totalPages = Math.max(1, this._totalPages);
+            this._contentScrollHeight = scrollHeight;
+            // Restore master content width
+            if (savedMaxWidth !== null) {
+                this._textContent.style.maxWidth = savedMaxWidth;
+            } else if (effectiveColumns > 1) {
+                this._textContent.style.maxWidth = '';
+            }
             this._updatePageIndicator();
             this._updatePageButtons();
             this._isCalculatingPages = false;
@@ -825,6 +854,17 @@ export class ReaderView {
         this._totalPages = Math.max(this._totalPages, maxPage + 1);
 
         console.log(`Calculated ${this._totalPages} pages for ${sentenceElements.length} sentences (pageHeight=${pageHeight}px)`);
+
+        // Store scroll height measured at the effective width (for spacer calculation)
+        this._contentScrollHeight = scrollHeight;
+
+        // Restore master content width after measurement
+        if (savedMaxWidth !== null) {
+            this._textContent.style.maxWidth = savedMaxWidth;
+        } else if (effectiveColumns > 1) {
+            this._textContent.style.maxWidth = '';
+        }
+
         console.timeEnd('ReaderView._calculatePages');
 
         this._updatePageIndicator();
