@@ -22,6 +22,7 @@ export class WhisperSTTService {
         this._isLoading = false;
         this._isListening = false;
         this._silenceTimeout = 3000;
+        this._maxDuration = 30000; // 30 second hard cap to handle noisy environments
 
         // Audio recording state
         this._mediaStream = null;
@@ -30,6 +31,7 @@ export class WhisperSTTService {
         this._processor = null;
         this._audioChunks = [];
         this._silenceTimer = null;
+        this._maxDurationTimer = null;
 
         // Configuration
         this._model = DEFAULT_WHISPER_MODEL;
@@ -83,6 +85,14 @@ export class WhisperSTTService {
      */
     setSilenceTimeout(ms) {
         this._silenceTimeout = ms;
+    }
+
+    /**
+     * Set the maximum recording duration (hard cap for noisy environments)
+     * @param {number} ms - 0 to disable
+     */
+    setMaxDuration(ms) {
+        this._maxDuration = ms;
     }
 
     /**
@@ -251,8 +261,10 @@ export class WhisperSTTService {
                 // Show "Listening..." as interim result
                 this.onInterimResult?.('Listening...');
 
-                // Start silence detection
-                this._startSilenceDetection(() => {
+                // Called when silence is detected or max duration reached
+                const onSilenceDetected = () => {
+                    clearTimeout(this._maxDurationTimer);
+                    this._maxDurationTimer = null;
                     // Silence detected - stop and transcribe
                     this._stopRecording().then(audioData => {
                         if (!audioData || audioData.length < 1600) {
@@ -297,7 +309,20 @@ export class WhisperSTTService {
                             audio: audioData
                         });
                     });
-                });
+                };
+
+                // Hard cap: stop after maxDuration regardless of audio level (handles noisy environments)
+                if (this._maxDuration > 0) {
+                    this._maxDurationTimer = setTimeout(() => {
+                        if (this._isListening) {
+                            cancelAnimationFrame(this._silenceRAF);
+                            onSilenceDetected();
+                        }
+                    }, this._maxDuration);
+                }
+
+                // Start silence detection
+                this._startSilenceDetection(onSilenceDetected);
 
             } catch (error) {
                 this._isListening = false;
@@ -322,6 +347,8 @@ export class WhisperSTTService {
     stopListening() {
         if (this._isListening) {
             clearTimeout(this._silenceTimer);
+            clearTimeout(this._maxDurationTimer);
+            this._maxDurationTimer = null;
             cancelAnimationFrame(this._silenceRAF);
             this._stopRecording();
         }
@@ -333,6 +360,8 @@ export class WhisperSTTService {
     abortListening() {
         this._isListening = false;
         clearTimeout(this._silenceTimer);
+        clearTimeout(this._maxDurationTimer);
+        this._maxDurationTimer = null;
         cancelAnimationFrame(this._silenceRAF);
         this._cleanup();
         this.onEnd?.();

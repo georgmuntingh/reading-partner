@@ -56,6 +56,8 @@ export class SettingsModal {
             sttBackend: 'web-speech',
             whisperModel: DEFAULT_WHISPER_MODEL,
             whisperDevice: 'auto',
+            whisperSilenceTimeout: 3,
+            whisperMaxDuration: 30,
             // LLM backend
             llmBackend: 'openrouter',
             localLlmModel: DEFAULT_LOCAL_MODEL,
@@ -296,6 +298,18 @@ export class SettingsModal {
                                     <option value="webgpu">WebGPU</option>
                                     <option value="wasm">WASM (CPU)</option>
                                 </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-whisper-silence-timeout">Silence Timeout: <span id="settings-whisper-silence-timeout-value">3s</span></label>
+                                <input type="range" id="settings-whisper-silence-timeout" class="form-input" min="1" max="10" step="1" value="3">
+                                <p class="form-hint">How long to wait after speech stops before transcribing</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-whisper-max-duration">Max Recording Duration: <span id="settings-whisper-max-duration-value">30s</span></label>
+                                <input type="range" id="settings-whisper-max-duration" class="form-input" min="5" max="60" step="5" value="30">
+                                <p class="form-hint">Hard limit on recording length — prevents indefinite listening in noisy environments. Set to 60s to effectively disable.</p>
                             </div>
 
                             <div class="form-group">
@@ -585,6 +599,10 @@ export class SettingsModal {
             whisperOptions: this._container.querySelector('#settings-whisper-options'),
             whisperModel: this._container.querySelector('#settings-whisper-model'),
             whisperDevice: this._container.querySelector('#settings-whisper-device'),
+            whisperSilenceTimeout: this._container.querySelector('#settings-whisper-silence-timeout'),
+            whisperSilenceTimeoutValue: this._container.querySelector('#settings-whisper-silence-timeout-value'),
+            whisperMaxDuration: this._container.querySelector('#settings-whisper-max-duration'),
+            whisperMaxDurationValue: this._container.querySelector('#settings-whisper-max-duration-value'),
             whisperStatus: this._container.querySelector('#settings-whisper-status'),
             whisperStatusText: this._container.querySelector('#settings-whisper-status .model-status-text'),
             whisperDownloadBtn: this._container.querySelector('#settings-whisper-download-btn'),
@@ -661,12 +679,34 @@ export class SettingsModal {
             });
         });
 
+        // Whisper model dropdown — show download button whenever model selection changes
+        this._elements.whisperModel.addEventListener('change', () => {
+            this.setWhisperStatus({ loaded: false });
+        });
+
         // Local LLM download button
         this._elements.localLlmDownloadBtn.addEventListener('click', () => {
             this._callbacks.onLocalLlmDownload?.({
                 model: this._elements.localLlmModel.value,
                 device: this._elements.localLlmDevice.value
             });
+        });
+
+        // Local LLM model dropdown — show download button whenever model selection changes
+        this._elements.localLlmModel.addEventListener('change', () => {
+            this.setLocalLlmStatus({ loaded: false });
+        });
+
+        // Whisper silence timeout slider
+        this._elements.whisperSilenceTimeout.addEventListener('input', () => {
+            const val = parseInt(this._elements.whisperSilenceTimeout.value);
+            this._elements.whisperSilenceTimeoutValue.textContent = `${val}s`;
+        });
+
+        // Whisper max duration slider
+        this._elements.whisperMaxDuration.addEventListener('input', () => {
+            const val = parseInt(this._elements.whisperMaxDuration.value);
+            this._elements.whisperMaxDurationValue.textContent = `${val}s`;
         });
 
         // History size slider
@@ -995,6 +1035,8 @@ export class SettingsModal {
             sttBackend: this._elements.sttBackend.value,
             whisperModel: this._elements.whisperModel.value,
             whisperDevice: this._elements.whisperDevice.value,
+            whisperSilenceTimeout: parseInt(this._elements.whisperSilenceTimeout.value) || 3,
+            whisperMaxDuration: parseInt(this._elements.whisperMaxDuration.value) || 30,
             // LLM backend settings
             llmBackend: this._elements.llmBackend.value,
             localLlmModel: this._elements.localLlmModel.value,
@@ -1162,6 +1204,12 @@ export class SettingsModal {
         this._elements.sttBackend.value = this._settings.sttBackend || 'web-speech';
         this._elements.whisperModel.value = this._settings.whisperModel || DEFAULT_WHISPER_MODEL;
         this._elements.whisperDevice.value = this._settings.whisperDevice || 'auto';
+        const silenceTimeout = this._settings.whisperSilenceTimeout || 3;
+        this._elements.whisperSilenceTimeout.value = silenceTimeout;
+        this._elements.whisperSilenceTimeoutValue.textContent = `${silenceTimeout}s`;
+        const maxDuration = this._settings.whisperMaxDuration || 30;
+        this._elements.whisperMaxDuration.value = maxDuration;
+        this._elements.whisperMaxDurationValue.textContent = `${maxDuration}s`;
         this._updateSTTBackendUI();
 
         // Load LLM backend settings

@@ -66,6 +66,9 @@ export class ModelManager {
             'HuggingFaceTB/SmolLM2-135M-Instruct': { download: '~100 MB', memory: '~200 MB' },
             'HuggingFaceTB/SmolLM2-360M-Instruct': { download: '~250 MB', memory: '~400 MB' },
             'HuggingFaceTB/SmolLM2-1.7B-Instruct': { download: '~925 MB', memory: '~1.5 GB' },
+            'onnx-community/Qwen3-0.6B-ONNX': { download: '~600 MB', memory: '~900 MB' },
+            'onnx-community/Qwen3-1.7B-ONNX': { download: '~850 MB', memory: '~1.3 GB' },
+            'onnx-community/Qwen3-4B-ONNX': { download: '~2 GB', memory: '~3 GB' },
         };
         return sizes[modelId] || { download: 'Unknown', memory: 'Unknown' };
     }

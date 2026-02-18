@@ -2263,16 +2263,26 @@ class ReadingPartnerApp {
                 this._sttBackend = settings.sttBackend;
                 await storage.saveSetting('sttBackend', settings.sttBackend);
                 if (settings.sttBackend === 'whisper') {
-                    this._switchToWhisperSTT(settings.whisperModel, settings.whisperDevice);
+                    this._switchToWhisperSTT(settings.whisperModel, settings.whisperDevice, settings.whisperSilenceTimeout, settings.whisperMaxDuration);
                 } else {
                     this._switchToWebSpeechSTT();
                 }
             }
             if (settings.whisperModel !== undefined) {
                 await storage.saveSetting('whisperModel', settings.whisperModel);
+                if (this._whisperService) this._whisperService.setModel(settings.whisperModel);
             }
             if (settings.whisperDevice !== undefined) {
                 await storage.saveSetting('whisperDevice', settings.whisperDevice);
+                if (this._whisperService) this._whisperService.setDevice(settings.whisperDevice);
+            }
+            if (settings.whisperSilenceTimeout !== undefined) {
+                await storage.saveSetting('whisperSilenceTimeout', settings.whisperSilenceTimeout);
+                if (this._whisperService) this._whisperService.setSilenceTimeout(settings.whisperSilenceTimeout * 1000);
+            }
+            if (settings.whisperMaxDuration !== undefined) {
+                await storage.saveSetting('whisperMaxDuration', settings.whisperMaxDuration);
+                if (this._whisperService) this._whisperService.setMaxDuration(settings.whisperMaxDuration * 1000);
             }
 
             // Save LLM backend settings
@@ -3201,6 +3211,8 @@ class ReadingPartnerApp {
             if (sttBackend !== null) this._sttBackend = sttBackend;
             const whisperModel = await storage.getSetting('whisperModel');
             const whisperDevice = await storage.getSetting('whisperDevice');
+            const whisperSilenceTimeout = await storage.getSetting('whisperSilenceTimeout');
+            const whisperMaxDuration = await storage.getSetting('whisperMaxDuration');
 
             // Load LLM backend settings
             const llmBackend = await storage.getSetting('llmBackend');
@@ -3210,7 +3222,7 @@ class ReadingPartnerApp {
 
             // Apply STT backend
             if (this._sttBackend === 'whisper') {
-                this._switchToWhisperSTT(whisperModel, whisperDevice);
+                this._switchToWhisperSTT(whisperModel, whisperDevice, whisperSilenceTimeout, whisperMaxDuration);
             }
 
             // Apply LLM backend
@@ -3239,6 +3251,8 @@ class ReadingPartnerApp {
                 sttBackend: this._sttBackend,
                 whisperModel: whisperModel || undefined,
                 whisperDevice: whisperDevice || 'auto',
+                whisperSilenceTimeout: whisperSilenceTimeout !== null ? whisperSilenceTimeout : undefined,
+                whisperMaxDuration: whisperMaxDuration !== null ? whisperMaxDuration : undefined,
                 llmBackend: this._llmBackend,
                 localLlmModel: localLlmModel || undefined,
                 localLlmDevice: localLlmDevice || 'auto'
@@ -3259,12 +3273,14 @@ class ReadingPartnerApp {
      * @param {string} [model] - Whisper model ID
      * @param {string} [device] - Device preference
      */
-    _switchToWhisperSTT(model, device) {
+    _switchToWhisperSTT(model, device, silenceTimeout, maxDuration) {
         if (!this._whisperService) {
             this._whisperService = new WhisperSTTService();
         }
         if (model) this._whisperService.setModel(model);
         if (device) this._whisperService.setDevice(device);
+        if (silenceTimeout != null) this._whisperService.setSilenceTimeout(silenceTimeout * 1000);
+        if (maxDuration != null) this._whisperService.setMaxDuration(maxDuration * 1000);
 
         this._activeSTTService = this._whisperService;
 

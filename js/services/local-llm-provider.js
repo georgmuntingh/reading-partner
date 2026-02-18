@@ -8,9 +8,12 @@ import { LLMProvider } from './llm-provider.js';
 
 // Available local models
 export const LOCAL_LLM_MODELS = [
-    { id: 'HuggingFaceTB/SmolLM2-360M-Instruct', name: 'SmolLM2 360M (Recommended)', size: '~250 MB' },
-    { id: 'HuggingFaceTB/SmolLM2-135M-Instruct', name: 'SmolLM2 135M (Faster)', size: '~100 MB' },
-    { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct', name: 'SmolLM2 1.7B (Better Quality)', size: '~925 MB' },
+    { id: 'HuggingFaceTB/SmolLM2-360M-Instruct', name: 'SmolLM2 360M (Recommended)', size: '~250 MB', dtype: 'q4f16' },
+    { id: 'HuggingFaceTB/SmolLM2-135M-Instruct', name: 'SmolLM2 135M (Faster)', size: '~100 MB', dtype: 'q4f16' },
+    { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct', name: 'SmolLM2 1.7B (Better Quality)', size: '~925 MB', dtype: 'q4f16' },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8' },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4)', size: '~850 MB', dtype: 'q4' },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4)', size: '~2 GB', dtype: 'q4' },
 ];
 
 export const DEFAULT_LOCAL_MODEL = 'HuggingFaceTB/SmolLM2-360M-Instruct';
@@ -34,6 +37,9 @@ export class LocalLLMProvider extends LLMProvider {
     setModel(modelId) {
         if (modelId !== this._model) {
             this._model = modelId;
+            // Update dtype based on model's preferred quantization
+            const modelDef = LOCAL_LLM_MODELS.find(m => m.id === modelId);
+            if (modelDef?.dtype) this._dtype = modelDef.dtype;
             if (this._isReady) {
                 this._isReady = false;
                 this._worker?.postMessage({ type: 'unload' });
