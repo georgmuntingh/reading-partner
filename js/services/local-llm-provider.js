@@ -12,8 +12,8 @@ export const LOCAL_LLM_MODELS = [
     { id: 'HuggingFaceTB/SmolLM2-135M-Instruct', name: 'SmolLM2 135M (Faster)', size: '~100 MB', dtype: 'q4f16' },
     { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct', name: 'SmolLM2 1.7B (Better Quality)', size: '~925 MB', dtype: 'q4f16' },
     { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8' },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4)', size: '~850 MB', dtype: 'q4' },
-    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4)', size: '~2 GB', dtype: 'q4' },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4f16)', size: '~900 MB', dtype: 'q4f16' },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4f16)', size: '~2 GB', dtype: 'q4f16' },
 ];
 
 export const DEFAULT_LOCAL_MODEL = 'HuggingFaceTB/SmolLM2-360M-Instruct';
