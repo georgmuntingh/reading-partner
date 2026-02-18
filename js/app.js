@@ -7,6 +7,9 @@ import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/p
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
+import { sttService } from './services/stt-service.js';
+import { WhisperSTTService } from './services/whisper-stt-service.js';
+import { modelDownloadModal } from './ui/model-download-modal.js';
 import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
@@ -37,6 +40,14 @@ class ReadingPartnerApp {
         this._savedVoice = undefined;
         this._wasPlayingBeforeQA = false;
         this._readingHistorySize = 3;
+
+        // STT backend
+        this._sttBackend = 'web-speech';
+        this._whisperService = null; // Lazy-initialized
+        this._activeSTTService = sttService; // Default: Web Speech API
+
+        // LLM backend
+        this._llmBackend = 'openrouter';
 
         // Q&A Settings
         this._qaSettings = {
@@ -184,7 +195,9 @@ class ReadingPartnerApp {
                 onSave: (settings) => this._saveQASettings(settings),
                 onBackendChange: (backend) => this._onTTSBackendChange(backend),
                 onVoiceChange: (voiceId) => this._onVoiceChange(voiceId),
-                onSpeedChange: (speed) => this._onSpeedChange(speed)
+                onSpeedChange: (speed) => this._onSpeedChange(speed),
+                onWhisperDownload: (config) => this._downloadWhisperModel(config),
+                onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config)
             }
         );
 
@@ -1347,9 +1360,8 @@ class ReadingPartnerApp {
         // Enable controls
         this._controls.setEnabled(true);
 
-        // Enable/disable Ask and Quiz buttons based on API key configuration
-        this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
-        this._controls.setQuizDisabled(!this._qaSettings.apiKey, 'Configure API key in Settings to enable quiz mode');
+        // Enable/disable Ask and Quiz buttons based on backend availability
+        this._updateAskQuizButtons();
     }
 
     /**
@@ -1702,6 +1714,7 @@ class ReadingPartnerApp {
 
         this._qaController = new QAController({
             readingState: this._readingState,
+            sttService: this._activeSTTService,
             onStateChange: (state, data) => {
                 this._qaOverlay.setState(state, data);
 
@@ -1868,6 +1881,7 @@ class ReadingPartnerApp {
 
         this._quizController = new QuizController({
             readingState: this._readingState,
+            sttService: this._activeSTTService,
             onStateChange: (state, data) => {
                 this._quizOverlay.setState(state, data);
             },
@@ -2243,6 +2257,48 @@ class ReadingPartnerApp {
                     duration: settings.mediaSessionDuration
                 });
             }
+
+            // Save STT backend settings
+            if (settings.sttBackend !== undefined) {
+                this._sttBackend = settings.sttBackend;
+                await storage.saveSetting('sttBackend', settings.sttBackend);
+                if (settings.sttBackend === 'whisper') {
+                    this._switchToWhisperSTT(settings.whisperModel, settings.whisperDevice, settings.whisperSilenceTimeout, settings.whisperMaxDuration);
+                } else {
+                    this._switchToWebSpeechSTT();
+                }
+            }
+            if (settings.whisperModel !== undefined) {
+                await storage.saveSetting('whisperModel', settings.whisperModel);
+                if (this._whisperService) this._whisperService.setModel(settings.whisperModel);
+            }
+            if (settings.whisperDevice !== undefined) {
+                await storage.saveSetting('whisperDevice', settings.whisperDevice);
+                if (this._whisperService) this._whisperService.setDevice(settings.whisperDevice);
+            }
+            if (settings.whisperSilenceTimeout !== undefined) {
+                await storage.saveSetting('whisperSilenceTimeout', settings.whisperSilenceTimeout);
+                if (this._whisperService) this._whisperService.setSilenceTimeout(settings.whisperSilenceTimeout * 1000);
+            }
+            if (settings.whisperMaxDuration !== undefined) {
+                await storage.saveSetting('whisperMaxDuration', settings.whisperMaxDuration);
+                if (this._whisperService) this._whisperService.setMaxDuration(settings.whisperMaxDuration * 1000);
+            }
+
+            // Save LLM backend settings
+            if (settings.llmBackend !== undefined) {
+                this._llmBackend = settings.llmBackend;
+                await storage.saveSetting('llmBackend', settings.llmBackend);
+                llmClient.setBackend(settings.llmBackend);
+            }
+            if (settings.localLlmModel !== undefined) {
+                await storage.saveSetting('localLlmModel', settings.localLlmModel);
+                llmClient.setLocalModel(settings.localLlmModel);
+            }
+            if (settings.localLlmDevice !== undefined) {
+                await storage.saveSetting('localLlmDevice', settings.localLlmDevice);
+                llmClient.setLocalDevice(settings.localLlmDevice);
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -2256,11 +2312,23 @@ class ReadingPartnerApp {
         // Update settings modal
         this._settingsModal.setSettings({ ...this._qaSettings, ...this._quizSettings });
 
-        // Enable/disable Ask and Quiz buttons based on API key
-        if (this._controls) {
-            this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
-            this._controls.setQuizDisabled(!this._qaSettings.apiKey, 'Configure API key in Settings to enable quiz mode');
-        }
+        // Enable/disable Ask and Quiz buttons based on backend availability
+        this._updateAskQuizButtons();
+    }
+
+    /**
+     * Update Ask/Quiz button enabled state based on active backend
+     */
+    _updateAskQuizButtons() {
+        if (!this._controls) return;
+
+        const llmAvailable = this._llmBackend === 'local' || this._qaSettings.apiKey;
+        const llmDisabledReason = this._llmBackend === 'openrouter' && !this._qaSettings.apiKey
+            ? 'Configure API key in Q&A Settings or switch to Local LLM'
+            : null;
+
+        this._controls.setAskDisabled(!llmAvailable, llmDisabledReason);
+        this._controls.setQuizDisabled(!llmAvailable, llmDisabledReason);
     }
 
     /**
@@ -3138,6 +3206,32 @@ class ReadingPartnerApp {
                 mediaSessionManager.configure(mediaSessionSettings);
             }
 
+            // Load STT backend settings
+            const sttBackend = await storage.getSetting('sttBackend');
+            if (sttBackend !== null) this._sttBackend = sttBackend;
+            const whisperModel = await storage.getSetting('whisperModel');
+            const whisperDevice = await storage.getSetting('whisperDevice');
+            const whisperSilenceTimeout = await storage.getSetting('whisperSilenceTimeout');
+            const whisperMaxDuration = await storage.getSetting('whisperMaxDuration');
+
+            // Load LLM backend settings
+            const llmBackend = await storage.getSetting('llmBackend');
+            if (llmBackend !== null) this._llmBackend = llmBackend;
+            const localLlmModel = await storage.getSetting('localLlmModel');
+            const localLlmDevice = await storage.getSetting('localLlmDevice');
+
+            // Apply STT backend
+            if (this._sttBackend === 'whisper') {
+                this._switchToWhisperSTT(whisperModel, whisperDevice, whisperSilenceTimeout, whisperMaxDuration);
+            }
+
+            // Apply LLM backend
+            if (this._llmBackend === 'local') {
+                llmClient.setBackend('local');
+                if (localLlmModel) llmClient.setLocalModel(localLlmModel);
+                if (localLlmDevice) llmClient.setLocalDevice(localLlmDevice);
+            }
+
             // Update Q&A setup UI
             this._updateQASetupStatus();
 
@@ -3152,7 +3246,16 @@ class ReadingPartnerApp {
                 ...normalizationSettings,
                 lookupLanguage: lookupLanguage !== null ? lookupLanguage : 'auto',
                 mediaSessionVolume: mediaSessionVolume !== null ? mediaSessionVolume : undefined,
-                mediaSessionDuration: mediaSessionDuration !== null ? mediaSessionDuration : undefined
+                mediaSessionDuration: mediaSessionDuration !== null ? mediaSessionDuration : undefined,
+                // STT/LLM backend settings
+                sttBackend: this._sttBackend,
+                whisperModel: whisperModel || undefined,
+                whisperDevice: whisperDevice || 'auto',
+                whisperSilenceTimeout: whisperSilenceTimeout !== null ? whisperSilenceTimeout : undefined,
+                whisperMaxDuration: whisperMaxDuration !== null ? whisperMaxDuration : undefined,
+                llmBackend: this._llmBackend,
+                localLlmModel: localLlmModel || undefined,
+                localLlmDevice: localLlmDevice || 'auto'
             });
 
         } catch (error) {
@@ -3163,6 +3266,186 @@ class ReadingPartnerApp {
     /**
      * Save settings to storage
      */
+    // ========== STT/LLM Backend Switching ==========
+
+    /**
+     * Switch to Whisper STT backend
+     * @param {string} [model] - Whisper model ID
+     * @param {string} [device] - Device preference
+     */
+    _switchToWhisperSTT(model, device, silenceTimeout, maxDuration) {
+        if (!this._whisperService) {
+            this._whisperService = new WhisperSTTService();
+        }
+        if (model) this._whisperService.setModel(model);
+        if (device) this._whisperService.setDevice(device);
+        if (silenceTimeout != null) this._whisperService.setSilenceTimeout(silenceTimeout * 1000);
+        if (maxDuration != null) this._whisperService.setMaxDuration(maxDuration * 1000);
+
+        this._activeSTTService = this._whisperService;
+
+        // Update controllers with the new STT service
+        this._qaController?.setSTTService(this._whisperService);
+        this._quizController?.setSTTService(this._whisperService);
+
+        console.log(`STT: Switched to Whisper (${model || 'default'}, ${device || 'auto'})`);
+    }
+
+    /**
+     * Switch back to Web Speech API STT
+     */
+    _switchToWebSpeechSTT() {
+        this._activeSTTService = sttService;
+
+        // Update controllers
+        this._qaController?.setSTTService(sttService);
+        this._quizController?.setSTTService(sttService);
+
+        console.log('STT: Switched to Web Speech API');
+    }
+
+    /**
+     * Download Whisper model (triggered from settings)
+     * @param {Object} config
+     * @param {string} config.model - Model ID
+     * @param {string} config.device - Device preference
+     */
+    async _downloadWhisperModel(config) {
+        if (!this._whisperService) {
+            this._whisperService = new WhisperSTTService();
+        }
+
+        this._whisperService.setModel(config.model);
+        this._whisperService.setDevice(config.device);
+
+        // Show download progress
+        this._settingsModal.setWhisperStatus({ loading: true, statusText: 'Starting download...' });
+
+        this._whisperService.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+            this._settingsModal.setWhisperStatus({
+                loading: true,
+                statusText: progress.status || 'Downloading...'
+            });
+        };
+
+        modelDownloadModal.showProgress('Downloading Whisper Model');
+
+        try {
+            await this._whisperService.loadModel();
+            modelDownloadModal.showComplete('Whisper model ready!');
+            this._settingsModal.setWhisperStatus({ loaded: true, statusText: 'Model ready' });
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            this._settingsModal.setWhisperStatus({ loaded: false, statusText: `Error: ${error.message}` });
+        }
+    }
+
+    /**
+     * Download local LLM model (triggered from settings)
+     * @param {Object} config
+     * @param {string} config.model - Model ID
+     * @param {string} config.device - Device preference
+     */
+    async _downloadLocalLlmModel(config) {
+        llmClient.setLocalModel(config.model);
+        llmClient.setLocalDevice(config.device);
+
+        // Show download progress
+        this._settingsModal.setLocalLlmStatus({ loading: true, statusText: 'Starting download...' });
+
+        llmClient.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+            this._settingsModal.setLocalLlmStatus({
+                loading: true,
+                statusText: progress.status || 'Downloading...'
+            });
+        };
+
+        modelDownloadModal.showProgress('Downloading LLM Model');
+
+        try {
+            await llmClient.loadLocalModel();
+            modelDownloadModal.showComplete('LLM model ready!');
+            this._settingsModal.setLocalLlmStatus({ loaded: true, statusText: 'Model ready' });
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            this._settingsModal.setLocalLlmStatus({ loaded: false, statusText: `Error: ${error.message}` });
+        }
+    }
+
+    /**
+     * Ensure the local LLM is loaded, prompting download if needed
+     * @returns {Promise<boolean>} true if model is ready
+     */
+    async _ensureLocalLlmReady() {
+        if (llmClient.isLocalModelReady()) return true;
+
+        const { modelManager } = await import('./services/model-manager.js');
+        const modelId = llmClient.getLocalModel();
+        const sizeInfo = modelManager.getModelSize(modelId);
+        const modelInfo = llmClient.getLocalAvailableModels().find(m => m.id === modelId);
+
+        const confirmed = await modelDownloadModal.promptDownload({
+            modelName: modelInfo?.name || modelId,
+            modelSize: sizeInfo.download,
+            purpose: 'AI Assistant'
+        });
+
+        if (!confirmed) return false;
+
+        llmClient.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+        };
+
+        try {
+            await llmClient.loadLocalModel();
+            modelDownloadModal.showComplete('LLM model ready!');
+            return true;
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            return false;
+        }
+    }
+
+    /**
+     * Ensure Whisper STT is loaded, prompting download if needed
+     * @returns {Promise<boolean>} true if model is ready
+     */
+    async _ensureWhisperReady() {
+        if (this._whisperService?.isModelReady()) return true;
+
+        if (!this._whisperService) {
+            this._whisperService = new WhisperSTTService();
+        }
+
+        const { modelManager } = await import('./services/model-manager.js');
+        const modelId = this._whisperService.getModel();
+        const sizeInfo = modelManager.getModelSize(modelId);
+        const modelInfo = this._whisperService.getAvailableModels().find(m => m.id === modelId);
+
+        const confirmed = await modelDownloadModal.promptDownload({
+            modelName: modelInfo?.name || modelId,
+            modelSize: sizeInfo.download,
+            purpose: 'Speech Recognition'
+        });
+
+        if (!confirmed) return false;
+
+        this._whisperService.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+        };
+
+        try {
+            await this._whisperService.loadModel();
+            modelDownloadModal.showComplete('Whisper model ready!');
+            return true;
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            return false;
+        }
+    }
+
     async _saveSettings() {
         try {
             // Save voice and speed from saved values

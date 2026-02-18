@@ -1,902 +1,178 @@
 /**
- * LLM Client for OpenRouter
- * Handles streaming chat completions for Q&A mode
+ * LLM Client - Facade / Strategy Pattern
+ * Delegates all LLM calls to the active provider (OpenRouter or Local).
+ * Maintains backward-compatible API so existing imports continue to work.
  */
 
-// Popular OpenRouter models - free models first, then paid
-export const OPENROUTER_MODELS = {
-    free: [
-        { id: 'openai/gpt-oss-120b:free', name: 'GPT OSS 120B (Free)' },
-        { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B (Free)' },
-        { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 3 Nano 30B (Free)' },
-        { id: 'xiaomi/mimo-v2-flash:free', name: 'MiMo V2 Flash (Free)' },
-        { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air (Free)' },
-    ],
-    paid: [
-        { id: 'google/gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite' },
-        { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
-        { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
-        { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
-        { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-        { id: 'anthropic/claude-opus-4', name: 'Claude Opus 4' },
-        { id: 'openai/gpt-4o', name: 'GPT-4o' },
-        { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' },
-        { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3' },
-        { id: 'meta-llama/llama-3.1-405b-instruct', name: 'Llama 3.1 405B' },
-    ]
-};
+import { OpenRouterProvider, OPENROUTER_MODELS, DEFAULT_MODEL } from './openrouter-provider.js';
+import { LocalLLMProvider, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL } from './local-llm-provider.js';
 
-export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
+// Re-export for backward compatibility
+export { OPENROUTER_MODELS, DEFAULT_MODEL };
+export { LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL };
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {
-        this._apiKey = apiKey;
-        this._model = model;
-        this._endpoint = 'https://openrouter.ai/api/v1/chat/completions';
-        this._abortController = null;
+        // Create both providers
+        this._openRouterProvider = new OpenRouterProvider(apiKey, model);
+        this._localProvider = new LocalLLMProvider();
+
+        // Active backend: 'openrouter' or 'local'
+        this._backend = 'openrouter';
+
+        // Callback for model loading progress (local provider)
+        this.onModelProgress = null;
+    }
+
+    // ========== Backend Management ==========
+
+    /**
+     * Get the current backend type
+     * @returns {'openrouter'|'local'}
+     */
+    getBackend() {
+        return this._backend;
     }
 
     /**
-     * Set the API key
-     * @param {string} key
+     * Set the active backend
+     * @param {'openrouter'|'local'} backend
      */
+    setBackend(backend) {
+        this._backend = backend;
+    }
+
+    /**
+     * Get the active provider
+     * @returns {import('./llm-provider.js').LLMProvider}
+     */
+    _getProvider() {
+        return this._backend === 'local' ? this._localProvider : this._openRouterProvider;
+    }
+
+    /**
+     * Get the OpenRouter provider directly (for API key management, etc.)
+     * @returns {OpenRouterProvider}
+     */
+    getOpenRouterProvider() {
+        return this._openRouterProvider;
+    }
+
+    /**
+     * Get the local LLM provider directly (for model management, etc.)
+     * @returns {LocalLLMProvider}
+     */
+    getLocalProvider() {
+        return this._localProvider;
+    }
+
+    // ========== Backward-Compatible OpenRouter API ==========
+    // These methods are used by app.js to configure OpenRouter
+
     setApiKey(key) {
-        this._apiKey = key;
+        this._openRouterProvider.setApiKey(key);
     }
 
-    /**
-     * Get the API key
-     * @returns {string|null}
-     */
     getApiKey() {
-        return this._apiKey;
+        return this._openRouterProvider.getApiKey();
     }
 
-    /**
-     * Check if API key is set
-     * @returns {boolean}
-     */
     hasApiKey() {
-        return Boolean(this._apiKey && this._apiKey.trim());
+        return this._openRouterProvider.hasApiKey();
     }
 
-    /**
-     * Set the model
-     * @param {string} model
-     */
     setModel(model) {
-        this._model = model;
+        this._openRouterProvider.setModel(model);
     }
 
-    /**
-     * Get the current model
-     * @returns {string}
-     */
     getModel() {
-        return this._model;
+        return this._openRouterProvider.getModel();
     }
 
-    /**
-     * Get all available models
-     * @returns {{ free: Array, paid: Array }}
-     */
     getAvailableModels() {
-        return OPENROUTER_MODELS;
+        return this._openRouterProvider.getAvailableModels();
+    }
+
+    // ========== Local LLM Config ==========
+
+    setLocalModel(modelId) {
+        this._localProvider.setModel(modelId);
+    }
+
+    getLocalModel() {
+        return this._localProvider.getModel();
+    }
+
+    setLocalDevice(device) {
+        this._localProvider.setDevice(device);
+    }
+
+    getLocalAvailableModels() {
+        return this._localProvider.getAvailableModels();
+    }
+
+    isLocalModelReady() {
+        return this._localProvider.isModelReady();
+    }
+
+    isLocalModelLoading() {
+        return this._localProvider.isModelLoading();
     }
 
     /**
-     * Build system prompt with optional book metadata
-     * @param {{ title?: string, author?: string }} [bookMeta]
-     * @returns {string}
+     * Load the local model (triggers download if needed)
+     * @returns {Promise<void>}
      */
-    _buildSystemPrompt(bookMeta) {
-        let prompt = `You are a helpful reading assistant. The user is reading a book`;
-        if (bookMeta?.title) {
-            prompt += ` titled "${bookMeta.title}"`;
-            if (bookMeta.author) {
-                prompt += ` by ${bookMeta.author}`;
-            }
-        }
-        prompt += ` and has a question about it. Answer based on the provided context. Be concise and helpful. If the answer cannot be found in the context, say so.`;
-        return prompt;
+    async loadLocalModel() {
+        // Wire up progress callback
+        this._localProvider.onModelProgress = (progress) => {
+            this.onModelProgress?.(progress);
+        };
+        return this._localProvider.loadModel();
     }
 
     /**
-     * Build user message with context
-     * @param {string[]} contextSentences
-     * @param {string} question
-     * @param {{ title?: string, author?: string }} [bookMeta]
-     * @returns {string}
+     * Unload the local model to free memory
      */
-    _buildUserMessage(contextSentences, question, bookMeta) {
-        const contextText = contextSentences.join(' ');
-        let message = '';
-        if (bookMeta?.title) {
-            message += `Book: ${bookMeta.title}`;
-            if (bookMeta.author) {
-                message += ` by ${bookMeta.author}`;
-            }
-            message += '\n\n';
-        }
-        message += `Context from the book:\n"${contextText}"\n\nQuestion: ${question}`;
-        return message;
+    unloadLocalModel() {
+        this._localProvider.unloadModel();
     }
 
-    /**
-     * Ask a question with context (non-streaming)
-     * @param {string[]} contextSentences - Sentences for context
-     * @param {string} question - User's question
-     * @param {{ title?: string, author?: string }} [bookMeta] - Book metadata
-     * @returns {Promise<string>} LLM response
-     */
+    // ========== Delegated LLM Methods ==========
+    // All calls go through the active provider
+
     async askQuestion(contextSentences, question, bookMeta) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        const systemPrompt = this._buildSystemPrompt(bookMeta);
-        const userMessage = this._buildUserMessage(contextSentences, question, bookMeta);
-
-        const response = await fetch(this._endpoint, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${this._apiKey}`,
-                'Content-Type': 'application/json',
-                'HTTP-Referer': window.location.origin,
-                'X-Title': 'Reading Partner'
-            },
-            body: JSON.stringify({
-                model: this._model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userMessage }
-                ],
-                max_tokens: 500,
-                temperature: 0.7
-            })
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return data.choices[0].message.content;
+        return this._getProvider().askQuestion(contextSentences, question, bookMeta);
     }
 
-    /**
-     * Ask a question with streaming response
-     * @param {string[]} contextSentences - Sentences for context
-     * @param {string} question - User's question
-     * @param {(chunk: string) => void} onChunk - Callback for each text chunk
-     * @param {(sentence: string) => void} onSentence - Callback when a complete sentence is detected
-     * @param {{ title?: string, author?: string }} [bookMeta] - Book metadata
-     * @returns {Promise<string>} Full response when complete
-     */
     async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        // Create abort controller for cancellation
-        this._abortController = new AbortController();
-
-        const systemPrompt = this._buildSystemPrompt(bookMeta);
-        const userMessage = this._buildUserMessage(contextSentences, question, bookMeta);
-
-        let response;
-        try {
-            response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this._apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: this._model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage }
-                    ],
-                    max_tokens: 500,
-                    temperature: 0.7,
-                    stream: true
-                }),
-                signal: this._abortController.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request aborted');
-            }
-            throw error;
-        }
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullResponse = '';
-        let sentenceBuffer = '';
-
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-
-                if (done) {
-                    // Flush any remaining content as final sentence
-                    if (sentenceBuffer.trim()) {
-                        onSentence?.(sentenceBuffer.trim());
-                    }
-                    break;
-                }
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') {
-                            continue;
-                        }
-
-                        try {
-                            const parsed = JSON.parse(data);
-                            const content = parsed.choices?.[0]?.delta?.content;
-
-                            if (content) {
-                                fullResponse += content;
-                                sentenceBuffer += content;
-                                onChunk?.(content);
-
-                                // Check for complete sentences
-                                const sentences = this._extractCompleteSentences(sentenceBuffer);
-                                if (sentences.complete.length > 0) {
-                                    for (const sentence of sentences.complete) {
-                                        onSentence?.(sentence);
-                                    }
-                                    sentenceBuffer = sentences.remaining;
-                                }
-                            }
-                        } catch (e) {
-                            // Ignore parse errors for incomplete JSON
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                // Return what we have so far
-                return fullResponse;
-            }
-            throw error;
-        } finally {
-            this._abortController = null;
-        }
-
-        return fullResponse;
+        return this._getProvider().askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta);
     }
 
-    /**
-     * Extract complete sentences from a buffer
-     * @param {string} text
-     * @returns {{ complete: string[], remaining: string }}
-     */
-    _extractCompleteSentences(text) {
-        const complete = [];
-        let remaining = text;
-
-        // Pattern for sentence endings
-        const sentenceEndPattern = /[.!?]+[\s"')\]]*(?=\s|$)/g;
-        let match;
-        let lastEnd = 0;
-
-        while ((match = sentenceEndPattern.exec(text)) !== null) {
-            const sentenceEnd = match.index + match[0].length;
-            const sentence = text.slice(lastEnd, sentenceEnd).trim();
-            if (sentence) {
-                complete.push(sentence);
-            }
-            lastEnd = sentenceEnd;
-        }
-
-        remaining = text.slice(lastEnd);
-        return { complete, remaining };
-    }
-
-    /**
-     * Abort the current streaming request
-     */
-    abort() {
-        if (this._abortController) {
-            this._abortController.abort();
-            this._abortController = null;
-        }
-    }
-
-    // ========== Word Lookup Methods ==========
-
-    /**
-     * Look up a word or phrase with structured JSON output
-     * @param {Object} options
-     * @param {string} options.phrase - The word or phrase to look up
-     * @param {string} options.sentenceContext - The surrounding sentence for context
-     * @param {string} [options.targetLanguage='auto'] - Target language for translation ('auto' = LLM decides)
-     * @param {{ title?: string, author?: string }} [options.bookMeta] - Book metadata
-     * @returns {Promise<Object>} Parsed lookup result
-     */
     async lookupWord(options) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        const { phrase, sentenceContext, targetLanguage = 'auto', bookMeta } = options;
-
-        this._abortController = new AbortController();
-
-        const targetLangInstruction = targetLanguage === 'auto'
-            ? `Determine the most helpful language for the user based on context. If the phrase is in a foreign language, translate to English. If it's in English, provide the definition in English.`
-            : `Translate/define for a reader whose native language is ${targetLanguage}.`;
-
-        const systemPrompt = `You are a multilingual dictionary and translation assistant for a reading app. The user has selected a word or phrase while reading.
-
-${targetLangInstruction}
-
-Respond with ONLY a valid JSON object (no markdown fences, no extra text):
-{
-  "phrase": "the exact phrase looked up",
-  "sourceLanguage": "detected source language (e.g. English, Japanese, Norwegian)",
-  "sourceLanguageCode": "ISO 639-1 code (e.g. en, ja, no, nl, zh, fr)",
-  "partOfSpeech": "noun/verb/adjective/etc. or null if not applicable",
-  "pronunciation": "pronunciation guide (IPA or romanization for non-Latin scripts, e.g. furigana for Japanese)",
-  "definition": "clear, concise definition in the source language",
-  "translation": "translation into the target language, or null if source=target",
-  "exampleSentence": "a short example sentence using the phrase, or null",
-  "domain": "specialized domain if applicable (e.g. biomedical, legal, computing), or null",
-  "notes": "any additional useful context (etymology, usage notes, cultural context), or null"
-}
-
-Requirements:
-- For Japanese/Chinese: include romanization (romaji/pinyin) in pronunciation
-- For technical/biomedical terms: always fill the domain field and give a clear layperson explanation
-- Keep definitions concise (1-2 sentences)
-- If the phrase is idiomatic, explain the idiomatic meaning`;
-
-        let userMessage = '';
-        if (bookMeta?.title) {
-            userMessage += `Book: ${bookMeta.title}`;
-            if (bookMeta.author) userMessage += ` by ${bookMeta.author}`;
-            userMessage += '\n\n';
-        }
-        userMessage += `Phrase to look up: "${phrase}"`;
-        if (sentenceContext) {
-            userMessage += `\n\nContext sentence: "${sentenceContext}"`;
-        }
-
-        let response;
-        try {
-            response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this._apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: this._model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage }
-                    ],
-                    max_tokens: 500,
-                    temperature: 0.3
-                }),
-                signal: this._abortController.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request aborted');
-            }
-            throw error;
-        } finally {
-            this._abortController = null;
-        }
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || '';
-
-        return this._parseLookupJSON(content);
+        return this._getProvider().lookupWord(options);
     }
 
-    /**
-     * Parse lookup JSON from LLM response
-     * @param {string} text - Raw LLM response
-     * @returns {Object}
-     */
-    _parseLookupJSON(text) {
-        let cleaned = text.trim();
-        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        cleaned = cleaned.trim();
-
-        try {
-            const parsed = JSON.parse(cleaned);
-            if (!parsed.phrase || !parsed.definition) {
-                throw new Error('Missing required fields (phrase, definition)');
-            }
-            return parsed;
-        } catch (parseError) {
-            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    if (parsed.phrase || parsed.definition) return parsed;
-                } catch (e) {
-                    // Fall through
-                }
-            }
-            throw new Error(`Failed to parse lookup response: ${parseError.message}`);
-        }
-    }
-
-    // ========== Quiz Methods ==========
-
-    /**
-     * Generate a quiz question (non-streaming, returns parsed JSON)
-     * @param {Object} options
-     * @param {string[]} options.contextSentences
-     * @param {{ title?: string, author?: string }} [options.bookMeta]
-     * @param {boolean} [options.isMultipleChoice=true]
-     * @param {string[]} [options.questionTypes] - e.g. ['factual', 'deeper_understanding']
-     * @param {Object[]} [options.previousQuestions] - Questions already asked (for dedup)
-     * @param {string} [options.customSystemPrompt] - Custom system prompt override
-     * @returns {Promise<Object>} Parsed question object
-     */
     async generateQuizQuestion(options) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        const {
-            contextSentences,
-            bookMeta,
-            isMultipleChoice = true,
-            questionTypes = ['factual'],
-            previousQuestions = [],
-            customSystemPrompt = ''
-        } = options;
-
-        // Create abort controller
-        this._abortController = new AbortController();
-
-        const contextText = contextSentences.join(' ');
-        const typesList = questionTypes.join(', ');
-
-        let systemPrompt;
-        if (customSystemPrompt) {
-            systemPrompt = customSystemPrompt;
-        } else {
-            systemPrompt = `You are a quiz master for reading comprehension. Generate a single quiz question based on the provided book context.
-
-Question type(s) to choose from: ${typesList}.`;
-
-            if (previousQuestions.length > 0) {
-                systemPrompt += `\n\nIMPORTANT: The user has already been asked ${previousQuestions.length} question(s) in this session. You MUST generate a different question that does not repeat or closely paraphrase any previously asked question. Vary the topic, focus, and angle of your question.`;
-            }
-
-            if (isMultipleChoice) {
-                systemPrompt += `
-
-Respond with ONLY a valid JSON object (no markdown fences, no extra text):
-{
-  "question": "the question text",
-  "options": ["option A", "option B", "option C", "option D"],
-  "correctIndex": 0,
-  "explanation": "brief explanation of the correct answer"
-}
-
-Requirements:
-- Exactly 4 options
-- correctIndex is 0-3 indicating the correct option
-- Make wrong options plausible but clearly incorrect
-- Keep the explanation concise (1-2 sentences)`;
-            } else {
-                systemPrompt += `
-
-Respond with ONLY a valid JSON object (no markdown fences, no extra text):
-{
-  "question": "the question text"
-}
-
-Requirements:
-- Ask an open-ended question that requires a thoughtful answer
-- The question should be answerable from the provided context`;
-            }
-        }
-
-        let userMessage = '';
-        if (bookMeta?.title) {
-            userMessage += `Book: ${bookMeta.title}`;
-            if (bookMeta.author) userMessage += ` by ${bookMeta.author}`;
-            userMessage += '\n\n';
-        }
-        userMessage += `Context from the book:\n"${contextText}"`;
-
-        if (previousQuestions.length > 0) {
-            const prevList = previousQuestions.map(q => q.question).join('\n- ');
-            userMessage += `\n\nPreviously asked questions (do NOT repeat these):\n- ${prevList}`;
-        }
-
-        let response;
-        try {
-            response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this._apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: this._model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage }
-                    ],
-                    max_tokens: 500,
-                    temperature: 0.8
-                }),
-                signal: this._abortController.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request aborted');
-            }
-            throw error;
-        } finally {
-            this._abortController = null;
-        }
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || '';
-
-        return this._parseQuizJSON(content, isMultipleChoice);
+        return this._getProvider().generateQuizQuestion(options);
     }
 
-    /**
-     * Parse quiz question JSON from LLM response
-     * @param {string} text - Raw LLM response
-     * @param {boolean} isMultipleChoice
-     * @returns {Object}
-     */
-    _parseQuizJSON(text, isMultipleChoice) {
-        // Strip markdown code fences if present
-        let cleaned = text.trim();
-        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        cleaned = cleaned.trim();
-
-        try {
-            const parsed = JSON.parse(cleaned);
-
-            // Validate structure
-            if (!parsed.question || typeof parsed.question !== 'string') {
-                throw new Error('Missing or invalid question field');
-            }
-
-            if (isMultipleChoice) {
-                if (!Array.isArray(parsed.options) || parsed.options.length !== 4) {
-                    throw new Error('Missing or invalid options (need exactly 4)');
-                }
-                if (typeof parsed.correctIndex !== 'number' || parsed.correctIndex < 0 || parsed.correctIndex > 3) {
-                    throw new Error('Missing or invalid correctIndex (need 0-3)');
-                }
-                if (!parsed.explanation || typeof parsed.explanation !== 'string') {
-                    parsed.explanation = 'No explanation provided.';
-                }
-            }
-
-            return parsed;
-        } catch (parseError) {
-            // Try to extract JSON from the response
-            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    if (parsed.question) return parsed;
-                } catch (e) {
-                    // Fall through
-                }
-            }
-            throw new Error(`Failed to parse quiz question: ${parseError.message}`);
-        }
-    }
-
-    /**
-     * Stream a quiz chat response (for evaluation, hints, etc.)
-     * @param {Object[]} messages - Full message history
-     * @param {(chunk: string) => void} onChunk - Callback for each text chunk
-     * @param {(sentence: string) => void} onSentence - Callback for complete sentences
-     * @returns {Promise<string>} Full response
-     */
     async streamQuizChat(messages, onChunk, onSentence) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        this._abortController = new AbortController();
-
-        let response;
-        try {
-            response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this._apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: this._model,
-                    messages,
-                    max_tokens: 500,
-                    temperature: 0.7,
-                    stream: true
-                }),
-                signal: this._abortController.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request aborted');
-            }
-            throw error;
-        }
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let fullResponse = '';
-        let sentenceBuffer = '';
-
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-
-                if (done) {
-                    if (sentenceBuffer.trim()) {
-                        onSentence?.(sentenceBuffer.trim());
-                    }
-                    break;
-                }
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        const data = line.slice(6);
-                        if (data === '[DONE]') continue;
-
-                        try {
-                            const parsed = JSON.parse(data);
-                            const content = parsed.choices?.[0]?.delta?.content;
-
-                            if (content) {
-                                fullResponse += content;
-                                sentenceBuffer += content;
-                                onChunk?.(content);
-
-                                const sentences = this._extractCompleteSentences(sentenceBuffer);
-                                if (sentences.complete.length > 0) {
-                                    for (const sentence of sentences.complete) {
-                                        onSentence?.(sentence);
-                                    }
-                                    sentenceBuffer = sentences.remaining;
-                                }
-                            }
-                        } catch (e) {
-                            // Ignore parse errors
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                return fullResponse;
-            }
-            throw error;
-        } finally {
-            this._abortController = null;
-        }
-
-        return fullResponse;
+        return this._getProvider().streamQuizChat(messages, onChunk, onSentence);
     }
 
-    // ========== Text Generation Methods ==========
-
-    /**
-     * Generate a text (Markdown or HTML) with title using a single LLM call.
-     * Returns structured JSON with title and content fields.
-     * @param {Object} options
-     * @param {string} options.description - What the text should be about
-     * @param {string} options.language - Target language (e.g. 'English', 'Japanese')
-     * @param {string} options.length - 'short' (~300 words), 'medium' (~1000 words), 'long' (~3000 words)
-     * @param {string} options.format - 'markdown' or 'html'
-     * @param {string|null} [options.genre] - Optional genre (e.g. 'short_story', 'essay')
-     * @returns {Promise<{ title: string, content: string }>}
-     */
     async generateText(options) {
-        if (!this._apiKey) {
-            throw new Error('API key not set');
-        }
-
-        const { description, language, length, format, genre } = options;
-
-        this._abortController = new AbortController();
-
-        const wordCounts = { short: '~300', medium: '~1000', long: '~3000' };
-        const targetWords = wordCounts[length] || wordCounts.medium;
-
-        let genreInstruction = '';
-        if (genre && genre !== 'none') {
-            const genreLabels = {
-                short_story: 'a short story',
-                essay: 'an essay',
-                news_article: 'a news article',
-                childrens_story: "a children's story",
-                technical: 'a technical document',
-                blog_post: 'a blog post',
-                letter: 'a letter',
-                poem: 'a poem',
-                dialogue: 'a dialogue'
-            };
-            genreInstruction = `\nThe genre/style should be: ${genreLabels[genre] || genre}.`;
-        }
-
-        let formatInstruction;
-        if (format === 'html') {
-            formatInstruction = `Write the content as valid HTML (do NOT include <html>, <head>, or <body> tags — just the inner content starting with headings, paragraphs, etc.). You may use <ruby> tags for furigana where appropriate for Japanese text. Use semantic HTML elements like <h1>, <h2>, <p>, <ul>, <ol>, <blockquote>, etc.`;
-        } else {
-            formatInstruction = `Write the content in Markdown format. Use headings (#, ##), paragraphs, lists, blockquotes, and other Markdown formatting as appropriate.`;
-        }
-
-        const systemPrompt = `You are a creative text generator for a reading application. Generate a text based on the user's description.
-
-${formatInstruction}
-
-Requirements:
-- Write entirely in ${language}
-- Target length: ${targetWords} words${genreInstruction}
-- Use section headings to structure longer texts
-- The text should be well-written, engaging, and suitable for reading practice
-
-Respond with ONLY a valid JSON object (no markdown fences, no extra text):
-{
-  "title": "a concise, descriptive title for the text in ${language}",
-  "content": "the full ${format} content of the text"
-}`;
-
-        const userMessage = `Generate a text about: ${description}`;
-
-        let response;
-        try {
-            response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this._apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: this._model,
-                    messages: [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userMessage }
-                    ],
-                    max_tokens: length === 'long' ? 8000 : length === 'medium' ? 4000 : 1500,
-                    temperature: 0.8
-                }),
-                signal: this._abortController.signal
-            });
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                throw new Error('Request aborted');
-            }
-            throw error;
-        } finally {
-            this._abortController = null;
-        }
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({}));
-            throw new Error(error.error?.message || `API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        const content = data.choices?.[0]?.message?.content || '';
-
-        return this._parseGeneratedTextJSON(content);
+        return this._getProvider().generateText(options);
     }
 
-    /**
-     * Parse generated text JSON from LLM response
-     * @param {string} text - Raw LLM response
-     * @returns {{ title: string, content: string }}
-     */
-    _parseGeneratedTextJSON(text) {
-        let cleaned = text.trim();
-        cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
-        cleaned = cleaned.trim();
-
-        try {
-            const parsed = JSON.parse(cleaned);
-            if (!parsed.title || !parsed.content) {
-                throw new Error('Missing required fields (title, content)');
-            }
-            return { title: parsed.title, content: parsed.content };
-        } catch (parseError) {
-            const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                try {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    if (parsed.title && parsed.content) return { title: parsed.title, content: parsed.content };
-                } catch (e) {
-                    // Fall through
-                }
-            }
-            throw new Error(`Failed to parse generated text: ${parseError.message}`);
-        }
+    abort() {
+        this._getProvider().abort();
     }
 
-    /**
-     * Validate an API key by making a test request
-     * @param {string} apiKey
-     * @returns {Promise<boolean>}
-     */
+    // ========== OpenRouter-specific Methods ==========
+
     async validateApiKey(apiKey) {
-        try {
-            const response = await fetch(this._endpoint, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'Content-Type': 'application/json',
-                    'HTTP-Referer': window.location.origin,
-                    'X-Title': 'Reading Partner'
-                },
-                body: JSON.stringify({
-                    model: DEFAULT_MODEL,
-                    messages: [
-                        { role: 'user', content: 'Hi' }
-                    ],
-                    max_tokens: 1
-                })
-            });
-
-            return response.ok;
-        } catch (error) {
-            console.error('API key validation failed:', error);
-            return false;
-        }
+        return this._openRouterProvider.validateApiKey(apiKey);
     }
 }
 

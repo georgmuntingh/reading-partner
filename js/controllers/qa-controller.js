@@ -3,7 +3,7 @@
  * Orchestrates the STT -> LLM -> TTS flow for Q&A mode
  */
 
-import { sttService } from '../services/stt-service.js';
+import { sttService as defaultSttService } from '../services/stt-service.js';
 import { llmClient } from '../services/llm-client.js';
 import { ttsEngine } from '../services/tts-engine.js';
 import { splitIntoSentences } from '../utils/sentence-splitter.js';
@@ -43,6 +43,9 @@ export class QAController {
         this._onSentenceSpoken = options.onSentenceSpoken;
         this._onHistoryAdd = options.onHistoryAdd;
 
+        // STT service (injectable, defaults to Web Speech API singleton)
+        this._sttService = options.sttService || defaultSttService;
+
         // State
         this._state = QAState.IDLE;
         this._currentQuestion = '';
@@ -73,7 +76,18 @@ export class QAController {
         this._useFullChapter = false;
 
         // Setup STT callbacks
-        sttService.onInterimResult = (text) => {
+        this._sttService.onInterimResult = (text) => {
+            this._onTranscript?.(text);
+        };
+    }
+
+    /**
+     * Switch the STT service (e.g., from Web Speech to Whisper)
+     * @param {Object} sttService - STT service instance with same API
+     */
+    setSTTService(sttService) {
+        this._sttService = sttService;
+        this._sttService.onInterimResult = (text) => {
             this._onTranscript?.(text);
         };
     }
@@ -153,7 +167,7 @@ export class QAController {
 
         try {
             // Start listening
-            const question = await sttService.startListening();
+            const question = await this._sttService.startListening();
             this._currentQuestion = question;
             this._onTranscript?.(question);
 
@@ -239,6 +253,18 @@ export class QAController {
 
             // Mark streaming as complete
             this._isStreamingComplete = true;
+
+            // Some models (e.g. recurrent LFMs) don't produce streamable token-by-token
+            // output, so the sentence callbacks above never fire. If we're still in
+            // THINKING state after the full response has arrived, trigger the transition
+            // now using the complete response text.
+            if (this._state === QAState.THINKING && !this._isStopped && fullResponse.trim()) {
+                const idx = this._responseSentences.length;
+                this._responseSentences.push(fullResponse.trim());
+                this._prefetchSentenceAudio(idx, fullResponse.trim());
+                this._setState(QAState.RESPONDING);
+                this._startSpeaking();
+            }
 
             // Add to history
             const historyEntry = {
@@ -437,7 +463,7 @@ export class QAController {
 
         // Cancel STT if listening
         if (this._state === QAState.LISTENING) {
-            sttService.abortListening();
+            this._sttService.abortListening();
         }
 
         // Cancel LLM request
@@ -464,7 +490,7 @@ export class QAController {
      */
     cancelListening() {
         if (this._state === QAState.LISTENING) {
-            sttService.abortListening();
+            this._sttService.abortListening();
             this._setState(QAState.IDLE);
         }
     }
@@ -501,7 +527,7 @@ export class QAController {
      * @returns {boolean}
      */
     isSTTSupported() {
-        return sttService.isSupported();
+        return this._sttService.isSupported();
     }
 
     /**
@@ -509,7 +535,7 @@ export class QAController {
      * @returns {Promise<boolean>}
      */
     async requestMicPermission() {
-        return sttService.requestPermission();
+        return this._sttService.requestPermission();
     }
 
     /**
