@@ -47,6 +47,54 @@ async function resolveDevice(requestedDevice) {
 }
 
 /**
+ * Stateful streaming filter: strips <think>…</think> blocks from token chunks.
+ * state = { inThink: boolean, buf: string }
+ * Returns the portion that should be emitted to the user.
+ */
+function filterThink(text, state) {
+    let s = state.buf + text;
+    state.buf = '';
+    let out = '';
+    while (s.length > 0) {
+        if (state.inThink) {
+            const end = s.indexOf('</think>');
+            if (end === -1) {
+                // Buffer the tail in case '</think>' straddles a chunk boundary
+                const keep = Math.min(s.length, 7);
+                state.buf = s.slice(s.length - keep);
+                s = '';
+            } else {
+                state.inThink = false;
+                // Skip '</think>' and any immediately following newline
+                s = s.slice(end + 8).replace(/^\n/, '');
+            }
+        } else {
+            const start = s.indexOf('<think>');
+            if (start === -1) {
+                // Buffer the tail in case '<think>' straddles a chunk boundary
+                const keep = Math.min(s.length, 6);
+                out += s.slice(0, s.length - keep);
+                state.buf = s.slice(s.length - keep);
+                s = '';
+            } else {
+                out += s.slice(0, start);
+                state.inThink = true;
+                s = s.slice(start + 7);
+            }
+        }
+    }
+    return out;
+}
+
+/** Flush any buffered non-think content at end of generation. */
+function flushThinkFilter(state) {
+    if (state.inThink) { state.buf = ''; return ''; }
+    const out = state.buf;
+    state.buf = '';
+    return out;
+}
+
+/**
  * Load the LLM model
  */
 async function loadModel(config) {
@@ -162,11 +210,25 @@ async function generate(config) {
     } = config;
 
     try {
+        // Extract noThink flag (worker-internal) before spreading into apply_chat_template
+        const { noThink, ...templateOptions } = currentChatOptions || {};
+
+        // Qwen3 soft-switch: append /no_think to the last user message so the
+        // model skips its <think>…</think> reasoning chain entirely.
+        let processedMessages = messages;
+        if (noThink) {
+            processedMessages = messages.map((m, i) =>
+                (i === messages.length - 1 && m.role === 'user')
+                    ? { ...m, content: m.content + '\n/no_think' }
+                    : m
+            );
+        }
+
         // Apply chat template to convert messages to model input
-        const inputIds = tokenizer.apply_chat_template(messages, {
+        const inputIds = tokenizer.apply_chat_template(processedMessages, {
             add_generation_prompt: true,
             return_tensor: false,
-            ...(currentChatOptions || {})
+            ...templateOptions
         });
 
         // Convert to tensor
@@ -184,6 +246,9 @@ async function generate(config) {
         // (input + all generated so far), so we track how many generated
         // tokens we have already decoded to extract only the new delta.
         let decodedGeneratedCount = 0;
+
+        // Stateful filter that strips <think>…</think> from the stream
+        const thinkState = { inThink: false, buf: '' };
 
         const outputs = await generator.generate({
             input_ids: inputTensor,
@@ -214,12 +279,20 @@ async function generate(config) {
                     const decoded = tokenizer.decode(newTokens, { skip_special_tokens: true });
 
                     if (decoded) {
-                        fullText += decoded;
-                        self.postMessage({ type: 'token', token: decoded });
+                        const visible = filterThink(decoded, thinkState);
+                        if (visible) {
+                            fullText += visible;
+                            self.postMessage({ type: 'token', token: visible });
+                        }
                     }
                 },
                 end() {
-                    // Generation complete
+                    // Flush any buffered non-think content at the end of generation
+                    const tail = flushThinkFilter(thinkState);
+                    if (tail) {
+                        fullText += tail;
+                        self.postMessage({ type: 'token', token: tail });
+                    }
                 }
             }
         });
@@ -229,10 +302,12 @@ async function generate(config) {
         if (shouldAbort) {
             self.postMessage({ type: 'aborted', text: fullText });
         } else {
-            // Decode the full output for accuracy (in case incremental decode had issues)
+            // Decode the full output for accuracy (in case incremental decode had issues),
+            // then strip any residual <think>…</think> blocks.
             const outputIds = outputs.tolist()[0];
             const newTokenIds = outputIds.slice(inputIds.length);
             fullText = tokenizer.decode(newTokenIds, { skip_special_tokens: true });
+            fullText = fullText.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
 
             self.postMessage({ type: 'complete', text: fullText });
         }

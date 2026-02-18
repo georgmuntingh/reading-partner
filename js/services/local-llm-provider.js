@@ -11,9 +11,11 @@ export const LOCAL_LLM_MODELS = [
     { id: 'HuggingFaceTB/SmolLM2-360M-Instruct', name: 'SmolLM2 360M (Recommended)', size: '~250 MB', dtype: 'q4f16' },
     { id: 'HuggingFaceTB/SmolLM2-135M-Instruct', name: 'SmolLM2 135M (Faster)', size: '~100 MB', dtype: 'q4f16' },
     { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct', name: 'SmolLM2 1.7B (Better Quality)', size: '~925 MB', dtype: 'q4f16' },
-    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8', chatOptions: { enable_thinking: false } },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4)', size: '~900 MB', dtype: 'q4', chatOptions: { enable_thinking: false } },
-    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4f16)', size: '~2 GB', dtype: 'q4f16', chatOptions: { enable_thinking: false } },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8', chatOptions: { enable_thinking: false, noThink: true } },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4f16)', size: '~2 GB', dtype: 'q4f16', chatOptions: { enable_thinking: false, noThink: true } },
+    { id: 'onnx-community/LFM2-350M-ONNX', name: 'LFM2 350M (Fastest)', size: '~200 MB', dtype: 'q4' },
+    { id: 'onnx-community/LFM2-700M-ONNX', name: 'LFM2 700M', size: '~400 MB', dtype: 'q4' },
+    { id: 'onnx-community/LFM2-1.2B-ONNX', name: 'LFM2 1.2B', size: '~700 MB', dtype: 'q4' },
 ];
 
 export const DEFAULT_LOCAL_MODEL = 'HuggingFaceTB/SmolLM2-360M-Instruct';
