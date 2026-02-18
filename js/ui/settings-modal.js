@@ -365,9 +365,6 @@ export class SettingsModal {
                             <div class="form-group">
                                 <label for="settings-local-llm-model">Local Model</label>
                                 <select id="settings-local-llm-model" class="form-select">
-                                    ${LOCAL_LLM_MODELS.map(m => `
-                                        <option value="${m.id}">${m.name} (${m.size})</option>
-                                    `).join('')}
                                 </select>
                             </div>
 
@@ -1212,8 +1209,11 @@ export class SettingsModal {
         this._elements.whisperMaxDurationValue.textContent = `${maxDuration}s`;
         this._updateSTTBackendUI();
 
-        // Load LLM backend settings
+        // Load LLM backend settings — rebuild options each time so new models are always visible
         this._elements.llmBackend.value = this._settings.llmBackend || 'openrouter';
+        this._elements.localLlmModel.innerHTML = LOCAL_LLM_MODELS.map(m =>
+            `<option value="${m.id}">${m.name} (${m.size})</option>`
+        ).join('');
         this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
         this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
         this._updateLLMBackendUI();
