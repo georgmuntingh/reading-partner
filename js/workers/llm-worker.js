@@ -159,6 +159,10 @@ async function generate(config) {
         // Generate with streaming via callback
         let generatedTokens = [];
         let fullText = '';
+        // transformers.js put() receives the full cumulative token sequence
+        // (input + all generated so far), so we track how many generated
+        // tokens we have already decoded to extract only the new delta.
+        let decodedGeneratedCount = 0;
 
         const outputs = await generator.generate({
             input_ids: inputTensor,
@@ -168,16 +172,24 @@ async function generate(config) {
             do_sample,
             top_p: do_sample ? top_p : undefined,
             repetition_penalty,
-            // Streamer callback: called for each new token
+            // Streamer callback: called with the full accumulated sequence each time
             streamer: {
                 put(tokenIds) {
                     if (shouldAbort) return;
 
-                    // tokenIds is an array of token IDs for the new tokens
-                    const newTokens = Array.from(tokenIds.flat());
+                    // tokenIds is the full sequence: [input tokens..., generated tokens...]
+                    const allTokens = Array.from(tokenIds.flat());
+
+                    // Slice off the input prefix, then take only tokens not yet decoded
+                    const generated = allTokens.slice(inputIds.length);
+                    const newTokens = generated.slice(decodedGeneratedCount);
+                    decodedGeneratedCount += newTokens.length;
+
+                    if (newTokens.length === 0) return;
+
                     generatedTokens.push(...newTokens);
 
-                    // Decode only the new tokens
+                    // Decode only the truly new tokens
                     const decoded = tokenizer.decode(newTokens, { skip_special_tokens: true });
 
                     if (decoded) {
