@@ -10,6 +10,18 @@ let tokenizer = null;
 let isLoading = false;
 let isGenerating = false;
 let shouldAbort = false;
+let currentChatOptions = null;
+
+// Forward unhandled WebGPU device-lost rejections as worker errors
+self.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason?.message ?? String(event.reason);
+    if (msg.includes('Device') && msg.includes('lost') || msg.includes('mapAsync')) {
+        self.postMessage({
+            type: 'error',
+            error: 'GPU device lost — your GPU may have run out of memory or timed out. Try a smaller model or restart the browser.'
+        });
+    }
+});
 
 /**
  * Detect WebGPU availability inside the worker
@@ -44,8 +56,10 @@ async function loadModel(config) {
     const {
         model = 'HuggingFaceTB/SmolLM2-360M-Instruct',
         device: requestedDevice = 'auto',
-        dtype = 'q4f16'
+        dtype = 'q4f16',
+        chatOptions = null
     } = config;
+    currentChatOptions = chatOptions;
 
     try {
         self.postMessage({ type: 'loading', progress: { status: 'Loading transformers.js library...' } });
@@ -111,7 +125,13 @@ async function loadModel(config) {
 
     } catch (error) {
         isLoading = false;
-        self.postMessage({ type: 'error', error: error.message });
+        let msg = error.message ?? String(error);
+        if (msg.includes('Aborted')) {
+            msg = `Model session failed to start (dtype "${dtype}" may not be supported on this GPU). Try a different model.`;
+        } else if (msg.includes('Device') && msg.includes('lost') || msg.includes('mapAsync')) {
+            msg = 'GPU device lost while loading the model — your GPU may have run out of memory. Try a smaller model.';
+        }
+        self.postMessage({ type: 'error', error: msg });
     }
 }
 
@@ -145,7 +165,8 @@ async function generate(config) {
         // Apply chat template to convert messages to model input
         const inputIds = tokenizer.apply_chat_template(messages, {
             add_generation_prompt: true,
-            return_tensor: false
+            return_tensor: false,
+            ...(currentChatOptions || {})
         });
 
         // Convert to tensor
@@ -223,7 +244,11 @@ async function generate(config) {
         if (shouldAbort) {
             self.postMessage({ type: 'aborted', text: '' });
         } else {
-            self.postMessage({ type: 'error', error: error.message });
+            let msg = error.message ?? String(error);
+            if (msg.includes('Device') && msg.includes('lost') || msg.includes('mapAsync')) {
+                msg = 'GPU device lost during generation — your GPU may have run out of memory or timed out. Try a smaller model.';
+            }
+            self.postMessage({ type: 'error', error: msg });
         }
     }
 }
@@ -243,6 +268,7 @@ function unload() {
     tokenizer = null;
     isGenerating = false;
     shouldAbort = false;
+    currentChatOptions = null;
     self.postMessage({ type: 'unloaded' });
 }
 

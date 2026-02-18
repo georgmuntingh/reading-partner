@@ -11,9 +11,9 @@ export const LOCAL_LLM_MODELS = [
     { id: 'HuggingFaceTB/SmolLM2-360M-Instruct', name: 'SmolLM2 360M (Recommended)', size: '~250 MB', dtype: 'q4f16' },
     { id: 'HuggingFaceTB/SmolLM2-135M-Instruct', name: 'SmolLM2 135M (Faster)', size: '~100 MB', dtype: 'q4f16' },
     { id: 'HuggingFaceTB/SmolLM2-1.7B-Instruct', name: 'SmolLM2 1.7B (Better Quality)', size: '~925 MB', dtype: 'q4f16' },
-    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8' },
-    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4f16)', size: '~900 MB', dtype: 'q4f16' },
-    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4f16)', size: '~2 GB', dtype: 'q4f16' },
+    { id: 'onnx-community/Qwen3-0.6B-ONNX', name: 'Qwen3 0.6B (q8)', size: '~600 MB', dtype: 'q8', chatOptions: { enable_thinking: false } },
+    { id: 'onnx-community/Qwen3-1.7B-ONNX', name: 'Qwen3 1.7B (q4)', size: '~900 MB', dtype: 'q4', chatOptions: { enable_thinking: false } },
+    { id: 'onnx-community/Qwen3-4B-ONNX', name: 'Qwen3 4B (q4f16)', size: '~2 GB', dtype: 'q4f16', chatOptions: { enable_thinking: false } },
 ];
 
 export const DEFAULT_LOCAL_MODEL = 'HuggingFaceTB/SmolLM2-360M-Instruct';
@@ -27,6 +27,7 @@ export class LocalLLMProvider extends LLMProvider {
         this._model = DEFAULT_LOCAL_MODEL;
         this._device = 'auto';
         this._dtype = 'q4f16';
+        this._chatOptions = null;
 
         // Model loading progress callback
         this.onModelProgress = null;
@@ -40,6 +41,7 @@ export class LocalLLMProvider extends LLMProvider {
             // Update dtype based on model's preferred quantization
             const modelDef = LOCAL_LLM_MODELS.find(m => m.id === modelId);
             if (modelDef?.dtype) this._dtype = modelDef.dtype;
+            this._chatOptions = modelDef?.chatOptions ?? null;
             if (this._isReady) {
                 this._isReady = false;
                 this._worker?.postMessage({ type: 'unload' });
@@ -117,7 +119,8 @@ export class LocalLLMProvider extends LLMProvider {
                 type: 'load',
                 model: this._model,
                 device: this._device,
-                dtype: this._dtype
+                dtype: this._dtype,
+                chatOptions: this._chatOptions
             });
         });
     }
