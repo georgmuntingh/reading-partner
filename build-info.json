@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-17T09:15:33.291Z",
-  "commit": "38052298f5bbec25de0f3cb04700e9d589c66fed",
-  "commitShort": "3805229",
-  "branch": "main",
-  "lastCommitDate": "2026-02-17T10:15:18+01:00"
+  "buildTime": "2026-02-18T09:09:30.149Z",
+  "commit": "be5275d52447c5ead1df998166231c2d4a15e33f",
+  "commitShort": "be5275d",
+  "branch": "claude/webgpu-local-ai-inference-H9uei",
+  "lastCommitDate": "2026-02-17T20:07:01Z"
 }
