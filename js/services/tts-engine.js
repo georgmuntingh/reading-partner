@@ -44,7 +44,8 @@ export class TTSEngine {
         this._audioContext = null;
         this._onProgress = null;
         this._device = 'wasm'; // Current device: 'webgpu', 'wasm', or 'fastapi'
-        this._dtype = 'fp32'; // Current dtype: 'fp32', 'fp16', 'q8', 'q4'
+        this._dtype = 'fp32'; // Current dtype: 'fp32', 'fp16', 'q8', 'q4', 'q4f16'
+        this._preferredDtype = 'auto'; // User preference: 'auto', 'fp32', 'fp16', 'q8', 'q4', 'q4f16'
         this._sampleRate = 24000;
 
         // TTS Backend: 'kokoro-fastapi', 'kokoro-js', or 'web-speech'
@@ -147,13 +148,37 @@ export class TTSEngine {
     }
 
     /**
+     * Set preferred dtype for Kokoro.js model loading.
+     * 'auto' selects fp32 for WebGPU and q8 for WASM.
+     * @param {string} dtype - 'auto', 'fp32', 'fp16', 'q8', 'q4', 'q4f16'
+     */
+    setPreferredDtype(dtype) {
+        this._preferredDtype = dtype || 'auto';
+    }
+
+    /**
+     * Get preferred dtype setting
+     * @returns {string}
+     */
+    getPreferredDtype() {
+        return this._preferredDtype;
+    }
+
+    /**
      * Set TTS backend. If the engine is already initialized, this will
      * trigger a re-initialization.
      * @param {TTSBackend} backend
+     * @param {Object} [options]
+     * @param {string} [options.dtype] - Override dtype for reinitialization
      * @returns {Promise<void>}
      */
-    async setBackend(backend) {
-        if (backend === this._backend && this._isReady) return;
+    async setBackend(backend, options = {}) {
+        const dtypeChanged = options.dtype !== undefined && options.dtype !== this._preferredDtype;
+        if (dtypeChanged) {
+            this._preferredDtype = options.dtype;
+        }
+
+        if (backend === this._backend && this._isReady && !dtypeChanged) return;
 
         this._backend = backend;
 
@@ -255,11 +280,15 @@ export class TTSEngine {
             }
         }
 
-        // Determine dtype based on device
-        // WebGPU works well with fp32/fp16, WASM benefits from quantization
+        // Determine dtype based on device and user preference
+        // WebGPU works well with fp32, WASM benefits from quantization (q8)
         let dtype = options.dtype;
         if (!dtype) {
-            dtype = device === 'webgpu' ? 'fp32' : 'q8';
+            if (this._preferredDtype && this._preferredDtype !== 'auto') {
+                dtype = this._preferredDtype;
+            } else {
+                dtype = device === 'webgpu' ? 'fp32' : 'q8';
+            }
         }
 
         this._device = device;
