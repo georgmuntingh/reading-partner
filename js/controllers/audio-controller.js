@@ -222,7 +222,7 @@ export class AudioController {
                 this._skipPlayTimer = setTimeout(() => {
                     this._skipPlayTimer = null;
                     this.play();
-                }, 1000);
+                }, 2000);
             }
         }
     }
@@ -251,7 +251,7 @@ export class AudioController {
             this._skipPlayTimer = setTimeout(() => {
                 this._skipPlayTimer = null;
                 this.play();
-            }, 1000);
+            }, 2000);
         }
     }
 
