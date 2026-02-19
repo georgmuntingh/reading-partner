@@ -40,6 +40,9 @@ export class AudioController {
 
         // Generation tracking
         this._generatingIndices = new Set();
+
+        // Debounce timer for play-after-skip
+        this._skipPlayTimer = null;
     }
 
     /**
@@ -161,6 +164,10 @@ export class AudioController {
      * Pause playback
      */
     pause() {
+        if (this._skipPlayTimer) {
+            clearTimeout(this._skipPlayTimer);
+            this._skipPlayTimer = null;
+        }
         this._stopRequested = true;
         this._status = 'paused';
         ttsEngine.stopAudio();
@@ -180,6 +187,10 @@ export class AudioController {
      * Stop playback completely
      */
     stop() {
+        if (this._skipPlayTimer) {
+            clearTimeout(this._skipPlayTimer);
+            this._skipPlayTimer = null;
+        }
         this._stopRequested = true;
         this._status = 'stopped';
         this._currentIndex = 0;
@@ -191,7 +202,13 @@ export class AudioController {
      * Skip to next sentence
      */
     skipForward() {
-        const wasPlaying = this._status === 'playing';
+        const wasPlaying = this._status === 'playing' || this._skipPlayTimer !== null;
+
+        if (this._skipPlayTimer) {
+            clearTimeout(this._skipPlayTimer);
+            this._skipPlayTimer = null;
+        }
+
         this._stopRequested = true;
         ttsEngine.stopAudio();
 
@@ -200,7 +217,12 @@ export class AudioController {
             this._onSentenceChange?.(this._currentIndex);
 
             if (wasPlaying) {
-                setTimeout(() => this.play(), 50);
+                this._status = 'paused';
+                this._notifyStateChange();
+                this._skipPlayTimer = setTimeout(() => {
+                    this._skipPlayTimer = null;
+                    this.play();
+                }, 2000);
             }
         }
     }
@@ -210,7 +232,13 @@ export class AudioController {
      * @param {number} [count=1]
      */
     skipBackward(count = 1) {
-        const wasPlaying = this._status === 'playing';
+        const wasPlaying = this._status === 'playing' || this._skipPlayTimer !== null;
+
+        if (this._skipPlayTimer) {
+            clearTimeout(this._skipPlayTimer);
+            this._skipPlayTimer = null;
+        }
+
         this._stopRequested = true;
         ttsEngine.stopAudio();
 
@@ -218,7 +246,12 @@ export class AudioController {
         this._onSentenceChange?.(this._currentIndex);
 
         if (wasPlaying) {
-            setTimeout(() => this.play(), 50);
+            this._status = 'paused';
+            this._notifyStateChange();
+            this._skipPlayTimer = setTimeout(() => {
+                this._skipPlayTimer = null;
+                this.play();
+            }, 2000);
         }
     }
 
@@ -381,6 +414,10 @@ export class AudioController {
      * Cleanup
      */
     destroy() {
+        if (this._skipPlayTimer) {
+            clearTimeout(this._skipPlayTimer);
+            this._skipPlayTimer = null;
+        }
         this.stop();
         this._clearBuffers();
     }
