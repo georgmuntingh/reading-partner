@@ -119,6 +119,12 @@ export class SettingsModal {
                             </select>
                         </div>
 
+                        <div class="form-group" id="settings-custom-voice-group">
+                            <label for="settings-custom-voice">Custom Voice Combination (FastAPI only)</label>
+                            <input type="text" id="settings-custom-voice" class="form-input" placeholder="e.g. af_alloy(1.0)+af_sarah(1.0)">
+                            <p class="form-hint">Enter a Kokoro voice blend. When non-empty, overrides the voice selection above.</p>
+                        </div>
+
                         <div class="form-group">
                             <label for="settings-speed">Speed: <span id="settings-speed-value">1.0x</span></label>
                             <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
@@ -580,6 +586,8 @@ export class SettingsModal {
             historySize: this._container.querySelector('#settings-history-size'),
             historySizeValue: this._container.querySelector('#settings-history-size-value'),
             voice: this._container.querySelector('#settings-voice'),
+            customVoice: this._container.querySelector('#settings-custom-voice'),
+            customVoiceGroup: this._container.querySelector('#settings-custom-voice-group'),
             speed: this._container.querySelector('#settings-speed'),
             speedValue: this._container.querySelector('#settings-speed-value'),
             font: this._container.querySelector('#settings-font'),
@@ -833,6 +841,7 @@ export class SettingsModal {
         const backend = this._elements.ttsBackend.value;
         const showFastApi = backend === 'kokoro-fastapi';
         this._elements.fastApiUrlGroup.style.display = showFastApi ? '' : 'none';
+        this._elements.customVoiceGroup.style.display = showFastApi ? '' : 'none';
 
         // Update hint text
         const hints = {
@@ -1038,7 +1047,11 @@ export class SettingsModal {
             contextAfter: parseInt(this._elements.contextAfter.value) || 5,
             ttsBackend: this._elements.ttsBackend.value,
             fastApiUrl: this._elements.fastApiUrl.value.trim() || 'http://localhost:8880',
-            voice: this._elements.voice.value,
+            voice: (() => {
+                const isFastAPI = this._elements.ttsBackend.value === 'kokoro-fastapi';
+                const custom = this._elements.customVoice.value.trim();
+                return (isFastAPI && custom) ? custom : this._elements.voice.value;
+            })(),
             speed: parseFloat(this._elements.speed.value),
             font: this._elements.font.value,
             fontSize: parseInt(this._elements.fontSize.value),
@@ -1195,7 +1208,17 @@ export class SettingsModal {
         this._elements.fastApiUrl.value = this._settings.fastApiUrl || 'http://localhost:8880';
 
         // Load voice & speed settings
-        this._elements.voice.value = this._settings.voice || 'af_bella';
+        const savedVoice = this._settings.voice || 'af_bella';
+        const voiceInDropdown = Array.from(this._elements.voice.options).some(
+            o => o.value === savedVoice && !o.disabled
+        );
+        if (voiceInDropdown) {
+            this._elements.voice.value = savedVoice;
+            this._elements.customVoice.value = '';
+        } else {
+            // Custom combination not in the dropdown - put it in the text input
+            this._elements.customVoice.value = savedVoice;
+        }
         this._elements.speed.value = this._settings.speed || 1.0;
         this._elements.speedValue.textContent = `${(this._settings.speed || 1.0).toFixed(1)}x`;
 
