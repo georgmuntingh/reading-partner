@@ -917,6 +917,9 @@ export class TTSEngine {
                 { id: 'bm_george', name: 'George (British Male)' },
                 { id: 'bm_lewis', name: 'Lewis (British Male)' },
 
+                // Voice combinations (FastAPI only)
+                { id: 'af_alloy(1.0)+af_sarah(1.0)', name: 'Alloy + Sarah (Blended)', disabled: needsFastAPI },
+
                 // Japanese (FastAPI only)
                 { id: 'jf_alpha', name: 'Alpha (Japanese Female)', disabled: needsFastAPI },
                 { id: 'jf_gongitsune', name: 'Gongitsune (Japanese Female)', disabled: needsFastAPI },
@@ -985,9 +988,9 @@ export class TTSEngine {
         const prefix = prefixMap[langCode];
         if (!prefix) return null;
 
-        // Find the first voice matching this prefix
+        // Find the first enabled voice matching this prefix
         const voices = this.getAvailableVoices();
-        const match = voices.find(v => v.id.startsWith(prefix));
+        const match = voices.find(v => v.id.startsWith(prefix) && !v.disabled);
         return match ? match.id : null;
     }
 

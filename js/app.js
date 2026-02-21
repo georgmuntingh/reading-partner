@@ -62,7 +62,6 @@ class ReadingPartnerApp {
         this._quizSettings = {
             quizMode: 'multiple-choice',
             quizGuided: true,
-            quizReadOptionsAloud: true,
             quizChapterScope: 'full',
             quizQuestionTypes: {
                 factual: true,
@@ -71,7 +70,12 @@ class ReadingPartnerApp {
                 inference: false,
                 themes: false
             },
-            quizSystemPrompt: ''
+            quizSystemPrompt: '',
+            // TTS toggles (all off by default)
+            quizTtsQuestion: false,
+            quizTtsOptions: false,
+            quizTtsCorrectness: false,
+            quizTtsExplanation: false
         };
 
         // DOM Elements
@@ -1850,10 +1854,13 @@ class ReadingPartnerApp {
         this._quizController.setSettings({
             isMultipleChoice,
             isGuided: this._quizSettings.quizGuided,
-            readOptionsAloud: this._quizSettings.quizReadOptionsAloud,
             questionTypes,
             useFullChapter: this._quizSettings.quizChapterScope === 'full',
-            customSystemPrompt: this._quizSettings.quizSystemPrompt
+            customSystemPrompt: this._quizSettings.quizSystemPrompt,
+            ttsQuestion: this._quizSettings.quizTtsQuestion,
+            ttsOptions: this._quizSettings.quizTtsOptions,
+            ttsCorrectness: this._quizSettings.quizTtsCorrectness,
+            ttsExplanation: this._quizSettings.quizTtsExplanation
         });
 
         const speed = this._savedSpeed || this._settingsModal?.getSpeed() || 1.0;
@@ -2235,9 +2242,21 @@ class ReadingPartnerApp {
                 this._quizSettings.quizGuided = settings.quizGuided;
                 await storage.saveSetting('quizGuided', settings.quizGuided);
             }
-            if (settings.quizReadOptionsAloud !== undefined) {
-                this._quizSettings.quizReadOptionsAloud = settings.quizReadOptionsAloud;
-                await storage.saveSetting('quizReadOptionsAloud', settings.quizReadOptionsAloud);
+            if (settings.quizTtsQuestion !== undefined) {
+                this._quizSettings.quizTtsQuestion = settings.quizTtsQuestion;
+                await storage.saveSetting('quizTtsQuestion', settings.quizTtsQuestion);
+            }
+            if (settings.quizTtsOptions !== undefined) {
+                this._quizSettings.quizTtsOptions = settings.quizTtsOptions;
+                await storage.saveSetting('quizTtsOptions', settings.quizTtsOptions);
+            }
+            if (settings.quizTtsCorrectness !== undefined) {
+                this._quizSettings.quizTtsCorrectness = settings.quizTtsCorrectness;
+                await storage.saveSetting('quizTtsCorrectness', settings.quizTtsCorrectness);
+            }
+            if (settings.quizTtsExplanation !== undefined) {
+                this._quizSettings.quizTtsExplanation = settings.quizTtsExplanation;
+                await storage.saveSetting('quizTtsExplanation', settings.quizTtsExplanation);
             }
             if (settings.quizChapterScope !== undefined) {
                 this._quizSettings.quizChapterScope = settings.quizChapterScope;
@@ -3192,8 +3211,17 @@ class ReadingPartnerApp {
             const quizGuided = await storage.getSetting('quizGuided');
             if (quizGuided !== null) this._quizSettings.quizGuided = quizGuided;
 
-            const quizReadOptionsAloud = await storage.getSetting('quizReadOptionsAloud');
-            if (quizReadOptionsAloud !== null) this._quizSettings.quizReadOptionsAloud = quizReadOptionsAloud;
+            const quizTtsQuestion = await storage.getSetting('quizTtsQuestion');
+            if (quizTtsQuestion !== null) this._quizSettings.quizTtsQuestion = quizTtsQuestion;
+
+            const quizTtsOptions = await storage.getSetting('quizTtsOptions');
+            if (quizTtsOptions !== null) this._quizSettings.quizTtsOptions = quizTtsOptions;
+
+            const quizTtsCorrectness = await storage.getSetting('quizTtsCorrectness');
+            if (quizTtsCorrectness !== null) this._quizSettings.quizTtsCorrectness = quizTtsCorrectness;
+
+            const quizTtsExplanation = await storage.getSetting('quizTtsExplanation');
+            if (quizTtsExplanation !== null) this._quizSettings.quizTtsExplanation = quizTtsExplanation;
 
             const quizChapterScope = await storage.getSetting('quizChapterScope');
             if (quizChapterScope !== null) this._quizSettings.quizChapterScope = quizChapterScope;
