@@ -20,6 +20,7 @@ export class SettingsModal {
         this._container = options.container;
         this._callbacks = callbacks;
         this._fastApiAvailable = false;
+        this._hasWebGPU = null; // cached WebGPU availability (null = not checked)
 
         this._settings = {
             apiKey: '',
@@ -212,17 +213,8 @@ export class SettingsModal {
                             <label for="settings-kokoro-dtype">Model Precision</label>
                             <select id="settings-kokoro-dtype" class="form-select">
                                 <option value="auto">Auto (recommended)</option>
-                                <option value="fp32">fp32 — Full precision (326 MB)</option>
-                                <option value="fp16">fp16 — Half precision (163 MB)</option>
-                                <option value="q8">q8 — 8-bit quantized (92 MB)</option>
-                                <option value="q4">q4 — 4-bit quantized (305 MB)</option>
-                                <option value="q4f16">q4f16 — 4-bit weights + fp16 (154 MB)</option>
                             </select>
-                            <p class="form-hint" id="settings-kokoro-dtype-hint">
-                                Auto selects fp32 for WebGPU and q8 for WASM.
-                                Quantized models (q8, q4, fp16) reduce download size but may produce lower quality or garbled audio on WebGPU.
-                                fp16 requires GPU shader-f16 support, which is unavailable on most mobile devices.
-                            </p>
+                            <p class="form-hint" id="settings-kokoro-dtype-hint"></p>
                         </div>
                     </div>
 
@@ -851,6 +843,107 @@ export class SettingsModal {
             this._elements.fastApiStatus.style.color = this._fastApiAvailable
                 ? '#059669'
                 : '#dc2626';
+        }
+
+        // Populate dtype dropdown with device-aware options
+        if (showKokoroJs) {
+            this._populateDtypeOptions();
+        }
+    }
+
+    /**
+     * Detect WebGPU availability (cached after first check)
+     * @returns {Promise<boolean>}
+     */
+    async _detectWebGPU() {
+        if (this._hasWebGPU !== null) return this._hasWebGPU;
+        try {
+            if (!navigator.gpu) { this._hasWebGPU = false; return false; }
+            const adapter = await navigator.gpu.requestAdapter();
+            this._hasWebGPU = adapter !== null;
+        } catch {
+            this._hasWebGPU = false;
+        }
+        return this._hasWebGPU;
+    }
+
+    /**
+     * Populate the Kokoro dtype dropdown with device-aware labels and warnings.
+     *
+     * Known compatibility (ONNX Runtime Web + WebGPU, as of Feb 2026):
+     * - WebGPU: only fp32 produces correct audio. fp16/q8/q4/q4f16 all produce
+     *   garbled or metallic output due to an unresolved numerical overflow bug
+     *   in ONNX Runtime's WebGPU execution provider.
+     * - WASM: fp32 and q8 both work correctly. q8 is recommended (92 MB vs 326 MB).
+     */
+    async _populateDtypeOptions() {
+        const hasWebGPU = await this._detectWebGPU();
+        const currentValue = this._elements.kokoroDtype.value;
+        const select = this._elements.kokoroDtype;
+
+        // Define all dtype options with device-specific metadata
+        const allOptions = [
+            {
+                value: 'auto',
+                label: hasWebGPU
+                    ? 'Auto — fp32 on WebGPU, q8 on WASM (recommended)'
+                    : 'Auto — q8 on WASM (recommended)',
+                broken: false
+            },
+            { value: 'fp32', label: 'fp32 — Full precision (326 MB)', broken: false },
+            {
+                value: 'fp16',
+                label: hasWebGPU
+                    ? 'fp16 — Half precision (163 MB) — broken on WebGPU'
+                    : 'fp16 — Half precision (163 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q8',
+                label: hasWebGPU
+                    ? 'q8 — 8-bit quantized (92 MB) — broken on WebGPU'
+                    : 'q8 — 8-bit quantized (92 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q4',
+                label: hasWebGPU
+                    ? 'q4 — 4-bit quantized (305 MB) — broken on WebGPU'
+                    : 'q4 — 4-bit quantized (305 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q4f16',
+                label: hasWebGPU
+                    ? 'q4f16 — 4-bit + fp16 (154 MB) — broken on WebGPU'
+                    : 'q4f16 — 4-bit + fp16 (154 MB)',
+                broken: hasWebGPU
+            }
+        ];
+
+        select.innerHTML = '';
+        for (const opt of allOptions) {
+            const el = document.createElement('option');
+            el.value = opt.value;
+            el.textContent = opt.label;
+            select.appendChild(el);
+        }
+
+        // Restore previous selection
+        if (allOptions.some(o => o.value === currentValue)) {
+            select.value = currentValue;
+        }
+
+        // Update hint text
+        if (hasWebGPU) {
+            this._elements.kokoroDtypeHint.textContent =
+                'Your browser supports WebGPU. Only fp32 produces correct audio on WebGPU — ' +
+                'all quantized formats (q8, q4, fp16, q4f16) produce garbled or metallic output ' +
+                'due to a known ONNX Runtime overflow bug. Use Auto or fp32 for WebGPU.';
+        } else {
+            this._elements.kokoroDtypeHint.textContent =
+                'WebGPU not available — using WASM (CPU). q8 is recommended (92 MB). ' +
+                'fp32 offers slightly higher fidelity but is larger (326 MB) and slower on CPU.';
         }
     }
 

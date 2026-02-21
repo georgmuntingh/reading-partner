@@ -294,6 +294,18 @@ export class TTSEngine {
         this._device = device;
         this._dtype = dtype;
 
+        // Warn about known broken dtype+device combinations
+        // As of Feb 2026, ONNX Runtime Web's WebGPU EP has an unresolved numerical
+        // overflow bug that causes fp16/q4/q4f16 to produce NaN/garbled audio.
+        // q8 on WebGPU is also known to produce garbled speech.
+        if (device === 'webgpu' && !['fp32', 'auto'].includes(dtype)) {
+            const msg = `Warning: "${dtype}" on WebGPU may produce garbled or metallic audio ` +
+                `due to a known ONNX Runtime overflow bug. ` +
+                `Only fp32 is known to work correctly on WebGPU.`;
+            console.warn(msg);
+            this._reportProgress({ status: `Loading (${device}, ${dtype}) — quality may be degraded` });
+        }
+
         try {
             this._reportProgress({ status: `Loading TTS engine (${device})...` });
 
