@@ -317,9 +317,14 @@ class ReadingPartnerApp {
             // Load saved backend preference
             const savedBackend = await storage.getSetting('ttsBackend');
             const savedFastApiUrl = await storage.getSetting('fastApiUrl');
+            const savedKokoroDtype = await storage.getSetting('kokoroDtype');
 
             if (savedFastApiUrl) {
                 ttsEngine.setFastApiUrl(savedFastApiUrl);
+            }
+
+            if (savedKokoroDtype) {
+                ttsEngine.setPreferredDtype(savedKokoroDtype);
             }
 
             // Check FastAPI availability
@@ -2026,11 +2031,11 @@ class ReadingPartnerApp {
         }
 
         try {
-            // Update FastAPI URL if changed
+            // Update FastAPI URL and dtype if changed
             const settings = this._settingsModal.getSettings();
             ttsEngine.setFastApiUrl(settings.fastApiUrl);
 
-            await ttsEngine.setBackend(backend);
+            await ttsEngine.setBackend(backend, { dtype: settings.kokoroDtype });
             const activeBackend = ttsEngine.getBackend();
 
             if (activeBackend === 'kokoro-fastapi') {
@@ -2171,6 +2176,9 @@ class ReadingPartnerApp {
             }
             if (settings.fastApiUrl) {
                 await storage.saveSetting('fastApiUrl', settings.fastApiUrl);
+            }
+            if (settings.kokoroDtype !== undefined) {
+                await storage.saveSetting('kokoroDtype', settings.kokoroDtype);
             }
 
             // Save voice and speed settings
@@ -3234,6 +3242,9 @@ class ReadingPartnerApp {
                 mediaSessionManager.configure(mediaSessionSettings);
             }
 
+            // Load Kokoro.js dtype setting
+            const kokoroDtype = await storage.getSetting('kokoroDtype');
+
             // Load STT backend settings
             const sttBackend = await storage.getSetting('sttBackend');
             if (sttBackend !== null) this._sttBackend = sttBackend;
@@ -3283,7 +3294,8 @@ class ReadingPartnerApp {
                 whisperMaxDuration: whisperMaxDuration !== null ? whisperMaxDuration : undefined,
                 llmBackend: this._llmBackend,
                 localLlmModel: localLlmModel || undefined,
-                localLlmDevice: localLlmDevice || 'auto'
+                localLlmDevice: localLlmDevice || 'auto',
+                kokoroDtype: kokoroDtype || 'auto'
             });
 
         } catch (error) {

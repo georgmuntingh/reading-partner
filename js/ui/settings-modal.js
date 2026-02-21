@@ -20,6 +20,7 @@ export class SettingsModal {
         this._container = options.container;
         this._callbacks = callbacks;
         this._fastApiAvailable = false;
+        this._hasWebGPU = null; // cached WebGPU availability (null = not checked)
 
         this._settings = {
             apiKey: '',
@@ -28,6 +29,7 @@ export class SettingsModal {
             contextBefore: 20,
             contextAfter: 5,
             ttsBackend: 'kokoro-js',
+            kokoroDtype: 'auto',
             fastApiUrl: 'http://localhost:8880',
             voice: 'af_bella',
             speed: 1.0,
@@ -215,6 +217,14 @@ export class SettingsModal {
                             <label for="settings-fastapi-url">Kokoro FastAPI URL</label>
                             <input type="text" id="settings-fastapi-url" class="form-input" placeholder="http://localhost:8880" value="http://localhost:8880">
                             <p class="form-hint" id="settings-fastapi-status"></p>
+                        </div>
+
+                        <div class="form-group" id="settings-kokoro-dtype-group" style="display: none;">
+                            <label for="settings-kokoro-dtype">Model Precision</label>
+                            <select id="settings-kokoro-dtype" class="form-select">
+                                <option value="auto">Auto (recommended)</option>
+                            </select>
+                            <p class="form-hint" id="settings-kokoro-dtype-hint"></p>
                         </div>
                     </div>
 
@@ -606,6 +616,9 @@ export class SettingsModal {
             fastApiUrlGroup: this._container.querySelector('#settings-fastapi-url-group'),
             fastApiStatus: this._container.querySelector('#settings-fastapi-status'),
             ttsBackendHint: this._container.querySelector('#settings-tts-backend-hint'),
+            kokoroDtypeGroup: this._container.querySelector('#settings-kokoro-dtype-group'),
+            kokoroDtype: this._container.querySelector('#settings-kokoro-dtype'),
+            kokoroDtypeHint: this._container.querySelector('#settings-kokoro-dtype-hint'),
             lookupLanguage: this._container.querySelector('#settings-lookup-language'),
             normalizeText: this._container.querySelector('#settings-normalize-text'),
             normalizeNumbers: this._container.querySelector('#settings-normalize-numbers'),
@@ -840,6 +853,7 @@ export class SettingsModal {
     _updateBackendUI() {
         const backend = this._elements.ttsBackend.value;
         const showFastApi = backend === 'kokoro-fastapi';
+        const showKokoroJs = backend === 'kokoro-js';
         this._elements.fastApiUrlGroup.style.display = showFastApi ? '' : 'none';
         this._elements.customVoiceGroup.style.display = showFastApi ? '' : 'none';
 
@@ -859,6 +873,107 @@ export class SettingsModal {
             this._elements.fastApiStatus.style.color = this._fastApiAvailable
                 ? '#059669'
                 : '#dc2626';
+        }
+
+        // Populate dtype dropdown with device-aware options
+        if (showKokoroJs) {
+            this._populateDtypeOptions();
+        }
+    }
+
+    /**
+     * Detect WebGPU availability (cached after first check)
+     * @returns {Promise<boolean>}
+     */
+    async _detectWebGPU() {
+        if (this._hasWebGPU !== null) return this._hasWebGPU;
+        try {
+            if (!navigator.gpu) { this._hasWebGPU = false; return false; }
+            const adapter = await navigator.gpu.requestAdapter();
+            this._hasWebGPU = adapter !== null;
+        } catch {
+            this._hasWebGPU = false;
+        }
+        return this._hasWebGPU;
+    }
+
+    /**
+     * Populate the Kokoro dtype dropdown with device-aware labels and warnings.
+     *
+     * Known compatibility (ONNX Runtime Web + WebGPU, as of Feb 2026):
+     * - WebGPU: only fp32 produces correct audio. fp16/q8/q4/q4f16 all produce
+     *   garbled or metallic output due to an unresolved numerical overflow bug
+     *   in ONNX Runtime's WebGPU execution provider.
+     * - WASM: fp32 and q8 both work correctly. q8 is recommended (92 MB vs 326 MB).
+     */
+    async _populateDtypeOptions() {
+        const hasWebGPU = await this._detectWebGPU();
+        const currentValue = this._elements.kokoroDtype.value;
+        const select = this._elements.kokoroDtype;
+
+        // Define all dtype options with device-specific metadata
+        const allOptions = [
+            {
+                value: 'auto',
+                label: hasWebGPU
+                    ? 'Auto — fp32 on WebGPU, q8 on WASM (recommended)'
+                    : 'Auto — q8 on WASM (recommended)',
+                broken: false
+            },
+            { value: 'fp32', label: 'fp32 — Full precision (326 MB)', broken: false },
+            {
+                value: 'fp16',
+                label: hasWebGPU
+                    ? 'fp16 — Half precision (163 MB) — broken on WebGPU'
+                    : 'fp16 — Half precision (163 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q8',
+                label: hasWebGPU
+                    ? 'q8 — 8-bit quantized (92 MB) — broken on WebGPU'
+                    : 'q8 — 8-bit quantized (92 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q4',
+                label: hasWebGPU
+                    ? 'q4 — 4-bit quantized (305 MB) — broken on WebGPU'
+                    : 'q4 — 4-bit quantized (305 MB)',
+                broken: hasWebGPU
+            },
+            {
+                value: 'q4f16',
+                label: hasWebGPU
+                    ? 'q4f16 — 4-bit + fp16 (154 MB) — broken on WebGPU'
+                    : 'q4f16 — 4-bit + fp16 (154 MB)',
+                broken: hasWebGPU
+            }
+        ];
+
+        select.innerHTML = '';
+        for (const opt of allOptions) {
+            const el = document.createElement('option');
+            el.value = opt.value;
+            el.textContent = opt.label;
+            select.appendChild(el);
+        }
+
+        // Restore previous selection
+        if (allOptions.some(o => o.value === currentValue)) {
+            select.value = currentValue;
+        }
+
+        // Update hint text
+        if (hasWebGPU) {
+            this._elements.kokoroDtypeHint.textContent =
+                'Your browser supports WebGPU. Only fp32 produces correct audio on WebGPU — ' +
+                'all quantized formats (q8, q4, fp16, q4f16) produce garbled or metallic output ' +
+                'due to a known ONNX Runtime overflow bug. Use Auto or fp32 for WebGPU.';
+        } else {
+            this._elements.kokoroDtypeHint.textContent =
+                'WebGPU not available — using WASM (CPU). q8 is recommended (92 MB). ' +
+                'fp32 offers slightly higher fidelity but is larger (326 MB) and slower on CPU.';
         }
     }
 
@@ -1046,6 +1161,7 @@ export class SettingsModal {
             contextBefore: parseInt(this._elements.contextBefore.value) || 20,
             contextAfter: parseInt(this._elements.contextAfter.value) || 5,
             ttsBackend: this._elements.ttsBackend.value,
+            kokoroDtype: this._elements.kokoroDtype.value,
             fastApiUrl: this._elements.fastApiUrl.value.trim() || 'http://localhost:8880',
             voice: (() => {
                 const isFastAPI = this._elements.ttsBackend.value === 'kokoro-fastapi';
@@ -1102,9 +1218,10 @@ export class SettingsModal {
         if (settings.contextAfter < 0) settings.contextAfter = 0;
         if (settings.contextAfter > 500) settings.contextAfter = 500;
 
-        // Detect backend change
+        // Detect backend change (includes dtype change since it requires reinit)
         const backendChanged = settings.ttsBackend !== this._settings.ttsBackend ||
-            settings.fastApiUrl !== this._settings.fastApiUrl;
+            settings.fastApiUrl !== this._settings.fastApiUrl ||
+            settings.kokoroDtype !== this._settings.kokoroDtype;
 
         // Detect voice/speed change
         const voiceChanged = settings.voice !== this._settings.voice;
@@ -1205,6 +1322,7 @@ export class SettingsModal {
         this._elements.contextBefore.value = this._settings.contextBefore || 20;
         this._elements.contextAfter.value = this._settings.contextAfter || 5;
         this._elements.ttsBackend.value = this._settings.ttsBackend || 'kokoro-js';
+        this._elements.kokoroDtype.value = this._settings.kokoroDtype || 'auto';
         this._elements.fastApiUrl.value = this._settings.fastApiUrl || 'http://localhost:8880';
 
         // Load voice & speed settings
