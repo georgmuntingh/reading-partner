@@ -57,6 +57,7 @@ export class QuizController {
         this._feedbackSentences = [];
         this._currentSentenceIndex = 0;
         this._audioBufferCache = new Map();
+        this._speechCache = new Map(); // text → Promise<AudioBuffer> | AudioBuffer
         this._isStreamingComplete = false;
 
         // Settings
@@ -67,7 +68,12 @@ export class QuizController {
         this._useFullChapter = true;
         this._customSystemPrompt = '';
         this._selectionContext = null;
-        this._readOptionsAloud = true;
+
+        // TTS component flags (all off by default)
+        this._ttsQuestion = false;
+        this._ttsOptions = false;
+        this._ttsCorrectness = false;
+        this._ttsExplanation = false;
     }
 
     // ========== Getters ==========
@@ -106,13 +112,16 @@ export class QuizController {
         this._playbackSpeed = speed;
     }
 
-    setSettings({ isMultipleChoice, isGuided, questionTypes, useFullChapter, customSystemPrompt, readOptionsAloud }) {
+    setSettings({ isMultipleChoice, isGuided, questionTypes, useFullChapter, customSystemPrompt, ttsQuestion, ttsOptions, ttsCorrectness, ttsExplanation }) {
         if (isMultipleChoice !== undefined) this._isMultipleChoice = isMultipleChoice;
         if (isGuided !== undefined) this._isGuided = isGuided;
         if (questionTypes !== undefined) this._questionTypes = questionTypes;
         if (useFullChapter !== undefined) this._useFullChapter = useFullChapter;
         if (customSystemPrompt !== undefined) this._customSystemPrompt = customSystemPrompt;
-        if (readOptionsAloud !== undefined) this._readOptionsAloud = readOptionsAloud;
+        if (ttsQuestion !== undefined) this._ttsQuestion = ttsQuestion;
+        if (ttsOptions !== undefined) this._ttsOptions = ttsOptions;
+        if (ttsCorrectness !== undefined) this._ttsCorrectness = ttsCorrectness;
+        if (ttsExplanation !== undefined) this._ttsExplanation = ttsExplanation;
     }
 
     /**
@@ -161,17 +170,36 @@ export class QuizController {
             this._currentQuestion = question;
             this._previousQuestions.push(question);
 
-            // Save to persistence
+            // Pre-fetch TTS in parallel with DB persistence to eliminate gaps
+            if (this._ttsQuestion) {
+                this._prefetchSpeech(question.question);
+            }
+            if (this._ttsOptions && this._isMultipleChoice && question.options?.length) {
+                const labels = ['A', 'B', 'C', 'D'];
+                for (let i = 0; i < question.options.length; i++) {
+                    const label = labels[i] || String(i + 1);
+                    this._prefetchSpeech(`${label}. ${question.options[i]}`);
+                }
+            }
+            if (this._ttsCorrectness) {
+                this._prefetchSpeech('Correct!');
+                this._prefetchSpeech('That is incorrect.');
+            }
+
+            // Save to persistence (synthesis runs in parallel)
             await this._persistQuestion(question);
 
             this._onQuestionReady?.(question);
             this._setState(QuizState.SPEAKING_QUESTION);
 
-            // Speak the question text, then options for multiple choice
-            await this._speakText(question.question);
-            if (this._isStopped) return;
+            // Speak the question text
+            if (this._ttsQuestion) {
+                await this._speakText(question.question);
+                if (this._isStopped) return;
+            }
 
-            if (this._readOptionsAloud && this._isMultipleChoice && question.options?.length) {
+            // Speak multiple choice options
+            if (this._ttsOptions && this._isMultipleChoice && question.options?.length) {
                 const labels = ['A', 'B', 'C', 'D'];
                 for (let i = 0; i < question.options.length; i++) {
                     if (this._isStopped) return;
@@ -209,9 +237,18 @@ export class QuizController {
                 done: true
             });
             this._setState(QuizState.SPEAKING_FEEDBACK);
-            await this._speakText('Correct!');
-            if (this._isStopped) return;
-            await this._speakText(this._currentQuestion.explanation);
+            // Pre-fetch explanation so it's ready when "Correct!" finishes playing
+            if (this._ttsExplanation && this._currentQuestion.explanation) {
+                this._prefetchSpeech(this._currentQuestion.explanation);
+            }
+            if (this._ttsCorrectness) {
+                await this._speakText('Correct!');
+                if (this._isStopped) return;
+            }
+            if (this._ttsExplanation) {
+                await this._speakText(this._currentQuestion.explanation);
+                if (this._isStopped) return;
+            }
             if (!this._isStopped) {
                 this._setState(QuizState.AWAITING_ANSWER);
             }
@@ -231,9 +268,18 @@ export class QuizController {
                     done: false
                 });
                 this._setState(QuizState.SPEAKING_FEEDBACK);
-                await this._speakText('That is incorrect.');
-                if (this._isStopped) return;
-                await this._speakText(hint);
+                // Pre-fetch hint audio so it's ready when "That is incorrect." finishes
+                if (this._ttsExplanation && hint) {
+                    this._prefetchSpeech(hint);
+                }
+                if (this._ttsCorrectness) {
+                    await this._speakText('That is incorrect.');
+                    if (this._isStopped) return;
+                }
+                if (this._ttsExplanation) {
+                    await this._speakText(hint);
+                    if (this._isStopped) return;
+                }
                 if (!this._isStopped) {
                     this._setState(QuizState.AWAITING_ANSWER);
                 }
@@ -254,9 +300,18 @@ export class QuizController {
                 done: true
             });
             this._setState(QuizState.SPEAKING_FEEDBACK);
-            await this._speakText('That is incorrect.');
-            if (this._isStopped) return;
-            await this._speakText(feedback);
+            // Pre-fetch feedback so it's ready when "That is incorrect." finishes
+            if (this._ttsExplanation && feedback) {
+                this._prefetchSpeech(feedback);
+            }
+            if (this._ttsCorrectness) {
+                await this._speakText('That is incorrect.');
+                if (this._isStopped) return;
+            }
+            if (this._ttsExplanation) {
+                await this._speakText(feedback);
+                if (this._isStopped) return;
+            }
             if (!this._isStopped) {
                 this._setState(QuizState.AWAITING_ANSWER);
             }
@@ -320,11 +375,14 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
                     if (this._isStopped) return;
                     const idx = this._feedbackSentences.length;
                     this._feedbackSentences.push(sentence);
-                    this._prefetchAudio(idx, sentence);
-
+                    if (this._ttsExplanation) {
+                        this._prefetchAudio(idx, sentence);
+                    }
                     if (this._state === QuizState.EVALUATING && this._feedbackSentences.length === 1) {
                         this._setState(QuizState.SPEAKING_FEEDBACK);
-                        this._startFeedbackSpeaking();
+                        if (this._ttsExplanation) {
+                            this._startFeedbackSpeaking();
+                        }
                     }
                 }
             );
@@ -447,7 +505,10 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
                 skipped: true
             });
             this._setState(QuizState.SPEAKING_FEEDBACK);
-            await this._speakText(feedback);
+            if (this._ttsExplanation) {
+                await this._speakText(feedback);
+                if (this._isStopped) return;
+            }
             if (!this._isStopped) {
                 this._setState(QuizState.AWAITING_ANSWER);
             }
@@ -480,11 +541,14 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
                         if (this._isStopped) return;
                         const idx = this._feedbackSentences.length;
                         this._feedbackSentences.push(sentence);
-                        this._prefetchAudio(idx, sentence);
-
+                        if (this._ttsExplanation) {
+                            this._prefetchAudio(idx, sentence);
+                        }
                         if (this._state === QuizState.EVALUATING && this._feedbackSentences.length === 1) {
                             this._setState(QuizState.SPEAKING_FEEDBACK);
-                            this._startFeedbackSpeaking();
+                            if (this._ttsExplanation) {
+                                this._startFeedbackSpeaking();
+                            }
                         }
                     }
                 );
@@ -630,23 +694,55 @@ Then provide concise feedback.${this._isGuided ? '\nIf incorrect, give a helpful
         this._feedbackSentences = [];
         this._currentSentenceIndex = 0;
         this._audioBufferCache.clear();
+        this._speechCache.clear();
         this._isStreamingComplete = false;
         this._speakingDoneResolve = null;
     }
 
     /**
-     * Speak a short text (non-streaming, for questions and short feedback)
+     * Speak a short text (non-streaming, for questions and short feedback).
+     * Uses the speech cache if a pre-fetch was started earlier.
      */
     async _speakText(text) {
         if (!text || !text.trim() || this._isStopped) return;
 
         try {
-            const audioBuffer = await ttsEngine.synthesize(text);
+            let audioBuffer;
+            const cached = this._speechCache.get(text);
+            if (cached) {
+                audioBuffer = await Promise.resolve(cached);
+                this._speechCache.delete(text);
+            }
+            if (!audioBuffer) {
+                audioBuffer = await ttsEngine.synthesize(text);
+            }
             if (this._isStopped) return;
             await ttsEngine.playBuffer(audioBuffer, this._playbackSpeed);
         } catch (error) {
             console.error('TTS speak error:', error);
         }
+    }
+
+    /**
+     * Pre-fetch TTS for a text string into the speech cache so _speakText
+     * can retrieve a ready buffer without a synthesis gap.
+     */
+    _prefetchSpeech(text) {
+        if (!text || !text.trim() || this._isStopped) return;
+        if (this._speechCache.has(text)) return;
+
+        const promise = ttsEngine.synthesize(text)
+            .then(buf => {
+                this._speechCache.set(text, buf);
+                return buf;
+            })
+            .catch(err => {
+                console.error('TTS prefetch error:', err);
+                this._speechCache.delete(text);
+                return null;
+            });
+
+        this._speechCache.set(text, promise);
     }
 
     /**

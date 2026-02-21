@@ -42,8 +42,12 @@ export class SettingsModal {
             // Quiz settings
             quizMode: 'multiple-choice',
             quizGuided: true,
-            quizReadOptionsAloud: true,
             quizChapterScope: 'full',
+            // Quiz TTS toggles (all off by default)
+            quizTtsQuestion: false,
+            quizTtsOptions: false,
+            quizTtsCorrectness: false,
+            quizTtsExplanation: false,
             quizQuestionTypes: {
                 factual: true,
                 deeper_understanding: true,
@@ -432,11 +436,26 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
-                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
-                                <input type="checkbox" id="settings-quiz-read-options" checked>
-                                Read Options Aloud
-                            </label>
-                            <p class="form-hint">When enabled, the TTS reads out the multiple choice answer options after the question</p>
+                            <label>TTS During Quiz</label>
+                            <p class="form-hint" style="margin-bottom: var(--spacing-xs);">Select which parts of the quiz are read aloud. All options are off by default.</p>
+                            <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs);">
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-tts-question">
+                                    Read question aloud
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-tts-options">
+                                    Read multiple choice options aloud
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-tts-correctness">
+                                    Read "Correct" / "Incorrect" aloud
+                                </label>
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                    <input type="checkbox" id="settings-quiz-tts-explanation">
+                                    Read explanation / feedback aloud
+                                </label>
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -620,7 +639,10 @@ export class SettingsModal {
             contextAfter: this._container.querySelector('#settings-context-after'),
             quizMode: this._container.querySelector('#settings-quiz-mode'),
             quizGuided: this._container.querySelector('#settings-quiz-guided'),
-            quizReadOptions: this._container.querySelector('#settings-quiz-read-options'),
+            quizTtsQuestion: this._container.querySelector('#settings-quiz-tts-question'),
+            quizTtsOptions: this._container.querySelector('#settings-quiz-tts-options'),
+            quizTtsCorrectness: this._container.querySelector('#settings-quiz-tts-correctness'),
+            quizTtsExplanation: this._container.querySelector('#settings-quiz-tts-explanation'),
             quizScope: this._container.querySelector('#settings-quiz-scope'),
             quizTypeFactual: this._container.querySelector('#settings-quiz-type-factual'),
             quizTypeDeeper: this._container.querySelector('#settings-quiz-type-deeper'),
@@ -1043,7 +1065,10 @@ export class SettingsModal {
             // Quiz settings
             quizMode: this._elements.quizMode.value,
             quizGuided: this._elements.quizGuided.checked,
-            quizReadOptionsAloud: this._elements.quizReadOptions.checked,
+            quizTtsQuestion: this._elements.quizTtsQuestion.checked,
+            quizTtsOptions: this._elements.quizTtsOptions.checked,
+            quizTtsCorrectness: this._elements.quizTtsCorrectness.checked,
+            quizTtsExplanation: this._elements.quizTtsExplanation.checked,
             quizChapterScope: this._elements.quizScope.value,
             quizQuestionTypes: {
                 factual: this._elements.quizTypeFactual.checked,
@@ -1224,7 +1249,10 @@ export class SettingsModal {
         // Load quiz settings
         this._elements.quizMode.value = this._settings.quizMode || 'multiple-choice';
         this._elements.quizGuided.checked = this._settings.quizGuided !== false;
-        this._elements.quizReadOptions.checked = this._settings.quizReadOptionsAloud !== false;
+        this._elements.quizTtsQuestion.checked = !!this._settings.quizTtsQuestion;
+        this._elements.quizTtsOptions.checked = !!this._settings.quizTtsOptions;
+        this._elements.quizTtsCorrectness.checked = !!this._settings.quizTtsCorrectness;
+        this._elements.quizTtsExplanation.checked = !!this._settings.quizTtsExplanation;
         this._elements.quizScope.value = this._settings.quizChapterScope || 'full';
         const qt = this._settings.quizQuestionTypes || {};
         this._elements.quizTypeFactual.checked = qt.factual !== false;
