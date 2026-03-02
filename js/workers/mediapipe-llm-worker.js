@@ -46,10 +46,21 @@ function ensureMediaPipeLoaded() {
         }
         return response.text();
     }).then(function(scriptText) {
+        // The CJS bundle expects Node.js globals (exports, module, require).
+        // Provide shims so the module can attach its exports.
+        self.exports = {};
+        self.module = { exports: self.exports };
+
         var blob = new Blob([scriptText], { type: 'text/javascript' });
         var blobUrl = URL.createObjectURL(blob);
         importScripts(blobUrl);
         URL.revokeObjectURL(blobUrl);
+
+        // The CJS bundle writes to module.exports; hoist the classes to self
+        // so the rest of the worker can access them as globals.
+        var mp = self.module.exports;
+        if (mp.FilesetResolver) self.FilesetResolver = mp.FilesetResolver;
+        if (mp.LlmInference) self.LlmInference = mp.LlmInference;
     }).catch(function(error) {
         _mediapipeBundlePromise = null; // allow retry on failure
         throw error;
