@@ -250,13 +250,15 @@ function loadModel(config) {
                 }
             }).then(function(modelBuffer) {
                 self.postMessage({ type: 'loading', progress: { status: 'Initializing LLM (compiling WebGPU shaders)...' } });
-                return LlmInference.createFromModelBuffer(genai, modelBuffer, {
+                return LlmInference.createFromOptions(genai, {
+                    baseOptions: {
+                        modelAssetBuffer: new Uint8Array(modelBuffer)
+                    },
                     maxTokens: maxTokens,
                     topK: topK,
                     temperature: temperature,
                     randomSeed: randomSeed
                 });
-            });
         });
     }).then(function(inference) {
         llmInference = inference;
