@@ -4,9 +4,10 @@
  * Streams generated tokens back to the main thread via postMessage.
  *
  * IMPORTANT: This is a CLASSIC (non-module) web worker. It must not use
- * ES module syntax (no import/export statements). MediaPipe internally calls
- * importScripts() for WASM loading, which is only available in classic workers —
- * module workers ({ type: 'module' }) are NOT compatible.
+ * ES module syntax (no import/export statements). The MediaPipe bundle is
+ * loaded via fetch + blob URL (not direct importScripts) because jsdelivr
+ * serves .cjs files with MIME type 'application/node', which browsers reject
+ * under strict MIME type checking.
  *
  * Model: Gemma3-1B-IT with default 4-bit (int4) quantization
  * Source: litert-community/Gemma3-1B-IT on HuggingFace (gated)
@@ -24,7 +25,38 @@
 // ========== Load MediaPipe from CDN ==========
 // genai_bundle.cjs is a UMD bundle that exposes FilesetResolver and
 // LlmInference on the global self object when loaded via importScripts.
-importScripts('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs');
+//
+// NOTE: We cannot call importScripts() with the CDN URL directly because
+// jsdelivr serves .cjs files with MIME type 'application/node', which
+// browsers reject under strict MIME type checking. Instead, we fetch the
+// script as text, wrap it in a Blob with 'text/javascript' MIME type, and
+// importScripts the resulting blob URL.
+var GENAI_BUNDLE_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-genai/genai_bundle.cjs';
+var _mediapipeBundlePromise = null;
+
+function ensureMediaPipeLoaded() {
+    if (self.FilesetResolver && self.LlmInference) {
+        return Promise.resolve();
+    }
+    if (_mediapipeBundlePromise) return _mediapipeBundlePromise;
+
+    _mediapipeBundlePromise = fetch(GENAI_BUNDLE_URL).then(function(response) {
+        if (!response.ok) {
+            throw new Error('Failed to fetch MediaPipe bundle: HTTP ' + response.status);
+        }
+        return response.text();
+    }).then(function(scriptText) {
+        var blob = new Blob([scriptText], { type: 'text/javascript' });
+        var blobUrl = URL.createObjectURL(blob);
+        importScripts(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+    }).catch(function(error) {
+        _mediapipeBundlePromise = null; // allow retry on failure
+        throw error;
+    });
+
+    return _mediapipeBundlePromise;
+}
 
 // ========== Worker State ==========
 
@@ -181,37 +213,38 @@ function loadModel(config) {
     var temperature = config.temperature || 0.8;
     var randomSeed = config.randomSeed || 101;
 
-    self.postMessage({ type: 'loading', progress: { status: 'Initializing WebGPU runtime...' } });
+    self.postMessage({ type: 'loading', progress: { status: 'Loading MediaPipe runtime...' } });
 
-    // FilesetResolver and LlmInference are on the global scope from importScripts
-    var FilesetResolver = self.FilesetResolver;
-    var LlmInference = self.LlmInference;
+    ensureMediaPipeLoaded().then(function() {
+        var FilesetResolver = self.FilesetResolver;
+        var LlmInference = self.LlmInference;
 
-    if (!FilesetResolver || !LlmInference) {
-        isLoading = false;
-        self.postMessage({ type: 'error', error: 'MediaPipe genai_bundle failed to load. Check your network connection.' });
-        return;
-    }
+        if (!FilesetResolver || !LlmInference) {
+            throw new Error('MediaPipe genai_bundle failed to load. Check your network connection.');
+        }
 
-    FilesetResolver.forGenAiTasks(MEDIAPIPE_WASM_URL).then(function(genai) {
-        return isModelCached().then(function(cached) {
-            if (cached) {
-                self.postMessage({ type: 'loading', progress: { status: 'Loading cached model from storage...' } });
-                return readModelFromOPFS();
-            } else {
-                self.postMessage({ type: 'loading', progress: { status: 'Downloading model from HuggingFace...' } });
-                return downloadModel(modelUrl, hfToken).then(function(buffer) {
-                    self.postMessage({ type: 'loading', progress: { status: 'Caching model to local storage...' } });
-                    return writeModelToOPFS(buffer).then(function() { return buffer; });
+        self.postMessage({ type: 'loading', progress: { status: 'Initializing WebGPU runtime...' } });
+
+        return FilesetResolver.forGenAiTasks(MEDIAPIPE_WASM_URL).then(function(genai) {
+            return isModelCached().then(function(cached) {
+                if (cached) {
+                    self.postMessage({ type: 'loading', progress: { status: 'Loading cached model from storage...' } });
+                    return readModelFromOPFS();
+                } else {
+                    self.postMessage({ type: 'loading', progress: { status: 'Downloading model from HuggingFace...' } });
+                    return downloadModel(modelUrl, hfToken).then(function(buffer) {
+                        self.postMessage({ type: 'loading', progress: { status: 'Caching model to local storage...' } });
+                        return writeModelToOPFS(buffer).then(function() { return buffer; });
+                    });
+                }
+            }).then(function(modelBuffer) {
+                self.postMessage({ type: 'loading', progress: { status: 'Initializing LLM (compiling WebGPU shaders)...' } });
+                return LlmInference.createFromModelBuffer(genai, modelBuffer, {
+                    maxTokens: maxTokens,
+                    topK: topK,
+                    temperature: temperature,
+                    randomSeed: randomSeed
                 });
-            }
-        }).then(function(modelBuffer) {
-            self.postMessage({ type: 'loading', progress: { status: 'Initializing LLM (compiling WebGPU shaders)...' } });
-            return LlmInference.createFromModelBuffer(genai, modelBuffer, {
-                maxTokens: maxTokens,
-                topK: topK,
-                temperature: temperature,
-                randomSeed: randomSeed
             });
         });
     }).then(function(inference) {
