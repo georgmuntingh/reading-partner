@@ -6,21 +6,24 @@
 
 import { OpenRouterProvider, OPENROUTER_MODELS, DEFAULT_MODEL } from './openrouter-provider.js';
 import { LocalLLMProvider, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL } from './local-llm-provider.js';
+import { MediaPipeLLMProvider, MEDIAPIPE_LLM_MODEL } from './mediapipe-llm-provider.js';
 
 // Re-export for backward compatibility
 export { OPENROUTER_MODELS, DEFAULT_MODEL };
 export { LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL };
+export { MEDIAPIPE_LLM_MODEL };
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {
-        // Create both providers
+        // Create all providers
         this._openRouterProvider = new OpenRouterProvider(apiKey, model);
         this._localProvider = new LocalLLMProvider();
+        this._mediapipeProvider = new MediaPipeLLMProvider();
 
-        // Active backend: 'openrouter' or 'local'
+        // Active backend: 'openrouter', 'local', or 'mediapipe'
         this._backend = 'openrouter';
 
-        // Callback for model loading progress (local provider)
+        // Callback for model loading progress (local / mediapipe providers)
         this.onModelProgress = null;
     }
 
@@ -47,7 +50,9 @@ export class LLMClient {
      * @returns {import('./llm-provider.js').LLMProvider}
      */
     _getProvider() {
-        return this._backend === 'local' ? this._localProvider : this._openRouterProvider;
+        if (this._backend === 'local') return this._localProvider;
+        if (this._backend === 'mediapipe') return this._mediapipeProvider;
+        return this._openRouterProvider;
     }
 
     /**
@@ -136,6 +141,53 @@ export class LLMClient {
      */
     unloadLocalModel() {
         this._localProvider.unloadModel();
+    }
+
+    // ========== MediaPipe LLM Config ==========
+
+    setMediapipeHfToken(token) {
+        this._mediapipeProvider.setHfToken(token);
+    }
+
+    getMediapipeHfToken() {
+        return this._mediapipeProvider.getHfToken();
+    }
+
+    isMediapipeModelReady() {
+        return this._mediapipeProvider.isModelReady();
+    }
+
+    isMediapipeModelLoading() {
+        return this._mediapipeProvider.isModelLoading();
+    }
+
+    async isMediapipeModelCached() {
+        return this._mediapipeProvider.isModelCached();
+    }
+
+    /**
+     * Load the MediaPipe model (downloads + caches if needed)
+     * @returns {Promise<void>}
+     */
+    async loadMediapipeModel() {
+        this._mediapipeProvider.onModelProgress = (progress) => {
+            this.onModelProgress?.(progress);
+        };
+        return this._mediapipeProvider.loadModel();
+    }
+
+    /**
+     * Unload the MediaPipe model to free GPU memory
+     */
+    unloadMediapipeModel() {
+        this._mediapipeProvider.unloadModel();
+    }
+
+    /**
+     * Delete the cached MediaPipe model file from OPFS
+     */
+    async clearMediapipeModelCache() {
+        return this._mediapipeProvider.clearModelCache();
     }
 
     // ========== Delegated LLM Methods ==========
