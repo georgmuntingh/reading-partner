@@ -102,7 +102,7 @@ function readModelFromOPFS() {
     }).then(function(fileHandle) {
         return fileHandle.getFile();
     }).then(function(file) {
-        return file.arrayBuffer();
+        return file.stream().getReader();
     });
 }
 
@@ -245,14 +245,25 @@ function loadModel(config) {
                     self.postMessage({ type: 'loading', progress: { status: 'Downloading model from HuggingFace...' } });
                     return downloadModel(modelUrl, hfToken).then(function(buffer) {
                         self.postMessage({ type: 'loading', progress: { status: 'Caching model to local storage...' } });
-                        return writeModelToOPFS(buffer).then(function() { return buffer; });
+                        return writeModelToOPFS(buffer).then(function() {
+                            // Convert ArrayBuffer to a ReadableStreamDefaultReader
+                            return new ReadableStream({
+                                start: function(controller) {
+                                    controller.enqueue(new Uint8Array(buffer));
+                                    controller.close();
+                                }
+                            }).getReader();
+                        });
                     });
                 }
-            }).then(function(modelBuffer) {
+            }).then(function(modelReader) {
                 self.postMessage({ type: 'loading', progress: { status: 'Initializing LLM (compiling WebGPU shaders)...' } });
+                // LlmInference requires a ReadableStreamDefaultReader for
+                // modelAssetBuffer (not a Uint8Array). This matches the
+                // official MediaPipe LLM web sample.
                 return LlmInference.createFromOptions(genai, {
                     baseOptions: {
-                        modelAssetBuffer: new Uint8Array(modelBuffer)
+                        modelAssetBuffer: modelReader
                     },
                     maxTokens: maxTokens,
                     topK: topK,
