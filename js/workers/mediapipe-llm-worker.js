@@ -270,6 +270,7 @@ function loadModel(config) {
                     temperature: temperature,
                     randomSeed: randomSeed
                 });
+            });
         });
     }).then(function(inference) {
         llmInference = inference;
