@@ -263,7 +263,7 @@ export class QAOverlay {
             // Pre-show immediately so there is feedback before worker messages arrive
             this._elements.tokenProgress.textContent = 'Preparing…';
             this._elements.tokenProgress.classList.remove('hidden');
-        } else if (state !== QAState.RESPONDING) {
+        } else {
             this._elements.tokenProgress.classList.add('hidden');
         }
 
