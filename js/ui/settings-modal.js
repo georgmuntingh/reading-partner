@@ -66,7 +66,7 @@ export class SettingsModal {
             llmBackend: 'openrouter',
             localLlmModel: DEFAULT_LOCAL_MODEL,
             localLlmDevice: 'auto',
-            localLlmDeferTts: true,
+            localLlmDeferTts: false,
             mediapipeLlmHfToken: '',
             // Lookup settings
             lookupLanguage: 'auto',
@@ -1379,7 +1379,7 @@ export class SettingsModal {
         ).join('');
         this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
         this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
-        this._elements.localLlmDeferTts.checked = this._settings.localLlmDeferTts !== false; // default true
+        this._elements.localLlmDeferTts.checked = this._settings.localLlmDeferTts === true; // default false
         this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
         this._updateLLMBackendUI();
 

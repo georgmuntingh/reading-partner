@@ -258,8 +258,12 @@ export class QAOverlay {
     setState(state, data = {}) {
         this._state = state;
 
-        // Hide token progress when leaving thinking/responding states
-        if (state !== QAState.THINKING && state !== QAState.RESPONDING) {
+        // Show/hide token progress based on state
+        if (state === QAState.THINKING) {
+            // Pre-show immediately so there is feedback before worker messages arrive
+            this._elements.tokenProgress.textContent = 'Preparing…';
+            this._elements.tokenProgress.classList.remove('hidden');
+        } else if (state !== QAState.RESPONDING) {
             this._elements.tokenProgress.classList.add('hidden');
         }
 
