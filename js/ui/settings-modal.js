@@ -3,7 +3,7 @@
  * Displays settings for TTS backend, API key, model selection, and Q&A context
  */
 
-import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL } from '../services/llm-client.js';
+import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL, MEDIAPIPE_LLM_MODEL } from '../services/llm-client.js';
 import { WHISPER_MODELS, DEFAULT_WHISPER_MODEL } from '../services/whisper-stt-service.js';
 import { mediaSessionManager } from '../services/media-session-manager.js';
 
@@ -66,6 +66,7 @@ export class SettingsModal {
             llmBackend: 'openrouter',
             localLlmModel: DEFAULT_LOCAL_MODEL,
             localLlmDevice: 'auto',
+            mediapipeLlmHfToken: '',
             // Lookup settings
             lookupLanguage: 'auto',
             // Reading history
@@ -338,7 +339,8 @@ export class SettingsModal {
                             <label for="settings-llm-backend">LLM Backend</label>
                             <select id="settings-llm-backend" class="form-select">
                                 <option value="openrouter">OpenRouter (Cloud)</option>
-                                <option value="local">Local (On-Device)</option>
+                                <option value="local">Local/transformers.js (On-Device)</option>
+                                <option value="mediapipe">MediaPipe/Gemma3 (On-Device, WebGPU)</option>
                             </select>
                             <p class="form-hint" id="settings-llm-backend-hint">
                                 Uses cloud AI models via OpenRouter. Requires an API key and internet connection.
@@ -391,6 +393,36 @@ export class SettingsModal {
                                 <div class="model-status" id="settings-local-llm-status">
                                     <span class="model-status-text">Model not loaded</span>
                                     <button class="btn btn-secondary btn-sm" id="settings-local-llm-download-btn">Download Model</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="settings-mediapipe-llm-options" style="display: none;">
+                            <div class="form-group">
+                                <label>Model</label>
+                                <p class="form-hint" style="margin-top: 0;">
+                                    ${MEDIAPIPE_LLM_MODEL.name} (${MEDIAPIPE_LLM_MODEL.size}) &mdash;
+                                    ${MEDIAPIPE_LLM_MODEL.description}
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-mediapipe-hf-token">HuggingFace Access Token</label>
+                                <input type="password" id="settings-mediapipe-hf-token" class="form-input"
+                                    placeholder="hf_...">
+                                <p class="form-hint">
+                                    Required for the first download. Accept the Gemma licence at
+                                    <a href="https://huggingface.co/litert-community/Gemma3-1B-IT" target="_blank" rel="noopener">huggingface.co/litert-community/Gemma3-1B-IT</a>
+                                    then create a token at
+                                    <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>.
+                                    The token is only used for the download and stored locally.
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-mediapipe-llm-status">
+                                    <span class="model-status-text">Model not loaded</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-mediapipe-llm-download-btn">Download &amp; Load Model</button>
                                 </div>
                             </div>
                         </div>
@@ -640,6 +672,12 @@ export class SettingsModal {
             localLlmStatus: this._container.querySelector('#settings-local-llm-status'),
             localLlmStatusText: this._container.querySelector('#settings-local-llm-status .model-status-text'),
             localLlmDownloadBtn: this._container.querySelector('#settings-local-llm-download-btn'),
+            // MediaPipe LLM backend
+            mediapipeLlmOptions: this._container.querySelector('#settings-mediapipe-llm-options'),
+            mediapipeLlmHfToken: this._container.querySelector('#settings-mediapipe-hf-token'),
+            mediapipeLlmStatus: this._container.querySelector('#settings-mediapipe-llm-status'),
+            mediapipeLlmStatusText: this._container.querySelector('#settings-mediapipe-llm-status .model-status-text'),
+            mediapipeLlmDownloadBtn: this._container.querySelector('#settings-mediapipe-llm-download-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
             fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
@@ -722,6 +760,13 @@ export class SettingsModal {
         // Local LLM model dropdown — show download button whenever model selection changes
         this._elements.localLlmModel.addEventListener('change', () => {
             this.setLocalLlmStatus({ loaded: false });
+        });
+
+        // MediaPipe LLM download button
+        this._elements.mediapipeLlmDownloadBtn.addEventListener('click', () => {
+            this._callbacks.onMediapipeLlmDownload?.({
+                hfToken: this._elements.mediapipeLlmHfToken.value.trim()
+            });
         });
 
         // Whisper silence timeout slider
@@ -884,13 +929,16 @@ export class SettingsModal {
         const backend = this._elements.llmBackend.value;
         const showOpenRouter = backend === 'openrouter';
         const showLocal = backend === 'local';
+        const showMediapipe = backend === 'mediapipe';
 
         this._elements.openrouterOptions.style.display = showOpenRouter ? '' : 'none';
         this._elements.localLlmOptions.style.display = showLocal ? '' : 'none';
+        this._elements.mediapipeLlmOptions.style.display = showMediapipe ? '' : 'none';
 
         const hints = {
             'openrouter': 'Uses cloud AI models via OpenRouter. Requires an API key and internet connection.',
-            'local': 'Runs a small language model locally on your device. Works offline but produces simpler responses.'
+            'local': 'Runs a small language model locally on your device via transformers.js. Works offline but produces simpler responses.',
+            'mediapipe': 'Runs Gemma3-1B-IT on-device using MediaPipe + WebGPU. Requires a Chromium browser with WebGPU. ~600 MB download on first use.'
         };
         this._elements.llmBackendHint.textContent = hints[backend] || '';
     }
@@ -930,6 +978,25 @@ export class SettingsModal {
             this._elements.localLlmStatusText.textContent = status.statusText || 'Model not loaded';
             this._elements.localLlmStatusText.style.color = '';
             this._elements.localLlmDownloadBtn.style.display = '';
+        }
+    }
+
+    /**
+     * Update MediaPipe LLM model status display
+     * @param {{ loaded: boolean, loading: boolean, statusText?: string }} status
+     */
+    setMediapipeLlmStatus(status) {
+        if (status.loading) {
+            this._elements.mediapipeLlmStatusText.textContent = status.statusText || 'Loading...';
+            this._elements.mediapipeLlmDownloadBtn.style.display = 'none';
+        } else if (status.loaded) {
+            this._elements.mediapipeLlmStatusText.textContent = status.statusText || 'Model ready';
+            this._elements.mediapipeLlmStatusText.style.color = '#059669';
+            this._elements.mediapipeLlmDownloadBtn.style.display = 'none';
+        } else {
+            this._elements.mediapipeLlmStatusText.textContent = status.statusText || 'Model not loaded';
+            this._elements.mediapipeLlmStatusText.style.color = '';
+            this._elements.mediapipeLlmDownloadBtn.style.display = '';
         }
     }
 
@@ -1073,6 +1140,7 @@ export class SettingsModal {
             llmBackend: this._elements.llmBackend.value,
             localLlmModel: this._elements.localLlmModel.value,
             localLlmDevice: this._elements.localLlmDevice.value,
+            mediapipeLlmHfToken: this._elements.mediapipeLlmHfToken.value.trim(),
             // Lookup settings
             lookupLanguage: this._elements.lookupLanguage.value,
             // Quiz settings
@@ -1264,6 +1332,7 @@ export class SettingsModal {
         ).join('');
         this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
         this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
+        this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
         this._updateLLMBackendUI();
 
         // Load lookup settings

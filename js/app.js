@@ -201,7 +201,8 @@ class ReadingPartnerApp {
                 onVoiceChange: (voiceId) => this._onVoiceChange(voiceId),
                 onSpeedChange: (speed) => this._onSpeedChange(speed),
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
-                onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config)
+                onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
+                onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config)
             }
         );
 
@@ -2318,6 +2319,10 @@ class ReadingPartnerApp {
                 await storage.saveSetting('localLlmDevice', settings.localLlmDevice);
                 llmClient.setLocalDevice(settings.localLlmDevice);
             }
+            if (settings.mediapipeLlmHfToken !== undefined) {
+                await storage.saveSetting('mediapipeLlmHfToken', settings.mediapipeLlmHfToken);
+                llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
+            }
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -2341,7 +2346,7 @@ class ReadingPartnerApp {
     _updateAskQuizButtons() {
         if (!this._controls) return;
 
-        const llmAvailable = this._llmBackend === 'local' || this._qaSettings.apiKey;
+        const llmAvailable = this._llmBackend === 'local' || this._llmBackend === 'mediapipe' || this._qaSettings.apiKey;
         const llmDisabledReason = this._llmBackend === 'openrouter' && !this._qaSettings.apiKey
             ? 'Configure API key in Q&A Settings or switch to Local LLM'
             : null;
@@ -3247,6 +3252,7 @@ class ReadingPartnerApp {
             if (llmBackend !== null) this._llmBackend = llmBackend;
             const localLlmModel = await storage.getSetting('localLlmModel');
             const localLlmDevice = await storage.getSetting('localLlmDevice');
+            const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
 
             // Apply STT backend
             if (this._sttBackend === 'whisper') {
@@ -3258,6 +3264,9 @@ class ReadingPartnerApp {
                 llmClient.setBackend('local');
                 if (localLlmModel) llmClient.setLocalModel(localLlmModel);
                 if (localLlmDevice) llmClient.setLocalDevice(localLlmDevice);
+            } else if (this._llmBackend === 'mediapipe') {
+                llmClient.setBackend('mediapipe');
+                if (mediapipeLlmHfToken) llmClient.setMediapipeHfToken(mediapipeLlmHfToken);
             }
 
             // Update Q&A setup UI
@@ -3283,7 +3292,8 @@ class ReadingPartnerApp {
                 whisperMaxDuration: whisperMaxDuration !== null ? whisperMaxDuration : undefined,
                 llmBackend: this._llmBackend,
                 localLlmModel: localLlmModel || undefined,
-                localLlmDevice: localLlmDevice || 'auto'
+                localLlmDevice: localLlmDevice || 'auto',
+                mediapipeLlmHfToken: mediapipeLlmHfToken || ''
             });
 
         } catch (error) {
@@ -3399,6 +3409,68 @@ class ReadingPartnerApp {
         } catch (error) {
             modelDownloadModal.showError(error.message);
             this._settingsModal.setLocalLlmStatus({ loaded: false, statusText: `Error: ${error.message}` });
+        }
+    }
+
+    /**
+     * Download and load the MediaPipe LLM model (triggered from settings)
+     * @param {Object} config
+     * @param {string} config.hfToken - HuggingFace access token
+     */
+    async _downloadMediapipeLlmModel(config) {
+        if (config.hfToken) {
+            llmClient.setMediapipeHfToken(config.hfToken);
+            await storage.saveSetting('mediapipeLlmHfToken', config.hfToken);
+        }
+
+        this._settingsModal.setMediapipeLlmStatus({ loading: true, statusText: 'Starting...' });
+
+        llmClient.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+            this._settingsModal.setMediapipeLlmStatus({
+                loading: true,
+                statusText: progress.status || 'Loading...'
+            });
+        };
+
+        modelDownloadModal.showProgress('Loading MediaPipe LLM Model');
+
+        try {
+            await llmClient.loadMediapipeModel();
+            modelDownloadModal.showComplete('Gemma3-1B-IT ready!');
+            this._settingsModal.setMediapipeLlmStatus({ loaded: true, statusText: 'Model ready' });
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            this._settingsModal.setMediapipeLlmStatus({ loaded: false, statusText: `Error: ${error.message}` });
+        }
+    }
+
+    /**
+     * Ensure the MediaPipe LLM is loaded, prompting download if needed
+     * @returns {Promise<boolean>} true if model is ready
+     */
+    async _ensureMediapipeLlmReady() {
+        if (llmClient.isMediapipeModelReady()) return true;
+
+        const confirmed = await modelDownloadModal.promptDownload({
+            modelName: 'Gemma3-1B-IT (MediaPipe, int4)',
+            modelSize: '~600 MB',
+            purpose: 'AI Assistant'
+        });
+
+        if (!confirmed) return false;
+
+        llmClient.onModelProgress = (progress) => {
+            modelDownloadModal.updateProgress(progress);
+        };
+
+        try {
+            await llmClient.loadMediapipeModel();
+            modelDownloadModal.showComplete('Gemma3-1B-IT ready!');
+            return true;
+        } catch (error) {
+            modelDownloadModal.showError(error.message);
+            return false;
         }
     }
 
