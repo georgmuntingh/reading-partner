@@ -291,10 +291,11 @@ export class QAOverlay {
         this._elements.tokenProgress.classList.remove('hidden');
 
         if (progress.phase === 'prefill') {
-            const elapsed = progress.elapsedMs != null ? ` ${(progress.elapsedMs / 1000).toFixed(1)}s` : '';
-            this._elements.tokenProgress.textContent = `Processing ${progress.promptTokens} prompt tokens...${elapsed}`;
+            const elapsed = progress.elapsedMs != null ? ` · ${(progress.elapsedMs / 1000).toFixed(1)}s` : '';
+            this._elements.tokenProgress.textContent = `Processing ${progress.promptTokens.toLocaleString()} prompt tokens${elapsed}`;
         } else if (progress.phase === 'generating') {
-            this._elements.tokenProgress.textContent = `Generated ${progress.generatedTokens || 0} tokens (prompt: ${progress.promptTokens})`;
+            const generated = progress.generatedTokens || 0;
+            this._elements.tokenProgress.textContent = `Generating · ${generated} token${generated === 1 ? '' : 's'}`;
         }
     }
 

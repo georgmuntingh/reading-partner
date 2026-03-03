@@ -707,10 +707,16 @@
 }
 
 .qa-token-progress {
+    display: inline-block;
     font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    margin-top: 4px;
+    color: var(--primary-color);
+    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-color) 25%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 2px 10px;
+    margin-top: var(--spacing-sm);
     font-variant-numeric: tabular-nums;
+    font-weight: 500;
 }
 
 .qa-label {
