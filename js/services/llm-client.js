@@ -197,8 +197,8 @@ export class LLMClient {
         return this._getProvider().askQuestion(contextSentences, question, bookMeta);
     }
 
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
-        return this._getProvider().askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta);
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
+        return this._getProvider().askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress);
     }
 
     async lookupWord(options) {

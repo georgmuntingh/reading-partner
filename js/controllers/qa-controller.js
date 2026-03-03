@@ -34,6 +34,7 @@ export class QAController {
      * @param {(text: string) => void} options.onResponse - Response text callback
      * @param {(sentence: string, index: number) => void} options.onSentenceSpoken - When a sentence finishes
      * @param {(entry: QAHistoryEntry) => void} options.onHistoryAdd - When a Q&A is added to history
+     * @param {(progress: {phase: string, promptTokens: number, generatedTokens?: number}) => void} options.onTokenProgress - Token progress callback (local LLM)
      */
     constructor(options) {
         this._readingState = options.readingState;
@@ -42,6 +43,7 @@ export class QAController {
         this._onResponse = options.onResponse;
         this._onSentenceSpoken = options.onSentenceSpoken;
         this._onHistoryAdd = options.onHistoryAdd;
+        this._onTokenProgress = options.onTokenProgress;
 
         // STT service (injectable, defaults to Web Speech API singleton)
         this._sttService = options.sttService || defaultSttService;
@@ -248,7 +250,11 @@ export class QAController {
                         this._startSpeaking();
                     }
                 },
-                this._bookMeta
+                this._bookMeta,
+                // On token progress (local LLM only)
+                (progress) => {
+                    this._onTokenProgress?.(progress);
+                }
             );
 
             // Mark streaming as complete

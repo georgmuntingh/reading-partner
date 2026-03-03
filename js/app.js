@@ -1741,6 +1741,9 @@ class ReadingPartnerApp {
             },
             onHistoryAdd: (entry) => {
                 this._qaOverlay.addHistoryEntry(entry);
+            },
+            onTokenProgress: (progress) => {
+                this._qaOverlay.setTokenProgress(progress);
             }
         });
     }

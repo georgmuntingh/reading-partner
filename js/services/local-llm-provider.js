@@ -161,9 +161,10 @@ export class LocalLLMProvider extends LLMProvider {
      * @param {Object} options - Generation options
      * @param {(chunk: string) => void} [onChunk]
      * @param {(sentence: string) => void} [onSentence]
+     * @param {(progress: {phase: string, promptTokens: number, generatedTokens?: number}) => void} [onProgress]
      * @returns {Promise<string>} Full generated text
      */
-    async _generate(messages, options = {}, onChunk, onSentence) {
+    async _generate(messages, options = {}, onChunk, onSentence, onProgress) {
         if (!this._isReady) {
             await this.loadModel();
         }
@@ -176,10 +177,17 @@ export class LocalLLMProvider extends LLMProvider {
                 const { type, ...data } = event.data;
 
                 switch (type) {
+                    case 'prefill_start':
+                        onProgress?.({ phase: 'prefill', promptTokens: data.promptTokens, generatedTokens: 0 });
+                        break;
+                    case 'prefill_complete':
+                        onProgress?.({ phase: 'generating', promptTokens: data.promptTokens, generatedTokens: 0 });
+                        break;
                     case 'token': {
                         fullText += data.token;
                         sentenceBuffer += data.token;
                         onChunk?.(data.token);
+                        onProgress?.({ phase: 'generating', promptTokens: data.promptTokens, generatedTokens: data.generatedCount });
 
                         // Extract complete sentences for TTS
                         if (onSentence) {
@@ -251,12 +259,12 @@ export class LocalLLMProvider extends LLMProvider {
         return this._generate(messages, { maxTokens: 256, temperature: 0.7 });
     }
 
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
         const messages = [
             { role: 'system', content: this._buildSystemPrompt(bookMeta) },
             { role: 'user', content: this._buildUserMessage(contextSentences, question, bookMeta) }
         ];
-        return this._generate(messages, { maxTokens: 256, temperature: 0.7 }, onChunk, onSentence);
+        return this._generate(messages, { maxTokens: 256, temperature: 0.7 }, onChunk, onSentence, onProgress);
     }
 
     async lookupWord(options) {
