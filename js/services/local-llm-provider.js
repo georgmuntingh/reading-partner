@@ -161,9 +161,10 @@ export class LocalLLMProvider extends LLMProvider {
      * @param {Object} options - Generation options
      * @param {(chunk: string) => void} [onChunk]
      * @param {(sentence: string) => void} [onSentence]
+     * @param {(progress: {phase: string, promptTokens: number, generatedTokens?: number}) => void} [onProgress]
      * @returns {Promise<string>} Full generated text
      */
-    async _generate(messages, options = {}, onChunk, onSentence) {
+    async _generate(messages, options = {}, onChunk, onSentence, onProgress) {
         if (!this._isReady) {
             await this.loadModel();
         }
@@ -171,15 +172,43 @@ export class LocalLLMProvider extends LLMProvider {
         return new Promise((resolve, reject) => {
             let fullText = '';
             let sentenceBuffer = '';
+            let prefillTimer = null;
+            let prefillStartTime = null;
+            let prefillPromptTokens = 0;
+
+            const clearPrefillTimer = () => {
+                if (prefillTimer !== null) {
+                    clearInterval(prefillTimer);
+                    prefillTimer = null;
+                }
+            };
 
             const handler = (event) => {
                 const { type, ...data } = event.data;
 
                 switch (type) {
+                    case 'prefill_start':
+                        prefillPromptTokens = data.promptTokens;
+                        prefillStartTime = performance.now();
+                        // Fire the first progress immediately
+                        onProgress?.({ phase: 'prefill', promptTokens: prefillPromptTokens, generatedTokens: 0, elapsedMs: 0 });
+                        // Start a timer on the main thread to update elapsed time
+                        // (the worker thread may be blocked by WASM during prefill)
+                        prefillTimer = setInterval(() => {
+                            const elapsed = performance.now() - prefillStartTime;
+                            onProgress?.({ phase: 'prefill', promptTokens: prefillPromptTokens, generatedTokens: 0, elapsedMs: elapsed });
+                        }, 200);
+                        break;
+                    case 'prefill_complete':
+                        clearPrefillTimer();
+                        onProgress?.({ phase: 'generating', promptTokens: data.promptTokens, generatedTokens: 0 });
+                        break;
                     case 'token': {
+                        clearPrefillTimer();
                         fullText += data.token;
                         sentenceBuffer += data.token;
                         onChunk?.(data.token);
+                        onProgress?.({ phase: 'generating', promptTokens: data.promptTokens, generatedTokens: data.generatedCount });
 
                         // Extract complete sentences for TTS
                         if (onSentence) {
@@ -194,6 +223,7 @@ export class LocalLLMProvider extends LLMProvider {
                         break;
                     }
                     case 'complete':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         // Flush remaining sentence buffer
                         if (onSentence && sentenceBuffer.trim()) {
@@ -202,10 +232,12 @@ export class LocalLLMProvider extends LLMProvider {
                         resolve(data.text || fullText);
                         break;
                     case 'aborted':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         resolve(data.text || fullText);
                         break;
                     case 'error':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         reject(new Error(data.error));
                         break;
@@ -251,12 +283,12 @@ export class LocalLLMProvider extends LLMProvider {
         return this._generate(messages, { maxTokens: 256, temperature: 0.7 });
     }
 
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
         const messages = [
             { role: 'system', content: this._buildSystemPrompt(bookMeta) },
             { role: 'user', content: this._buildUserMessage(contextSentences, question, bookMeta) }
         ];
-        return this._generate(messages, { maxTokens: 256, temperature: 0.7 }, onChunk, onSentence);
+        return this._generate(messages, { maxTokens: 256, temperature: 0.7 }, onChunk, onSentence, onProgress);
     }
 
     async lookupWord(options) {

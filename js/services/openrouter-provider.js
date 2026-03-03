@@ -212,7 +212,7 @@ export class OpenRouterProvider extends LLMProvider {
         return data.choices[0].message.content;
     }
 
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
         const systemPrompt = this._buildSystemPrompt(bookMeta);
         const userMessage = this._buildUserMessage(contextSentences, question, bookMeta);
 

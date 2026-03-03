@@ -48,6 +48,7 @@ class ReadingPartnerApp {
 
         // LLM backend
         this._llmBackend = 'openrouter';
+        this._localLlmDeferTts = true;
 
         // Q&A Settings
         this._qaSettings = {
@@ -1741,8 +1742,26 @@ class ReadingPartnerApp {
             },
             onHistoryAdd: (entry) => {
                 this._qaOverlay.addHistoryEntry(entry);
+            },
+            onTokenProgress: (progress) => {
+                this._qaOverlay.setTokenProgress(progress);
             }
         });
+
+        // Apply defer-TTS setting based on backend and user preference
+        this._applyDeferTtsSetting();
+    }
+
+    /**
+     * Apply the defer-TTS setting to the QA controller.
+     * Deferred TTS is active when the user has it enabled AND
+     * the current backend is a local LLM.
+     */
+    _applyDeferTtsSetting() {
+        if (this._qaController) {
+            const isLocal = this._llmBackend === 'local' || this._llmBackend === 'mediapipe';
+            this._qaController.setDeferTts(isLocal && this._localLlmDeferTts);
+        }
     }
 
     /**
@@ -2319,10 +2338,17 @@ class ReadingPartnerApp {
                 await storage.saveSetting('localLlmDevice', settings.localLlmDevice);
                 llmClient.setLocalDevice(settings.localLlmDevice);
             }
+            if (settings.localLlmDeferTts !== undefined) {
+                await storage.saveSetting('localLlmDeferTts', settings.localLlmDeferTts);
+                this._localLlmDeferTts = settings.localLlmDeferTts;
+            }
             if (settings.mediapipeLlmHfToken !== undefined) {
                 await storage.saveSetting('mediapipeLlmHfToken', settings.mediapipeLlmHfToken);
                 llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
             }
+
+            // Re-evaluate defer-TTS whenever backend or the setting changes
+            this._applyDeferTtsSetting();
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -3252,6 +3278,8 @@ class ReadingPartnerApp {
             if (llmBackend !== null) this._llmBackend = llmBackend;
             const localLlmModel = await storage.getSetting('localLlmModel');
             const localLlmDevice = await storage.getSetting('localLlmDevice');
+            const localLlmDeferTts = await storage.getSetting('localLlmDeferTts');
+            this._localLlmDeferTts = localLlmDeferTts !== false; // default true
             const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
 
             // Apply STT backend
@@ -3293,6 +3321,7 @@ class ReadingPartnerApp {
                 llmBackend: this._llmBackend,
                 localLlmModel: localLlmModel || undefined,
                 localLlmDevice: localLlmDevice || 'auto',
+                localLlmDeferTts: this._localLlmDeferTts,
                 mediapipeLlmHfToken: mediapipeLlmHfToken || ''
             });
 

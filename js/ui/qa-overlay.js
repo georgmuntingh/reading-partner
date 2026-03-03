@@ -54,6 +54,7 @@ export class QAOverlay {
                     <div class="qa-status-section">
                         <div class="qa-icon" id="qa-icon"></div>
                         <div class="qa-status" id="qa-status">Ready</div>
+                        <div class="qa-token-progress hidden" id="qa-token-progress"></div>
                     </div>
 
                     <div class="qa-transcript-section" id="qa-transcript-section">
@@ -115,6 +116,7 @@ export class QAOverlay {
             closeBtn: this._container.querySelector('.qa-close-btn'),
             icon: this._container.querySelector('#qa-icon'),
             status: this._container.querySelector('#qa-status'),
+            tokenProgress: this._container.querySelector('#qa-token-progress'),
             transcriptSection: this._container.querySelector('#qa-transcript-section'),
             transcript: this._container.querySelector('#qa-transcript'),
             textInputSection: this._container.querySelector('#qa-text-input-section'),
@@ -256,6 +258,11 @@ export class QAOverlay {
     setState(state, data = {}) {
         this._state = state;
 
+        // Hide token progress when leaving thinking/responding states
+        if (state !== QAState.THINKING && state !== QAState.RESPONDING) {
+            this._elements.tokenProgress.classList.add('hidden');
+        }
+
         // Update icon and status
         this._updateStatusDisplay(state);
 
@@ -268,6 +275,26 @@ export class QAOverlay {
         // Handle error
         if (data.error) {
             this._showError(data.error);
+        }
+    }
+
+    /**
+     * Update token progress display (for local LLMs)
+     * @param {{phase: string, promptTokens: number, generatedTokens?: number}} progress
+     */
+    setTokenProgress(progress) {
+        if (!progress) {
+            this._elements.tokenProgress.classList.add('hidden');
+            return;
+        }
+
+        this._elements.tokenProgress.classList.remove('hidden');
+
+        if (progress.phase === 'prefill') {
+            const elapsed = progress.elapsedMs != null ? ` ${(progress.elapsedMs / 1000).toFixed(1)}s` : '';
+            this._elements.tokenProgress.textContent = `Processing ${progress.promptTokens} prompt tokens...${elapsed}`;
+        } else if (progress.phase === 'generating') {
+            this._elements.tokenProgress.textContent = `Generated ${progress.generatedTokens || 0} tokens (prompt: ${progress.promptTokens})`;
         }
     }
 
@@ -520,6 +547,7 @@ export class QAOverlay {
         this._elements.transcript.textContent = '';
         this._elements.response.textContent = '';
         this._elements.textInput.value = '';
+        this._elements.tokenProgress.classList.add('hidden');
 
         this.setState(QAState.IDLE);
     }

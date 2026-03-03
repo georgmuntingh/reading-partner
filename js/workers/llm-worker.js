@@ -239,6 +239,10 @@ async function generate(config) {
         const inputTensor = new Tensor('int64', BigInt64Array.from(inputIds.map(BigInt)), [1, inputIds.length]);
         const attentionMask = new Tensor('int64', new BigInt64Array(inputIds.length).fill(1n), [1, inputIds.length]);
 
+        // Notify main thread about prompt size and that prefill is starting
+        const promptTokenCount = inputIds.length;
+        self.postMessage({ type: 'prefill_start', promptTokens: promptTokenCount });
+
         // Generate with streaming via callback
         let generatedTokens = [];
         let fullText = '';
@@ -246,6 +250,7 @@ async function generate(config) {
         // (input + all generated so far), so we track how many generated
         // tokens we have already decoded to extract only the new delta.
         let decodedGeneratedCount = 0;
+        let prefillDone = false;
 
         // Stateful filter that strips <think>…</think> from the stream
         const thinkState = { inThink: false, buf: '' };
@@ -271,7 +276,20 @@ async function generate(config) {
                     const newTokens = generated.slice(decodedGeneratedCount);
                     decodedGeneratedCount += newTokens.length;
 
-                    if (newTokens.length === 0) return;
+                    // First call with no new tokens marks end of prefill
+                    if (newTokens.length === 0) {
+                        if (!prefillDone) {
+                            prefillDone = true;
+                            self.postMessage({ type: 'prefill_complete', promptTokens: promptTokenCount });
+                        }
+                        return;
+                    }
+
+                    // Signal prefill done on first generated token if not already sent
+                    if (!prefillDone) {
+                        prefillDone = true;
+                        self.postMessage({ type: 'prefill_complete', promptTokens: promptTokenCount });
+                    }
 
                     generatedTokens.push(...newTokens);
 
@@ -282,7 +300,12 @@ async function generate(config) {
                         const visible = filterThink(decoded, thinkState);
                         if (visible) {
                             fullText += visible;
-                            self.postMessage({ type: 'token', token: visible });
+                            self.postMessage({
+                                type: 'token',
+                                token: visible,
+                                generatedCount: decodedGeneratedCount,
+                                promptTokens: promptTokenCount
+                            });
                         }
                     }
                 },
@@ -291,7 +314,12 @@ async function generate(config) {
                     const tail = flushThinkFilter(thinkState);
                     if (tail) {
                         fullText += tail;
-                        self.postMessage({ type: 'token', token: tail });
+                        self.postMessage({
+                            type: 'token',
+                            token: tail,
+                            generatedCount: decodedGeneratedCount,
+                            promptTokens: promptTokenCount
+                        });
                     }
                 }
             }

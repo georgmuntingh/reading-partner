@@ -22,9 +22,10 @@ export class LLMProvider {
      * @param {(chunk: string) => void} onChunk
      * @param {(sentence: string) => void} onSentence
      * @param {{ title?: string, author?: string }} [bookMeta]
+     * @param {(progress: {phase: string, promptTokens: number, generatedTokens?: number}) => void} [onProgress]
      * @returns {Promise<string>}
      */
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
         throw new Error('Not implemented');
     }
 

@@ -66,6 +66,7 @@ export class SettingsModal {
             llmBackend: 'openrouter',
             localLlmModel: DEFAULT_LOCAL_MODEL,
             localLlmDevice: 'auto',
+            localLlmDeferTts: true,
             mediapipeLlmHfToken: '',
             // Lookup settings
             lookupLanguage: 'auto',
@@ -395,6 +396,14 @@ export class SettingsModal {
                                     <button class="btn btn-secondary btn-sm" id="settings-local-llm-download-btn">Download Model</button>
                                 </div>
                             </div>
+
+                            <div class="form-group">
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                    <input type="checkbox" id="settings-local-llm-defer-tts" checked>
+                                    Defer TTS until response is complete
+                                </label>
+                                <p class="form-hint">When enabled, text-to-speech starts only after the LLM finishes generating the full response. Prevents stuttering on devices with limited memory.</p>
+                            </div>
                         </div>
 
                         <div id="settings-mediapipe-llm-options" style="display: none;">
@@ -672,6 +681,7 @@ export class SettingsModal {
             localLlmStatus: this._container.querySelector('#settings-local-llm-status'),
             localLlmStatusText: this._container.querySelector('#settings-local-llm-status .model-status-text'),
             localLlmDownloadBtn: this._container.querySelector('#settings-local-llm-download-btn'),
+            localLlmDeferTts: this._container.querySelector('#settings-local-llm-defer-tts'),
             // MediaPipe LLM backend
             mediapipeLlmOptions: this._container.querySelector('#settings-mediapipe-llm-options'),
             mediapipeLlmHfToken: this._container.querySelector('#settings-mediapipe-hf-token'),
@@ -1140,6 +1150,7 @@ export class SettingsModal {
             llmBackend: this._elements.llmBackend.value,
             localLlmModel: this._elements.localLlmModel.value,
             localLlmDevice: this._elements.localLlmDevice.value,
+            localLlmDeferTts: this._elements.localLlmDeferTts.checked,
             mediapipeLlmHfToken: this._elements.mediapipeLlmHfToken.value.trim(),
             // Lookup settings
             lookupLanguage: this._elements.lookupLanguage.value,
@@ -1332,6 +1343,7 @@ export class SettingsModal {
         ).join('');
         this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
         this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
+        this._elements.localLlmDeferTts.checked = this._settings.localLlmDeferTts !== false; // default true
         this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
         this._updateLLMBackendUI();
 

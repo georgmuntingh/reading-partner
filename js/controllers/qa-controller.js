@@ -34,6 +34,7 @@ export class QAController {
      * @param {(text: string) => void} options.onResponse - Response text callback
      * @param {(sentence: string, index: number) => void} options.onSentenceSpoken - When a sentence finishes
      * @param {(entry: QAHistoryEntry) => void} options.onHistoryAdd - When a Q&A is added to history
+     * @param {(progress: {phase: string, promptTokens: number, generatedTokens?: number}) => void} options.onTokenProgress - Token progress callback (local LLM)
      */
     constructor(options) {
         this._readingState = options.readingState;
@@ -42,6 +43,7 @@ export class QAController {
         this._onResponse = options.onResponse;
         this._onSentenceSpoken = options.onSentenceSpoken;
         this._onHistoryAdd = options.onHistoryAdd;
+        this._onTokenProgress = options.onTokenProgress;
 
         // STT service (injectable, defaults to Web Speech API singleton)
         this._sttService = options.sttService || defaultSttService;
@@ -66,6 +68,9 @@ export class QAController {
 
         // Session history
         this._history = [];
+
+        // When true, TTS is deferred until the full response is generated
+        this._deferTts = false;
 
         // Book metadata for LLM context
         this._bookMeta = null;
@@ -149,6 +154,15 @@ export class QAController {
      */
     setPlaybackSpeed(speed) {
         this._playbackSpeed = speed;
+    }
+
+    /**
+     * Set whether TTS should be deferred until the full response is generated.
+     * Useful on devices where concurrent LLM + TTS causes stuttering.
+     * @param {boolean} defer
+     */
+    setDeferTts(defer) {
+        this._deferTts = defer;
     }
 
     /**
@@ -239,26 +253,45 @@ export class QAController {
                     const sentenceIndex = this._responseSentences.length;
                     this._responseSentences.push(sentence);
 
-                    // Start pre-synthesizing this sentence immediately
-                    this._prefetchSentenceAudio(sentenceIndex, sentence);
+                    if (!this._deferTts) {
+                        // Start pre-synthesizing this sentence immediately
+                        this._prefetchSentenceAudio(sentenceIndex, sentence);
 
-                    // If this is the first sentence and we're still thinking, start responding
-                    if (this._state === QAState.THINKING && this._responseSentences.length === 1) {
-                        this._setState(QAState.RESPONDING);
-                        this._startSpeaking();
+                        // If this is the first sentence and we're still thinking, start responding
+                        if (this._state === QAState.THINKING && this._responseSentences.length === 1) {
+                            this._setState(QAState.RESPONDING);
+                            this._startSpeaking();
+                        }
                     }
                 },
-                this._bookMeta
+                this._bookMeta,
+                // On token progress (local LLM only)
+                (progress) => {
+                    this._onTokenProgress?.(progress);
+                }
             );
 
             // Mark streaming as complete
             this._isStreamingComplete = true;
 
-            // Some models (e.g. recurrent LFMs) don't produce streamable token-by-token
-            // output, so the sentence callbacks above never fire. If we're still in
-            // THINKING state after the full response has arrived, trigger the transition
-            // now using the complete response text.
-            if (this._state === QAState.THINKING && !this._isStopped && fullResponse.trim()) {
+            // If TTS was deferred, start synthesis and speaking now that generation is done
+            if (this._deferTts && !this._isStopped) {
+                // If no sentences were extracted from streaming, use the full response
+                if (this._responseSentences.length === 0 && fullResponse.trim()) {
+                    this._responseSentences.push(fullResponse.trim());
+                }
+                // Pre-synthesize all sentences sequentially (no memory competition with LLM)
+                for (let i = 0; i < this._responseSentences.length && !this._isStopped; i++) {
+                    this._prefetchSentenceAudio(i, this._responseSentences[i]);
+                }
+                if (!this._isStopped && this._responseSentences.length > 0) {
+                    this._setState(QAState.RESPONDING);
+                    this._startSpeaking();
+                }
+            }
+
+            // Handle non-streaming models fallback (still needed for non-deferred mode)
+            if (!this._deferTts && this._state === QAState.THINKING && !this._isStopped && fullResponse.trim()) {
                 const idx = this._responseSentences.length;
                 this._responseSentences.push(fullResponse.trim());
                 this._prefetchSentenceAudio(idx, fullResponse.trim());

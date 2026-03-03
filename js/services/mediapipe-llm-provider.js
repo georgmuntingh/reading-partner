@@ -279,7 +279,7 @@ export class MediaPipeLLMProvider extends LLMProvider {
         return this._generate(messages);
     }
 
-    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta) {
+    async askQuestionStreaming(contextSentences, question, onChunk, onSentence, bookMeta, onProgress) {
         const messages = [
             { role: 'system', content: this._buildSystemPrompt(bookMeta) },
             { role: 'user', content: this._buildUserMessage(contextSentences, question) }

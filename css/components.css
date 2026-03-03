@@ -706,6 +706,13 @@
     color: var(--text-color);
 }
 
+.qa-token-progress {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+}
+
 .qa-label {
     display: block;
     font-size: var(--font-size-sm);
