@@ -101,18 +101,24 @@ export class SettingsModal {
                 </div>
 
                 <div class="modal-content">
-                    <div class="settings-section">
-                        <h3>General</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>General</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">3</span></label>
                             <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="3">
                             <p class="form-hint">Number of recent books shown in "Continue reading" on the start screen</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Voice & Speed</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Voice &amp; Speed</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-voice">Voice</label>
@@ -131,10 +137,13 @@ export class SettingsModal {
                             <label for="settings-speed">Speed: <span id="settings-speed-value">1.0x</span></label>
                             <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Typography</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Typography</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-font">Font</label>
@@ -172,10 +181,13 @@ export class SettingsModal {
                             <label for="settings-line-spacing">Line Spacing: <span id="settings-line-spacing-value">1.8</span></label>
                             <input type="range" id="settings-line-spacing" class="form-input" min="1.0" max="2.5" step="0.1" value="1.8">
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Layout</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Layout</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label>Columns: <span id="settings-column-count-value">1</span></label>
@@ -196,10 +208,13 @@ export class SettingsModal {
                             </label>
                             <p class="form-hint">When enabled, the page with the current sentence stays in the center column. When disabled, the view advances only when the last visible page is reached.</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>TTS Backend</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>TTS Backend</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-tts-backend">Text-to-Speech Engine</label>
@@ -218,10 +233,13 @@ export class SettingsModal {
                             <input type="text" id="settings-fastapi-url" class="form-input" placeholder="http://localhost:8880" value="http://localhost:8880">
                             <p class="form-hint" id="settings-fastapi-status"></p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Text Normalization (Kokoro)</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Text Normalization (Kokoro)</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Control how text is processed before being sent to Kokoro TTS.
                         </p>
@@ -249,10 +267,13 @@ export class SettingsModal {
                             </label>
                             <p class="form-hint">Expand common abbreviations (e.g., "Dr." → "Doctor", "St." → "Street")</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Word Lookup</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Word Lookup</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-lookup-language">Translation Target Language</label>
@@ -277,10 +298,13 @@ export class SettingsModal {
                             </select>
                             <p class="form-hint">Select text and tap "Look up" in the toolbar to look up words and phrases. When set to Auto, the LLM determines the best language for definitions/translations based on context.</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Speech Recognition</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Speech Recognition</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-stt-backend">STT Backend</label>
@@ -331,10 +355,13 @@ export class SettingsModal {
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Q&A Settings</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Q&amp;A Settings</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-llm-backend">LLM Backend</label>
@@ -461,10 +488,13 @@ export class SettingsModal {
                             <input type="number" id="settings-context-after" class="form-input" min="0" max="500" value="5">
                             <p class="form-hint">Number of sentences after current position to include as context</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Quiz Settings</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Quiz Settings</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-quiz-mode">Quiz Mode</label>
@@ -545,10 +575,13 @@ export class SettingsModal {
                             <textarea id="settings-quiz-system-prompt" class="form-input" rows="3" placeholder="Override the default system prompt for quiz generation..."></textarea>
                             <p class="form-hint">Leave empty to use the default quiz generation prompt</p>
                         </div>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>Headset Controls</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Headset Controls</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <div class="form-group">
                             <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.01</span></label>
@@ -603,14 +636,17 @@ export class SettingsModal {
                                 <p style="margin-top: var(--spacing-sm);"><strong>Testing:</strong> After pressing play in the app, check your notification shade. You should see "Reading Partner" media controls there.</p>
                             </div>
                         </details>
-                    </div>
+                    </details>
 
-                    <div class="settings-section">
-                        <h3>About</h3>
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>About</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
                         <div id="settings-about-content" class="about-content">
                             <p>Loading information...</p>
                         </div>
-                    </div>
+                    </details>
                 </div>
 
                 <div class="modal-footer">
