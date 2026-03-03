@@ -172,18 +172,39 @@ export class LocalLLMProvider extends LLMProvider {
         return new Promise((resolve, reject) => {
             let fullText = '';
             let sentenceBuffer = '';
+            let prefillTimer = null;
+            let prefillStartTime = null;
+            let prefillPromptTokens = 0;
+
+            const clearPrefillTimer = () => {
+                if (prefillTimer !== null) {
+                    clearInterval(prefillTimer);
+                    prefillTimer = null;
+                }
+            };
 
             const handler = (event) => {
                 const { type, ...data } = event.data;
 
                 switch (type) {
                     case 'prefill_start':
-                        onProgress?.({ phase: 'prefill', promptTokens: data.promptTokens, generatedTokens: 0 });
+                        prefillPromptTokens = data.promptTokens;
+                        prefillStartTime = performance.now();
+                        // Fire the first progress immediately
+                        onProgress?.({ phase: 'prefill', promptTokens: prefillPromptTokens, generatedTokens: 0, elapsedMs: 0 });
+                        // Start a timer on the main thread to update elapsed time
+                        // (the worker thread may be blocked by WASM during prefill)
+                        prefillTimer = setInterval(() => {
+                            const elapsed = performance.now() - prefillStartTime;
+                            onProgress?.({ phase: 'prefill', promptTokens: prefillPromptTokens, generatedTokens: 0, elapsedMs: elapsed });
+                        }, 200);
                         break;
                     case 'prefill_complete':
+                        clearPrefillTimer();
                         onProgress?.({ phase: 'generating', promptTokens: data.promptTokens, generatedTokens: 0 });
                         break;
                     case 'token': {
+                        clearPrefillTimer();
                         fullText += data.token;
                         sentenceBuffer += data.token;
                         onChunk?.(data.token);
@@ -202,6 +223,7 @@ export class LocalLLMProvider extends LLMProvider {
                         break;
                     }
                     case 'complete':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         // Flush remaining sentence buffer
                         if (onSentence && sentenceBuffer.trim()) {
@@ -210,10 +232,12 @@ export class LocalLLMProvider extends LLMProvider {
                         resolve(data.text || fullText);
                         break;
                     case 'aborted':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         resolve(data.text || fullText);
                         break;
                     case 'error':
+                        clearPrefillTimer();
                         this._worker.removeEventListener('message', handler);
                         reject(new Error(data.error));
                         break;

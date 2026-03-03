@@ -291,7 +291,8 @@ export class QAOverlay {
         this._elements.tokenProgress.classList.remove('hidden');
 
         if (progress.phase === 'prefill') {
-            this._elements.tokenProgress.textContent = `Processing prompt (${progress.promptTokens} tokens)...`;
+            const elapsed = progress.elapsedMs != null ? ` ${(progress.elapsedMs / 1000).toFixed(1)}s` : '';
+            this._elements.tokenProgress.textContent = `Processing ${progress.promptTokens} prompt tokens...${elapsed}`;
         } else if (progress.phase === 'generating') {
             this._elements.tokenProgress.textContent = `Generated ${progress.generatedTokens || 0} tokens (prompt: ${progress.promptTokens})`;
         }
