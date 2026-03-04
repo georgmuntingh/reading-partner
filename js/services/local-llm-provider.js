@@ -288,7 +288,7 @@ export class LocalLLMProvider extends LLMProvider {
             { role: 'system', content: this._buildSystemPrompt(bookMeta) },
             { role: 'user', content: this._buildUserMessage(contextSentences, question, bookMeta) }
         ];
-        return this._generate(messages, { maxTokens: 256, temperature: 0.7 }, onChunk, onSentence, onProgress);
+        return this._generate(messages, { maxTokens: 1024, temperature: 0.7 }, onChunk, onSentence, onProgress);
     }
 
     async lookupWord(options) {

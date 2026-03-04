@@ -707,10 +707,16 @@
 }
 
 .qa-token-progress {
+    display: inline-block;
     font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-    margin-top: 4px;
+    color: var(--primary-color);
+    background-color: color-mix(in srgb, var(--primary-color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--primary-color) 25%, transparent);
+    border-radius: var(--radius-sm);
+    padding: 2px 10px;
+    margin-top: var(--spacing-sm);
     font-variant-numeric: tabular-nums;
+    font-weight: 500;
 }
 
 .qa-label {
@@ -1339,13 +1345,37 @@
     margin-bottom: 0;
 }
 
-.settings-section h3 {
+.settings-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
     font-size: var(--font-size-base);
     font-weight: 600;
-    margin: 0 0 var(--spacing-md) 0;
     color: var(--text-color);
     padding-bottom: var(--spacing-sm);
     border-bottom: 1px solid var(--border-color);
+    margin: 0;
+}
+
+.settings-section-header::-webkit-details-marker {
+    display: none;
+}
+
+.settings-section-chevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: var(--text-secondary);
+}
+
+.settings-section[open] > .settings-section-header {
+    margin-bottom: var(--spacing-md);
+}
+
+.settings-section[open] > .settings-section-header .settings-section-chevron {
+    transform: rotate(180deg);
 }
 
 /* ========== Chapter Overview ========== */

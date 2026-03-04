@@ -48,7 +48,8 @@ class ReadingPartnerApp {
 
         // LLM backend
         this._llmBackend = 'openrouter';
-        this._localLlmDeferTts = true;
+        this._localLlmDeferTts = false;
+        this._localLlmJitLoading = true;
 
         // Q&A Settings
         this._qaSettings = {
@@ -1748,8 +1749,9 @@ class ReadingPartnerApp {
             }
         });
 
-        // Apply defer-TTS setting based on backend and user preference
+        // Apply defer-TTS and JIT loading settings based on backend and user preference
         this._applyDeferTtsSetting();
+        this._applyJitLoadingSetting();
     }
 
     /**
@@ -1761,6 +1763,18 @@ class ReadingPartnerApp {
         if (this._qaController) {
             const isLocal = this._llmBackend === 'local' || this._llmBackend === 'mediapipe';
             this._qaController.setDeferTts(isLocal && this._localLlmDeferTts);
+        }
+    }
+
+    /**
+     * Apply the JIT loading setting to the QA controller.
+     * JIT loading is active when the user has it enabled AND
+     * the current backend is a local LLM.
+     */
+    _applyJitLoadingSetting() {
+        if (this._qaController) {
+            const isLocal = this._llmBackend === 'local' || this._llmBackend === 'mediapipe';
+            this._qaController.setJitLoading(isLocal && this._localLlmJitLoading);
         }
     }
 
@@ -2342,13 +2356,18 @@ class ReadingPartnerApp {
                 await storage.saveSetting('localLlmDeferTts', settings.localLlmDeferTts);
                 this._localLlmDeferTts = settings.localLlmDeferTts;
             }
+            if (settings.localLlmJitLoading !== undefined) {
+                await storage.saveSetting('localLlmJitLoading', settings.localLlmJitLoading);
+                this._localLlmJitLoading = settings.localLlmJitLoading;
+            }
             if (settings.mediapipeLlmHfToken !== undefined) {
                 await storage.saveSetting('mediapipeLlmHfToken', settings.mediapipeLlmHfToken);
                 llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
             }
 
-            // Re-evaluate defer-TTS whenever backend or the setting changes
+            // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
+            this._applyJitLoadingSetting();
         } catch (error) {
             console.error('Failed to save settings:', error);
         }
@@ -3279,7 +3298,9 @@ class ReadingPartnerApp {
             const localLlmModel = await storage.getSetting('localLlmModel');
             const localLlmDevice = await storage.getSetting('localLlmDevice');
             const localLlmDeferTts = await storage.getSetting('localLlmDeferTts');
-            this._localLlmDeferTts = localLlmDeferTts !== false; // default true
+            if (localLlmDeferTts !== null) this._localLlmDeferTts = localLlmDeferTts === true;
+            const localLlmJitLoading = await storage.getSetting('localLlmJitLoading');
+            if (localLlmJitLoading !== null) this._localLlmJitLoading = localLlmJitLoading !== false;
             const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
 
             // Apply STT backend
@@ -3322,6 +3343,7 @@ class ReadingPartnerApp {
                 localLlmModel: localLlmModel || undefined,
                 localLlmDevice: localLlmDevice || 'auto',
                 localLlmDeferTts: this._localLlmDeferTts,
+                localLlmJitLoading: this._localLlmJitLoading,
                 mediapipeLlmHfToken: mediapipeLlmHfToken || ''
             });
 
