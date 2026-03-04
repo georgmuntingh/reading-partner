@@ -72,6 +72,10 @@ export class QAController {
         // When true, TTS is deferred until the full response is generated
         this._deferTts = false;
 
+        // When true, the LLM is unloaded after each generation so TTS synthesis
+        // has access to the full device memory (just-in-time loading)
+        this._jitLoading = false;
+
         // Book metadata for LLM context
         this._bookMeta = null;
 
@@ -163,6 +167,16 @@ export class QAController {
      */
     setDeferTts(defer) {
         this._deferTts = defer;
+    }
+
+    /**
+     * Set whether the LLM should be unloaded after each generation (just-in-time loading).
+     * When enabled the model is freed before TTS synthesis begins so both never
+     * occupy device memory at the same time.
+     * @param {boolean} jit
+     */
+    setJitLoading(jit) {
+        this._jitLoading = jit;
     }
 
     /**
@@ -273,6 +287,17 @@ export class QAController {
 
             // Mark streaming as complete
             this._isStreamingComplete = true;
+
+            // JIT loading: unload the LLM now so TTS synthesis has full device memory.
+            // The model will reload automatically on the next question.
+            if (this._jitLoading) {
+                const backend = llmClient.getBackend();
+                if (backend === 'local') {
+                    llmClient.unloadLocalModel();
+                } else if (backend === 'mediapipe') {
+                    llmClient.unloadMediapipeModel();
+                }
+            }
 
             // If TTS was deferred, start synthesis and speaking now that generation is done
             if (this._deferTts && !this._isStopped) {

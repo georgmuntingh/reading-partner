@@ -67,6 +67,7 @@ export class SettingsModal {
             localLlmModel: DEFAULT_LOCAL_MODEL,
             localLlmDevice: 'auto',
             localLlmDeferTts: false,
+            localLlmJitLoading: true,
             mediapipeLlmHfToken: '',
             // Lookup settings
             lookupLanguage: 'auto',
@@ -424,13 +425,6 @@ export class SettingsModal {
                                 </div>
                             </div>
 
-                            <div class="form-group">
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
-                                    <input type="checkbox" id="settings-local-llm-defer-tts" checked>
-                                    Defer TTS until response is complete
-                                </label>
-                                <p class="form-hint">When enabled, text-to-speech starts only after the LLM finishes generating the full response. Prevents stuttering on devices with limited memory.</p>
-                            </div>
                         </div>
 
                         <div id="settings-mediapipe-llm-options" style="display: none;">
@@ -460,6 +454,24 @@ export class SettingsModal {
                                     <span class="model-status-text">Model not loaded</span>
                                     <button class="btn btn-secondary btn-sm" id="settings-mediapipe-llm-download-btn">Download &amp; Load Model</button>
                                 </div>
+                            </div>
+                        </div>
+
+                        <div id="settings-local-backends-shared" style="display: none;">
+                            <div class="form-group">
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                    <input type="checkbox" id="settings-local-llm-defer-tts">
+                                    Defer TTS until response is complete
+                                </label>
+                                <p class="form-hint">When enabled, text-to-speech starts only after the LLM finishes generating the full response. Prevents stuttering on devices with limited memory.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                    <input type="checkbox" id="settings-local-llm-jit-loading" checked>
+                                    Just-in-time model loading
+                                </label>
+                                <p class="form-hint">When enabled, the LLM is unloaded from memory as soon as it finishes generating a response, before TTS synthesis begins. It reloads automatically for the next question. Reduces peak memory usage at the cost of a reload delay between questions.</p>
                             </div>
                         </div>
 
@@ -718,8 +730,10 @@ export class SettingsModal {
             localLlmStatusText: this._container.querySelector('#settings-local-llm-status .model-status-text'),
             localLlmDownloadBtn: this._container.querySelector('#settings-local-llm-download-btn'),
             localLlmDeferTts: this._container.querySelector('#settings-local-llm-defer-tts'),
+            localLlmJitLoading: this._container.querySelector('#settings-local-llm-jit-loading'),
             // MediaPipe LLM backend
             mediapipeLlmOptions: this._container.querySelector('#settings-mediapipe-llm-options'),
+            localBackendsShared: this._container.querySelector('#settings-local-backends-shared'),
             mediapipeLlmHfToken: this._container.querySelector('#settings-mediapipe-hf-token'),
             mediapipeLlmStatus: this._container.querySelector('#settings-mediapipe-llm-status'),
             mediapipeLlmStatusText: this._container.querySelector('#settings-mediapipe-llm-status .model-status-text'),
@@ -980,6 +994,7 @@ export class SettingsModal {
         this._elements.openrouterOptions.style.display = showOpenRouter ? '' : 'none';
         this._elements.localLlmOptions.style.display = showLocal ? '' : 'none';
         this._elements.mediapipeLlmOptions.style.display = showMediapipe ? '' : 'none';
+        this._elements.localBackendsShared.style.display = (showLocal || showMediapipe) ? '' : 'none';
 
         const hints = {
             'openrouter': 'Uses cloud AI models via OpenRouter. Requires an API key and internet connection.',
@@ -1187,6 +1202,7 @@ export class SettingsModal {
             localLlmModel: this._elements.localLlmModel.value,
             localLlmDevice: this._elements.localLlmDevice.value,
             localLlmDeferTts: this._elements.localLlmDeferTts.checked,
+            localLlmJitLoading: this._elements.localLlmJitLoading.checked,
             mediapipeLlmHfToken: this._elements.mediapipeLlmHfToken.value.trim(),
             // Lookup settings
             lookupLanguage: this._elements.lookupLanguage.value,
@@ -1380,6 +1396,7 @@ export class SettingsModal {
         this._elements.localLlmModel.value = this._settings.localLlmModel || DEFAULT_LOCAL_MODEL;
         this._elements.localLlmDevice.value = this._settings.localLlmDevice || 'auto';
         this._elements.localLlmDeferTts.checked = this._settings.localLlmDeferTts === true; // default false
+        this._elements.localLlmJitLoading.checked = this._settings.localLlmJitLoading !== false; // default true
         this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
         this._updateLLMBackendUI();
 
