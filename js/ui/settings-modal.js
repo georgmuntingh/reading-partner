@@ -1,6 +1,6 @@
 /**
  * Settings Modal UI Component
- * Displays settings for TTS backend, API key, model selection, and Q&A context
+ * Displays settings organized into sections: General, Appearance, TTS, STT, LLM, Quiz, and About
  */
 
 import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL, MEDIAPIPE_LLM_MODEL } from '../services/llm-client.js';
@@ -102,6 +102,7 @@ export class SettingsModal {
                 </div>
 
                 <div class="modal-content">
+                    <!-- ===== General ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
                             <span>General</span>
@@ -113,38 +114,97 @@ export class SettingsModal {
                             <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="3">
                             <p class="form-hint">Number of recent books shown in "Continue reading" on the start screen</p>
                         </div>
-                    </details>
-
-                    <details class="settings-section">
-                        <summary class="settings-section-header">
-                            <span>Voice &amp; Speed</span>
-                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
 
                         <div class="form-group">
-                            <label for="settings-voice">Voice</label>
-                            <select id="settings-voice" class="form-select">
-                                <option value="af_bella">Bella (American Female)</option>
+                            <label for="settings-lookup-language">Translation Target Language</label>
+                            <select id="settings-lookup-language" class="form-select">
+                                <option value="auto">Auto (LLM decides)</option>
+                                <option value="English">English</option>
+                                <option value="Norwegian">Norwegian</option>
+                                <option value="Dutch">Dutch</option>
+                                <option value="Japanese">Japanese</option>
+                                <option value="German">German</option>
+                                <option value="French">French</option>
+                                <option value="Spanish">Spanish</option>
+                                <option value="Portuguese">Portuguese</option>
+                                <option value="Italian">Italian</option>
+                                <option value="Chinese">Chinese</option>
+                                <option value="Korean">Korean</option>
+                                <option value="Hindi">Hindi</option>
+                                <option value="Russian">Russian</option>
+                                <option value="Arabic">Arabic</option>
+                                <option value="Swedish">Swedish</option>
+                                <option value="Danish">Danish</option>
                             </select>
+                            <p class="form-hint">Select text and tap "Look up" in the toolbar to look up words and phrases. When set to Auto, the LLM determines the best language for definitions/translations based on context.</p>
                         </div>
 
-                        <div class="form-group" id="settings-custom-voice-group">
-                            <label for="settings-custom-voice">Custom Voice Combination (FastAPI only)</label>
-                            <input type="text" id="settings-custom-voice" class="form-input" placeholder="e.g. af_alloy(1.0)+af_sarah(1.0)">
-                            <p class="form-hint">Enter a Kokoro voice blend. When non-empty, overrides the voice selection above.</p>
+                        <div class="settings-subsection-header">Headset Controls</div>
+
+                        <div class="form-group">
+                            <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.01</span></label>
+                            <input type="range" id="settings-media-volume" class="form-input" min="0.001" max="0.1" step="0.001" value="0.01">
+                            <p class="form-hint">Volume of the background audio used to keep the media session active. Lower values are less audible but may not trigger the notification on some devices.</p>
                         </div>
 
                         <div class="form-group">
-                            <label for="settings-speed">Speed: <span id="settings-speed-value">1.0x</span></label>
-                            <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
+                            <label for="settings-media-duration">Media Session Duration: <span id="settings-media-duration-value">300s</span></label>
+                            <input type="range" id="settings-media-duration" class="form-input" min="10" max="600" step="10" value="300">
+                            <p class="form-hint">Duration of the background audio loop in seconds. Longer durations reduce loop restarts that could interrupt the media session.</p>
                         </div>
+
+                        <div class="settings-subsection-header">Diagnostics</div>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            If headphone controls aren't working (especially on Android), use these tools to diagnose the issue.
+                        </p>
+
+                        <div id="diagnostic-status" class="form-hint" style="margin-bottom: var(--spacing-md); padding: var(--spacing-sm); background-color: var(--bg-color); border-radius: var(--radius-md);">
+                            Click "Run Diagnostics" to check your system.
+                        </div>
+
+                        <div style="display: flex; gap: var(--spacing-sm); flex-wrap: wrap;">
+                            <button class="btn btn-secondary btn-sm" id="run-diagnostics-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                    <path d="M9 12l2 2 4-4"/>
+                                    <circle cx="12" cy="12" r="10"/>
+                                </svg>
+                                Run Diagnostics
+                            </button>
+                            <button class="btn btn-secondary btn-sm" id="force-start-media-btn">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polygon points="10 8 16 12 10 16 10 8"/>
+                                </svg>
+                                Force Start Media Session
+                            </button>
+                        </div>
+
+                        <details style="margin-top: var(--spacing-md);">
+                            <summary style="cursor: pointer; font-weight: 500; margin-bottom: var(--spacing-sm);">Android Troubleshooting Guide</summary>
+                            <div class="form-hint" style="line-height: 1.6;">
+                                <p><strong>Common issues on Android:</strong></p>
+                                <ol style="margin-left: 20px; margin-top: var(--spacing-xs);">
+                                    <li><strong>No notification:</strong> Make sure you've pressed play at least once in the app</li>
+                                    <li><strong>Controls not responding:</strong> Try locking and unlocking your phone</li>
+                                    <li><strong>Another app controlling media:</strong> Close Spotify, YouTube, etc.</li>
+                                    <li><strong>HTTPS required:</strong> Some Android versions require HTTPS for Media Session API</li>
+                                    <li><strong>Chrome flags:</strong> Visit chrome://flags and ensure "Hardware Media Key Handling" is enabled</li>
+                                    <li><strong>Reset:</strong> Click "Force Start Media Session" above, then try headphone controls</li>
+                                </ol>
+                                <p style="margin-top: var(--spacing-sm);"><strong>Testing:</strong> After pressing play in the app, check your notification shade. You should see "Reading Partner" media controls there.</p>
+                            </div>
+                        </details>
                     </details>
 
+                    <!-- ===== Appearance ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
-                            <span>Typography</span>
+                            <span>Appearance</span>
                             <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
+
+                        <div class="settings-subsection-header">Typography</div>
 
                         <div class="form-group">
                             <label for="settings-font">Font</label>
@@ -165,6 +225,13 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
+                            <label for="settings-line-spacing">Line Spacing: <span id="settings-line-spacing-value">1.8</span></label>
+                            <input type="range" id="settings-line-spacing" class="form-input" min="1.0" max="2.5" step="0.1" value="1.8">
+                        </div>
+
+                        <div class="settings-subsection-header">Layout</div>
+
+                        <div class="form-group">
                             <label for="settings-margin">Horizontal Margins</label>
                             <select id="settings-margin" class="form-select">
                                 <option value="narrow">Narrow</option>
@@ -177,18 +244,6 @@ export class SettingsModal {
                             <label for="settings-vertical-margin">Vertical Margins: <span id="settings-vertical-margin-value">2px</span></label>
                             <input type="range" id="settings-vertical-margin" class="form-input" min="0" max="50" step="1" value="2">
                         </div>
-
-                        <div class="form-group">
-                            <label for="settings-line-spacing">Line Spacing: <span id="settings-line-spacing-value">1.8</span></label>
-                            <input type="range" id="settings-line-spacing" class="form-input" min="1.0" max="2.5" step="0.1" value="1.8">
-                        </div>
-                    </details>
-
-                    <details class="settings-section">
-                        <summary class="settings-section-header">
-                            <span>Layout</span>
-                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
 
                         <div class="form-group">
                             <label>Columns: <span id="settings-column-count-value">1</span></label>
@@ -211,14 +266,15 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Text-to-Speech (TTS) ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
-                            <span>TTS Backend</span>
+                            <span>Text-to-Speech (TTS)</span>
                             <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
 
                         <div class="form-group">
-                            <label for="settings-tts-backend">Text-to-Speech Engine</label>
+                            <label for="settings-tts-backend">TTS Engine</label>
                             <select id="settings-tts-backend" class="form-select">
                                 <option value="kokoro-fastapi">Kokoro FastAPI (local server)</option>
                                 <option value="kokoro-js">Kokoro.js (in-browser, WebGPU/WASM)</option>
@@ -234,13 +290,29 @@ export class SettingsModal {
                             <input type="text" id="settings-fastapi-url" class="form-input" placeholder="http://localhost:8880" value="http://localhost:8880">
                             <p class="form-hint" id="settings-fastapi-status"></p>
                         </div>
-                    </details>
 
-                    <details class="settings-section">
-                        <summary class="settings-section-header">
-                            <span>Text Normalization (Kokoro)</span>
-                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
+                        <div class="settings-subsection-header">Voice &amp; Speed</div>
+
+                        <div class="form-group">
+                            <label for="settings-voice">Voice</label>
+                            <select id="settings-voice" class="form-select">
+                                <option value="af_bella">Bella (American Female)</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="settings-custom-voice-group">
+                            <label for="settings-custom-voice">Custom Voice Combination (FastAPI only)</label>
+                            <input type="text" id="settings-custom-voice" class="form-input" placeholder="e.g. af_alloy(1.0)+af_sarah(1.0)">
+                            <p class="form-hint">Enter a Kokoro voice blend. When non-empty, overrides the voice selection above.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-speed">Speed: <span id="settings-speed-value">1.0x</span></label>
+                            <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
+                        </div>
+
+                        <div class="settings-subsection-header">Text Normalization (Kokoro)</div>
+
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Control how text is processed before being sent to Kokoro TTS.
                         </p>
@@ -270,40 +342,10 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Speech Recognition (STT) ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
-                            <span>Word Lookup</span>
-                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
-
-                        <div class="form-group">
-                            <label for="settings-lookup-language">Translation Target Language</label>
-                            <select id="settings-lookup-language" class="form-select">
-                                <option value="auto">Auto (LLM decides)</option>
-                                <option value="English">English</option>
-                                <option value="Norwegian">Norwegian</option>
-                                <option value="Dutch">Dutch</option>
-                                <option value="Japanese">Japanese</option>
-                                <option value="German">German</option>
-                                <option value="French">French</option>
-                                <option value="Spanish">Spanish</option>
-                                <option value="Portuguese">Portuguese</option>
-                                <option value="Italian">Italian</option>
-                                <option value="Chinese">Chinese</option>
-                                <option value="Korean">Korean</option>
-                                <option value="Hindi">Hindi</option>
-                                <option value="Russian">Russian</option>
-                                <option value="Arabic">Arabic</option>
-                                <option value="Swedish">Swedish</option>
-                                <option value="Danish">Danish</option>
-                            </select>
-                            <p class="form-hint">Select text and tap "Look up" in the toolbar to look up words and phrases. When set to Auto, the LLM determines the best language for definitions/translations based on context.</p>
-                        </div>
-                    </details>
-
-                    <details class="settings-section">
-                        <summary class="settings-section-header">
-                            <span>Speech Recognition</span>
+                            <span>Speech Recognition (STT)</span>
                             <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
 
@@ -319,6 +361,8 @@ export class SettingsModal {
                         </div>
 
                         <div id="settings-whisper-options" style="display: none;">
+                            <div class="settings-subsection-header">Whisper</div>
+
                             <div class="form-group">
                                 <label for="settings-whisper-model">Whisper Model</label>
                                 <select id="settings-whisper-model" class="form-select">
@@ -358,9 +402,10 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Language Model (LLM) ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
-                            <span>Q&amp;A Settings</span>
+                            <span>Language Model (LLM)</span>
                             <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
 
@@ -475,6 +520,8 @@ export class SettingsModal {
                             </div>
                         </div>
 
+                        <div class="settings-subsection-header">Context</div>
+
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Context from the book is sent to the LLM along with your question.
                             You can either send the entire current chapter, or a configurable number
@@ -502,9 +549,10 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Quiz ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
-                            <span>Quiz Settings</span>
+                            <span>Quiz</span>
                             <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
                         </summary>
 
@@ -525,29 +573,6 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
-                            <label>TTS During Quiz</label>
-                            <p class="form-hint" style="margin-bottom: var(--spacing-xs);">Select which parts of the quiz are read aloud. All options are off by default.</p>
-                            <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs);">
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-tts-question">
-                                    Read question aloud
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-tts-options">
-                                    Read multiple choice options aloud
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-tts-correctness">
-                                    Read "Correct" / "Incorrect" aloud
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-tts-explanation">
-                                    Read explanation / feedback aloud
-                                </label>
-                            </div>
-                        </div>
-
-                        <div class="form-group">
                             <label for="settings-quiz-scope">Chapter Scope</label>
                             <select id="settings-quiz-scope" class="form-select">
                                 <option value="full">Entire chapter</option>
@@ -556,30 +581,51 @@ export class SettingsModal {
                             <p class="form-hint">Determines whether questions cover the full chapter or only content up to your reading position</p>
                         </div>
 
-                        <div class="form-group">
-                            <label>Question Types</label>
-                            <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs);">
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-type-factual" checked>
-                                    Factual
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-type-deeper">
-                                    Deeper Understanding
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-type-vocabulary">
-                                    Vocabulary
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-type-inference">
-                                    Inference
-                                </label>
-                                <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
-                                    <input type="checkbox" id="settings-quiz-type-themes">
-                                    Themes
-                                </label>
-                            </div>
+                        <div class="settings-subsection-header">TTS During Quiz</div>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-xs);">Select which parts of the quiz are read aloud. All options are off by default.</p>
+                        <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs); margin-bottom: var(--spacing-md);">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-tts-question">
+                                Read question aloud
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-tts-options">
+                                Read multiple choice options aloud
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-tts-correctness">
+                                Read "Correct" / "Incorrect" aloud
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-tts-explanation">
+                                Read explanation / feedback aloud
+                            </label>
+                        </div>
+
+                        <div class="settings-subsection-header">Question Types</div>
+
+                        <div style="display: flex; flex-direction: column; gap: var(--spacing-xs); margin-top: var(--spacing-xs); margin-bottom: var(--spacing-md);">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-type-factual" checked>
+                                Factual
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-type-deeper">
+                                Deeper Understanding
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-type-vocabulary">
+                                Vocabulary
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-type-inference">
+                                Inference
+                            </label>
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-quiz-type-themes">
+                                Themes
+                            </label>
                         </div>
 
                         <div class="form-group">
@@ -589,67 +635,7 @@ export class SettingsModal {
                         </div>
                     </details>
 
-                    <details class="settings-section">
-                        <summary class="settings-section-header">
-                            <span>Headset Controls</span>
-                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                        </summary>
-
-                        <div class="form-group">
-                            <label for="settings-media-volume">Media Session Volume: <span id="settings-media-volume-value">0.01</span></label>
-                            <input type="range" id="settings-media-volume" class="form-input" min="0.001" max="0.1" step="0.001" value="0.01">
-                            <p class="form-hint">Volume of the background audio used to keep the media session active. Lower values are less audible but may not trigger the notification on some devices.</p>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="settings-media-duration">Media Session Duration: <span id="settings-media-duration-value">300s</span></label>
-                            <input type="range" id="settings-media-duration" class="form-input" min="10" max="600" step="10" value="300">
-                            <p class="form-hint">Duration of the background audio loop in seconds. Longer durations reduce loop restarts that could interrupt the media session.</p>
-                        </div>
-
-                        <h4 style="margin-top: var(--spacing-lg);">Diagnostics</h4>
-                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
-                            If headphone controls aren't working (especially on Android), use these tools to diagnose the issue.
-                        </p>
-
-                        <div id="diagnostic-status" class="form-hint" style="margin-bottom: var(--spacing-md); padding: var(--spacing-sm); background-color: var(--bg-color); border-radius: var(--radius-md);">
-                            Click "Run Diagnostics" to check your system.
-                        </div>
-
-                        <div style="display: flex; gap: var(--spacing-sm); flex-wrap: wrap;">
-                            <button class="btn btn-secondary btn-sm" id="run-diagnostics-btn">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
-                                    <path d="M9 12l2 2 4-4"/>
-                                    <circle cx="12" cy="12" r="10"/>
-                                </svg>
-                                Run Diagnostics
-                            </button>
-                            <button class="btn btn-secondary btn-sm" id="force-start-media-btn">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <polygon points="10 8 16 12 10 16 10 8"/>
-                                </svg>
-                                Force Start Media Session
-                            </button>
-                        </div>
-
-                        <details style="margin-top: var(--spacing-md);">
-                            <summary style="cursor: pointer; font-weight: 500; margin-bottom: var(--spacing-sm);">Android Troubleshooting Guide</summary>
-                            <div class="form-hint" style="line-height: 1.6;">
-                                <p><strong>Common issues on Android:</strong></p>
-                                <ol style="margin-left: 20px; margin-top: var(--spacing-xs);">
-                                    <li><strong>No notification:</strong> Make sure you've pressed play at least once in the app</li>
-                                    <li><strong>Controls not responding:</strong> Try locking and unlocking your phone</li>
-                                    <li><strong>Another app controlling media:</strong> Close Spotify, YouTube, etc.</li>
-                                    <li><strong>HTTPS required:</strong> Some Android versions require HTTPS for Media Session API</li>
-                                    <li><strong>Chrome flags:</strong> Visit chrome://flags and ensure "Hardware Media Key Handling" is enabled</li>
-                                    <li><strong>Reset:</strong> Click "Force Start Media Session" above, then try headphone controls</li>
-                                </ol>
-                                <p style="margin-top: var(--spacing-sm);"><strong>Testing:</strong> After pressing play in the app, check your notification shade. You should see "Reading Partner" media controls there.</p>
-                            </div>
-                        </details>
-                    </details>
-
+                    <!-- ===== About ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
                             <span>About</span>

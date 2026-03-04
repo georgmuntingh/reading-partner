@@ -1378,6 +1378,23 @@
     transform: rotate(180deg);
 }
 
+/* Settings subsection headers (non-collapsible visual groupings) */
+.settings-subsection-header {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-bottom: var(--spacing-xs);
+    border-bottom: 1px solid var(--border-color);
+    margin-top: var(--spacing-lg);
+    margin-bottom: var(--spacing-md);
+}
+
+.settings-subsection-header:first-child {
+    margin-top: 0;
+}
+
 /* ========== Chapter Overview ========== */
 .chapter-overview {
     position: fixed;
