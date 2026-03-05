@@ -76,6 +76,8 @@ export class SettingsModal {
             // Multi-column layout
             columnCount: 1,
             columnAutoCenter: true,
+            // Kokoro model reinit (sentences, 0 = disabled)
+            kokoroReinitInterval: 0,
             // Media session audio
             mediaSessionVolume: 0.01,
             mediaSessionDuration: 300
@@ -339,6 +341,14 @@ export class SettingsModal {
                                 Expand Abbreviations
                             </label>
                             <p class="form-hint">Expand common abbreviations (e.g., "Dr." → "Doctor", "St." → "Street")</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Memory Management (Kokoro)</div>
+
+                        <div class="form-group">
+                            <label for="settings-kokoro-reinit">Model Reinit Interval: <span id="settings-kokoro-reinit-value">Off</span></label>
+                            <input type="range" id="settings-kokoro-reinit" class="form-input" min="0" max="500" step="10" value="0">
+                            <p class="form-hint">Periodically reinitialize the Kokoro ONNX model to free accumulated WASM memory. Set to 0 to disable. Recommended: 100–200 sentences on mobile devices to prevent crashes.</p>
                         </div>
                     </details>
 
@@ -692,6 +702,8 @@ export class SettingsModal {
             normalizeText: this._container.querySelector('#settings-normalize-text'),
             normalizeNumbers: this._container.querySelector('#settings-normalize-numbers'),
             normalizeAbbreviations: this._container.querySelector('#settings-normalize-abbreviations'),
+            kokoroReinit: this._container.querySelector('#settings-kokoro-reinit'),
+            kokoroReinitValue: this._container.querySelector('#settings-kokoro-reinit-value'),
             mediaVolume: this._container.querySelector('#settings-media-volume'),
             mediaVolumeValue: this._container.querySelector('#settings-media-volume-value'),
             mediaDuration: this._container.querySelector('#settings-media-duration'),
@@ -872,6 +884,12 @@ export class SettingsModal {
             this._elements.columnCountButtons.querySelectorAll('.column-count-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             this._elements.columnCountValue.textContent = count;
+        });
+
+        // Kokoro reinit interval slider
+        this._elements.kokoroReinit.addEventListener('input', () => {
+            const val = parseInt(this._elements.kokoroReinit.value);
+            this._elements.kokoroReinitValue.textContent = val === 0 ? 'Off' : `${val} sentences`;
         });
 
         // Media session volume slider
@@ -1215,6 +1233,8 @@ export class SettingsModal {
                 themes: this._elements.quizTypeThemes.checked
             },
             quizSystemPrompt: this._elements.quizSystemPrompt.value.trim(),
+            // Kokoro reinit
+            kokoroReinitInterval: parseInt(this._elements.kokoroReinit.value) || 0,
             // Media session settings
             mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.01,
             mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300
@@ -1411,6 +1431,11 @@ export class SettingsModal {
         this._elements.quizTypeInference.checked = !!qt.inference;
         this._elements.quizTypeThemes.checked = !!qt.themes;
         this._elements.quizSystemPrompt.value = this._settings.quizSystemPrompt || '';
+
+        // Load kokoro reinit settings
+        const reinitInterval = this._settings.kokoroReinitInterval || 0;
+        this._elements.kokoroReinit.value = reinitInterval;
+        this._elements.kokoroReinitValue.textContent = reinitInterval === 0 ? 'Off' : `${reinitInterval} sentences`;
 
         // Load media session settings
         this._elements.mediaVolume.value = this._settings.mediaSessionVolume || 0.01;

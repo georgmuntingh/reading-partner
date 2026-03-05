@@ -2297,6 +2297,14 @@ class ReadingPartnerApp {
                 await storage.saveSetting('quizSystemPrompt', settings.quizSystemPrompt);
             }
 
+            // Save Kokoro reinit interval
+            if (settings.kokoroReinitInterval !== undefined) {
+                await storage.saveSetting('kokoroReinitInterval', settings.kokoroReinitInterval);
+                if (this._audioController) {
+                    this._audioController.setKokoroReinitInterval(settings.kokoroReinitInterval);
+                }
+            }
+
             // Save media session settings
             if (settings.mediaSessionVolume !== undefined) {
                 await storage.saveSetting('mediaSessionVolume', settings.mediaSessionVolume);
@@ -3274,6 +3282,12 @@ class ReadingPartnerApp {
             const quizSystemPrompt = await storage.getSetting('quizSystemPrompt');
             if (quizSystemPrompt !== null) this._quizSettings.quizSystemPrompt = quizSystemPrompt;
 
+            // Load Kokoro reinit interval
+            const kokoroReinitInterval = await storage.getSetting('kokoroReinitInterval');
+            if (kokoroReinitInterval !== null && this._audioController) {
+                this._audioController.setKokoroReinitInterval(kokoroReinitInterval);
+            }
+
             // Load media session settings
             const mediaSessionVolume = await storage.getSetting('mediaSessionVolume');
             const mediaSessionDuration = await storage.getSetting('mediaSessionDuration');
@@ -3331,6 +3345,7 @@ class ReadingPartnerApp {
                 ...typographySettings,
                 ...normalizationSettings,
                 lookupLanguage: lookupLanguage !== null ? lookupLanguage : 'auto',
+                kokoroReinitInterval: kokoroReinitInterval !== null ? kokoroReinitInterval : undefined,
                 mediaSessionVolume: mediaSessionVolume !== null ? mediaSessionVolume : undefined,
                 mediaSessionDuration: mediaSessionDuration !== null ? mediaSessionDuration : undefined,
                 // STT/LLM backend settings

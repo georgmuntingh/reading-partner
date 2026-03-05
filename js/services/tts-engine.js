@@ -349,6 +349,103 @@ export class TTSEngine {
     }
 
     /**
+     * Play a gentle chime sound to indicate model reloading.
+     * Generates a short sine-wave tone with fade-in/out.
+     * @returns {Promise<void>}
+     */
+    async _playReinitChime() {
+        if (!this._audioContext) return;
+        try {
+            // Resume if suspended (mobile browsers)
+            if (this._audioContext.state === 'suspended') {
+                await this._audioContext.resume();
+            }
+            const ctx = this._audioContext;
+            const now = ctx.currentTime;
+            const duration = 0.6;
+
+            // Two-tone chime: C5 then E5
+            const frequencies = [523.25, 659.25];
+            for (let i = 0; i < frequencies.length; i++) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = frequencies[i];
+
+                const start = now + i * 0.25;
+                gain.gain.setValueAtTime(0, start);
+                gain.gain.linearRampToValueAtTime(0.15, start + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(start);
+                osc.stop(start + duration);
+            }
+
+            // Wait for the chime to finish
+            await new Promise(resolve => setTimeout(resolve, (frequencies.length * 0.25 + duration) * 1000));
+        } catch (e) {
+            console.warn('Reinit chime failed:', e.message);
+        }
+    }
+
+    /**
+     * Reinitialize the Kokoro ONNX model to free accumulated WASM memory.
+     * Plays a gentle chime before reloading. The model is destroyed and
+     * recreated with the same device/dtype settings.
+     * @returns {Promise<boolean>} True if reinit succeeded
+     */
+    async reinitializeKokoro() {
+        if (!this._kokoro || this._backend !== 'kokoro-js') {
+            return false;
+        }
+
+        console.log('Reinitializing Kokoro model to free WASM memory...');
+        this._reportProgress({ status: 'Refreshing TTS model...' });
+
+        // Play chime to signal the reload
+        await this._playReinitChime();
+
+        // Save current settings
+        const device = this._device;
+        const dtype = this._dtype;
+
+        // Destroy the old model
+        this._kokoro = null;
+        this._isReady = false;
+
+        // Close and recreate AudioContext to free audio memory
+        if (this._audioContext) {
+            try {
+                await this._audioContext.close();
+            } catch (e) { /* ignore */ }
+            this._audioContext = null;
+        }
+
+        // Re-initialize
+        try {
+            await this._initializeKokoro(device, dtype);
+            this._isReady = true;
+            this._isLoading = false;
+            this._synthesisCount = 0;
+            this._reportProgress({ status: `TTS refreshed (${device}, ${dtype})`, progress: 100 });
+            console.log('Kokoro model reinitialized successfully');
+            return true;
+        } catch (error) {
+            console.error('Kokoro reinit failed:', error);
+            this._reportProgress({ status: 'TTS reinit failed' });
+            // Try to recover
+            try {
+                await this.initialize({ backend: this._backend });
+            } catch (e) {
+                console.error('Recovery failed:', e);
+            }
+            return false;
+        }
+    }
+
+    /**
      * Report progress to callback
      * @param {{status: string, progress?: number}} progress
      */

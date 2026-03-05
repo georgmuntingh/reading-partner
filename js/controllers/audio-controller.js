@@ -48,6 +48,10 @@ export class AudioController {
 
         // Debounce timer for play-after-skip
         this._skipPlayTimer = null;
+
+        // Kokoro model reinit tracking
+        this._kokoroReinitInterval = 0; // 0 = disabled
+        this._sentencesSinceReinit = 0;
     }
 
     /**
@@ -148,6 +152,18 @@ export class AudioController {
                 await ttsEngine.playBuffer(buffer, this._speed);
             } catch (error) {
                 console.error('Playback error:', error);
+            }
+
+            if (this._stopRequested) break;
+
+            // Check if Kokoro model reinit is needed
+            this._sentencesSinceReinit++;
+            if (this._kokoroReinitInterval > 0 &&
+                this._sentencesSinceReinit >= this._kokoroReinitInterval &&
+                ttsEngine.isUsingKokoro() && ttsEngine.getBackend() === 'kokoro-js') {
+                this._clearBuffers();
+                await ttsEngine.reinitializeKokoro();
+                this._sentencesSinceReinit = 0;
             }
 
             if (this._stopRequested) break;
@@ -290,6 +306,15 @@ export class AudioController {
             // Clear buffers so they'll be regenerated at new speed
             this._clearBuffers();
         }
+    }
+
+    /**
+     * Set Kokoro model reinit interval (in sentences). 0 = disabled.
+     * @param {number} interval
+     */
+    setKokoroReinitInterval(interval) {
+        this._kokoroReinitInterval = Math.max(0, Math.round(interval));
+        this._sentencesSinceReinit = 0;
     }
 
     /**
