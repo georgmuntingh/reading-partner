@@ -95,10 +95,14 @@ class MediaSessionManager {
 
         // Configurable audio settings
         this._volume = 0.01;
-        this._duration = 300;
+        // Use shorter duration on mobile to reduce memory (~3.2MB -> ~320KB for base64 WAV)
+        this._duration = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 30 : 300;
 
         // Android detection - needs continuous audio for notification
         this._isAndroid = /Android/i.test(navigator.userAgent);
+
+        // Reduce verbose logging on mobile to save memory (console retains strings)
+        this._isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
     }
 
     isSupported() {
@@ -173,17 +177,20 @@ class MediaSessionManager {
         this._silentAudio.volume = this._volume;
         this._silentAudio.preload = 'auto';
 
-        this._silentAudio.addEventListener('play', () => {
-            console.log('Media Session: Audio element started PLAYING');
-        });
-
-        this._silentAudio.addEventListener('pause', () => {
-            console.log('Media Session: Audio element PAUSED');
-        });
-
-        this._silentAudio.addEventListener('error', (e) => {
+        // Store bound handlers for proper cleanup in destroy()
+        this._onAudioPlay = () => {
+            if (!this._isMobile) console.log('Media Session: Audio element started PLAYING');
+        };
+        this._onAudioPause = () => {
+            if (!this._isMobile) console.log('Media Session: Audio element PAUSED');
+        };
+        this._onAudioError = (e) => {
             console.error('Media Session: Audio error', e.target.error);
-        });
+        };
+
+        this._silentAudio.addEventListener('play', this._onAudioPlay);
+        this._silentAudio.addEventListener('pause', this._onAudioPause);
+        this._silentAudio.addEventListener('error', this._onAudioError);
 
         // Preload the audio
         this._silentAudio.load();
@@ -369,7 +376,9 @@ class MediaSessionManager {
     async setPlaybackState(state) {
         if (!this._isSupported) return;
 
-        console.log(`Media Session: setPlaybackState(${state}), Android=${this._isAndroid}`);
+        if (!this._isMobile) {
+            console.log(`Media Session: setPlaybackState(${state}), Android=${this._isAndroid}`);
+        }
 
         if (state === 'playing') {
             // TTS is playing - ensure audio is playing
@@ -408,7 +417,9 @@ class MediaSessionManager {
             // Don't change audio element state during buffering
         }
 
-        console.log(`Media Session: playbackState=${navigator.mediaSession.playbackState}, audio.paused=${this._silentAudio.paused}`);
+        if (!this._isMobile) {
+            console.log(`Media Session: playbackState=${navigator.mediaSession.playbackState}, audio.paused=${this._silentAudio.paused}`);
+        }
     }
 
     /**
@@ -524,6 +535,9 @@ class MediaSessionManager {
         if (!this._isSupported) return;
 
         if (this._silentAudio) {
+            this._silentAudio.removeEventListener('play', this._onAudioPlay);
+            this._silentAudio.removeEventListener('pause', this._onAudioPause);
+            this._silentAudio.removeEventListener('error', this._onAudioError);
             this._silentAudio.pause();
             this._silentAudio.src = '';
             this._silentAudio = null;

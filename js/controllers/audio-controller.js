@@ -28,10 +28,13 @@ export class AudioController {
         this._status = 'stopped';
         this._speed = 1.0;
 
-        // Buffer management - reduced for faster startup
+        // Detect mobile for memory-conscious defaults
+        this._isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+        // Buffer management - reduced on mobile to limit memory pressure
         this._bufferQueue = new Map(); // index -> AudioBuffer
-        this._prefetchAhead = 2; // Reduced from 3
-        this._bufferBehind = 2;
+        this._prefetchAhead = this._isMobile ? 1 : 2;
+        this._bufferBehind = this._isMobile ? 0 : 2;
 
         // Current playback
         this._currentSource = null;
@@ -40,9 +43,15 @@ export class AudioController {
 
         // Generation tracking
         this._generatingIndices = new Set();
+        // Promise resolvers for buffer waiters (avoids polling intervals)
+        this._bufferWaiters = new Map(); // index -> resolve[]
 
         // Debounce timer for play-after-skip
         this._skipPlayTimer = null;
+
+        // Kokoro model reinit tracking
+        this._kokoroReinitInterval = 0; // 0 = disabled
+        this._sentencesSinceReinit = 0;
     }
 
     /**
@@ -143,6 +152,18 @@ export class AudioController {
                 await ttsEngine.playBuffer(buffer, this._speed);
             } catch (error) {
                 console.error('Playback error:', error);
+            }
+
+            if (this._stopRequested) break;
+
+            // Check if Kokoro model reinit is needed
+            this._sentencesSinceReinit++;
+            if (this._kokoroReinitInterval > 0 &&
+                this._sentencesSinceReinit >= this._kokoroReinitInterval &&
+                ttsEngine.isUsingKokoro() && ttsEngine.getBackend() === 'kokoro-js') {
+                this._clearBuffers();
+                await ttsEngine.reinitializeKokoro();
+                this._sentencesSinceReinit = 0;
             }
 
             if (this._stopRequested) break;
@@ -288,6 +309,15 @@ export class AudioController {
     }
 
     /**
+     * Set Kokoro model reinit interval (in sentences). 0 = disabled.
+     * @param {number} interval
+     */
+    setKokoroReinitInterval(interval) {
+        this._kokoroReinitInterval = Math.max(0, Math.round(interval));
+        this._sentencesSinceReinit = 0;
+    }
+
+    /**
      * Get current playback state
      * @returns {PlaybackState}
      */
@@ -352,18 +382,21 @@ export class AudioController {
         }
 
         if (this._generatingIndices.has(index)) {
-            // Already generating, wait for it
+            // Already generating, wait for it using Promise-based notification
+            // (avoids setInterval polling which leaks on mobile)
             return new Promise((resolve, reject) => {
-                const checkBuffer = setInterval(() => {
-                    if (this._bufferQueue.has(index)) {
-                        clearInterval(checkBuffer);
-                        resolve(this._bufferQueue.get(index));
-                    }
-                }, 50);
+                if (!this._bufferWaiters.has(index)) {
+                    this._bufferWaiters.set(index, []);
+                }
+                this._bufferWaiters.get(index).push(resolve);
 
                 // Timeout after 30 seconds
                 setTimeout(() => {
-                    clearInterval(checkBuffer);
+                    const waiters = this._bufferWaiters.get(index);
+                    if (waiters) {
+                        const idx = waiters.indexOf(resolve);
+                        if (idx !== -1) waiters.splice(idx, 1);
+                    }
                     reject(new Error('Buffer generation timeout'));
                 }, 30000);
             });
@@ -373,12 +406,25 @@ export class AudioController {
 
         try {
             const sentence = this._sentences[index];
-            console.log(`Generating TTS for sentence ${index}: "${sentence.slice(0, 50)}..."`);
+            if (!this._isMobile) {
+                console.log(`Generating TTS for sentence ${index}: "${sentence.slice(0, 50)}..."`);
+            }
 
             const buffer = await ttsEngine.synthesize(sentence);
             this._bufferQueue.set(index, buffer);
 
-            console.log(`TTS ready for sentence ${index}`);
+            // Notify any waiters for this buffer
+            const waiters = this._bufferWaiters.get(index);
+            if (waiters) {
+                for (const resolve of waiters) {
+                    resolve(buffer);
+                }
+                this._bufferWaiters.delete(index);
+            }
+
+            if (!this._isMobile) {
+                console.log(`TTS ready for sentence ${index}`);
+            }
             return buffer;
         } finally {
             this._generatingIndices.delete(index);
@@ -398,6 +444,7 @@ export class AudioController {
     _clearBuffers() {
         this._bufferQueue.clear();
         this._generatingIndices.clear();
+        this._bufferWaiters.clear();
     }
 
     /**

@@ -66,6 +66,12 @@ export class TTSEngine {
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
+
+        // Mobile memory management
+        this._isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        this._synthesisCount = 0;
+        // On mobile, recreate AudioContext every N syntheses to release accumulated audio memory
+        this._audioContextRefreshInterval = this._isMobile ? 50 : 0; // 0 = disabled
     }
 
     /**
@@ -324,6 +330,125 @@ export class TTSEngine {
     }
 
     /**
+     * Refresh AudioContext to release accumulated audio memory.
+     * On mobile browsers, the AudioContext can accumulate decoded audio data
+     * that isn't freed until the context is closed.
+     */
+    _refreshAudioContext() {
+        if (!this._audioContext || this._currentSource) {
+            return; // Don't refresh during active playback
+        }
+        try {
+            const oldContext = this._audioContext;
+            this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            oldContext.close().catch(() => {});
+            console.log('AudioContext refreshed for memory management');
+        } catch (e) {
+            console.warn('AudioContext refresh failed:', e.message);
+        }
+    }
+
+    /**
+     * Play a gentle chime sound to indicate model reloading.
+     * Generates a short sine-wave tone with fade-in/out.
+     * @returns {Promise<void>}
+     */
+    async _playReinitChime() {
+        if (!this._audioContext) return;
+        try {
+            // Resume if suspended (mobile browsers)
+            if (this._audioContext.state === 'suspended') {
+                await this._audioContext.resume();
+            }
+            const ctx = this._audioContext;
+            const now = ctx.currentTime;
+            const duration = 0.6;
+
+            // Two-tone chime: C5 then E5
+            const frequencies = [523.25, 659.25];
+            for (let i = 0; i < frequencies.length; i++) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = frequencies[i];
+
+                const start = now + i * 0.25;
+                gain.gain.setValueAtTime(0, start);
+                gain.gain.linearRampToValueAtTime(0.15, start + 0.05);
+                gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.start(start);
+                osc.stop(start + duration);
+            }
+
+            // Wait for the chime to finish
+            await new Promise(resolve => setTimeout(resolve, (frequencies.length * 0.25 + duration) * 1000));
+        } catch (e) {
+            console.warn('Reinit chime failed:', e.message);
+        }
+    }
+
+    /**
+     * Reinitialize the Kokoro ONNX model to free accumulated WASM memory.
+     * Plays a gentle chime before reloading. The model is destroyed and
+     * recreated with the same device/dtype settings.
+     * @returns {Promise<boolean>} True if reinit succeeded
+     */
+    async reinitializeKokoro() {
+        if (!this._kokoro || this._backend !== 'kokoro-js') {
+            return false;
+        }
+
+        console.log('Reinitializing Kokoro model to free WASM memory...');
+
+        // Play chime to signal the reload
+        await this._playReinitChime();
+
+        // Save current settings
+        const device = this._device;
+        const dtype = this._dtype;
+
+        // Destroy the old model
+        this._kokoro = null;
+        this._isReady = false;
+
+        // Close and recreate AudioContext to free audio memory
+        if (this._audioContext) {
+            try {
+                await this._audioContext.close();
+            } catch (e) { /* ignore */ }
+            this._audioContext = null;
+        }
+
+        // Suppress progress callbacks during reinit to avoid sticky status overlay
+        const savedProgress = this._onProgress;
+        this._onProgress = null;
+
+        // Re-initialize
+        try {
+            await this._initializeKokoro(device, dtype);
+            this._isReady = true;
+            this._isLoading = false;
+            this._synthesisCount = 0;
+            console.log('Kokoro model reinitialized successfully');
+            return true;
+        } catch (error) {
+            console.error('Kokoro reinit failed:', error);
+            // Try to recover
+            try {
+                await this.initialize({ backend: this._backend });
+            } catch (e) {
+                console.error('Recovery failed:', e);
+            }
+            return false;
+        } finally {
+            this._onProgress = savedProgress;
+        }
+    }
+
+    /**
      * Report progress to callback
      * @param {{status: string, progress?: number}} progress
      */
@@ -528,6 +653,22 @@ export class TTSEngine {
         // Copy data to buffer
         audioBuffer.getChannelData(0).set(audioData);
 
+        // Explicitly release ONNX output tensor data to help GC on mobile.
+        // The audio data has been copied into the AudioBuffer above.
+        if (audio.dispose) {
+            audio.dispose();
+        } else {
+            // Null out references to allow GC of the raw Float32Array
+            audio.audio = null;
+        }
+
+        // Periodic AudioContext refresh on mobile to prevent audio memory accumulation
+        this._synthesisCount++;
+        if (this._audioContextRefreshInterval > 0 &&
+            this._synthesisCount % this._audioContextRefreshInterval === 0) {
+            this._refreshAudioContext();
+        }
+
         // Calculate audio duration in ms
         const audioDurationMs = (audioData.length / sampleRate) * 1000;
 
@@ -575,6 +716,13 @@ export class TTSEngine {
 
             audioBuffers.push(buffer);
             totalLength += audioData.length;
+
+            // Release ONNX output tensor data after copying
+            if (audio.dispose) {
+                audio.dispose();
+            } else {
+                audio.audio = null;
+            }
         }
 
         // Concatenate all buffers
