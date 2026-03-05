@@ -429,7 +429,7 @@ export class TTSEngine {
             this._isReady = true;
             this._isLoading = false;
             this._synthesisCount = 0;
-            this._reportProgress({ status: `TTS refreshed (${device}, ${dtype})`, progress: 100 });
+            this._reportProgress({ status: `TTS refreshed (${device}, ${dtype})`, progress: 100, done: true });
             console.log('Kokoro model reinitialized successfully');
             return true;
         } catch (error) {

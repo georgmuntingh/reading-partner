@@ -314,6 +314,9 @@ class ReadingPartnerApp {
         // Initialize TTS engine in background
         ttsEngine.onProgress((progress) => {
             this._showTTSStatus(progress.status);
+            if (progress.done) {
+                setTimeout(() => this._hideTTSStatus(), 3000);
+            }
         });
 
         try {
