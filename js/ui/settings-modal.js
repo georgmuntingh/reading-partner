@@ -520,7 +520,14 @@ export class SettingsModal {
                             </div>
                         </div>
 
-                        <div class="settings-subsection-header">Context</div>
+                    </details>
+
+                    <!-- ===== Q&A ===== -->
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Q&amp;A</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
 
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Context from the book is sent to the LLM along with your question.
