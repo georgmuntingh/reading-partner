@@ -66,6 +66,12 @@ export class TTSEngine {
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
+
+        // Mobile memory management
+        this._isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+        this._synthesisCount = 0;
+        // On mobile, recreate AudioContext every N syntheses to release accumulated audio memory
+        this._audioContextRefreshInterval = this._isMobile ? 50 : 0; // 0 = disabled
     }
 
     /**
@@ -324,6 +330,25 @@ export class TTSEngine {
     }
 
     /**
+     * Refresh AudioContext to release accumulated audio memory.
+     * On mobile browsers, the AudioContext can accumulate decoded audio data
+     * that isn't freed until the context is closed.
+     */
+    _refreshAudioContext() {
+        if (!this._audioContext || this._currentSource) {
+            return; // Don't refresh during active playback
+        }
+        try {
+            const oldContext = this._audioContext;
+            this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            oldContext.close().catch(() => {});
+            console.log('AudioContext refreshed for memory management');
+        } catch (e) {
+            console.warn('AudioContext refresh failed:', e.message);
+        }
+    }
+
+    /**
      * Report progress to callback
      * @param {{status: string, progress?: number}} progress
      */
@@ -528,6 +553,22 @@ export class TTSEngine {
         // Copy data to buffer
         audioBuffer.getChannelData(0).set(audioData);
 
+        // Explicitly release ONNX output tensor data to help GC on mobile.
+        // The audio data has been copied into the AudioBuffer above.
+        if (audio.dispose) {
+            audio.dispose();
+        } else {
+            // Null out references to allow GC of the raw Float32Array
+            audio.audio = null;
+        }
+
+        // Periodic AudioContext refresh on mobile to prevent audio memory accumulation
+        this._synthesisCount++;
+        if (this._audioContextRefreshInterval > 0 &&
+            this._synthesisCount % this._audioContextRefreshInterval === 0) {
+            this._refreshAudioContext();
+        }
+
         // Calculate audio duration in ms
         const audioDurationMs = (audioData.length / sampleRate) * 1000;
 
@@ -575,6 +616,13 @@ export class TTSEngine {
 
             audioBuffers.push(buffer);
             totalLength += audioData.length;
+
+            // Release ONNX output tensor data after copying
+            if (audio.dispose) {
+                audio.dispose();
+            } else {
+                audio.audio = null;
+            }
         }
 
         // Concatenate all buffers
