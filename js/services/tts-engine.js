@@ -402,7 +402,6 @@ export class TTSEngine {
         }
 
         console.log('Reinitializing Kokoro model to free WASM memory...');
-        this._reportProgress({ status: 'Refreshing TTS model...' });
 
         // Play chime to signal the reload
         await this._playReinitChime();
@@ -423,18 +422,20 @@ export class TTSEngine {
             this._audioContext = null;
         }
 
+        // Suppress progress callbacks during reinit to avoid sticky status overlay
+        const savedProgress = this._onProgress;
+        this._onProgress = null;
+
         // Re-initialize
         try {
             await this._initializeKokoro(device, dtype);
             this._isReady = true;
             this._isLoading = false;
             this._synthesisCount = 0;
-            this._reportProgress({ status: `TTS refreshed (${device}, ${dtype})`, progress: 100, done: true });
             console.log('Kokoro model reinitialized successfully');
             return true;
         } catch (error) {
             console.error('Kokoro reinit failed:', error);
-            this._reportProgress({ status: 'TTS reinit failed' });
             // Try to recover
             try {
                 await this.initialize({ backend: this._backend });
@@ -442,6 +443,8 @@ export class TTSEngine {
                 console.error('Recovery failed:', e);
             }
             return false;
+        } finally {
+            this._onProgress = savedProgress;
         }
     }
 
