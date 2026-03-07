@@ -30,6 +30,7 @@ export class LocalLLMProvider extends LLMProvider {
         this._device = 'auto';
         this._dtype = 'q4f16';
         this._chatOptions = null;
+        this._transformersVersion = '3';
 
         // Model loading progress callback
         this.onModelProgress = null;
@@ -57,6 +58,10 @@ export class LocalLLMProvider extends LLMProvider {
 
     setDevice(device) {
         this._device = device;
+    }
+
+    setTransformersVersion(version) {
+        this._transformersVersion = version;
     }
 
     getAvailableModels() {
@@ -122,7 +127,8 @@ export class LocalLLMProvider extends LLMProvider {
                 model: this._model,
                 device: this._device,
                 dtype: this._dtype,
-                chatOptions: this._chatOptions
+                chatOptions: this._chatOptions,
+                transformersVersion: this._transformersVersion
             });
         });
     }

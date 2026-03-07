@@ -29,6 +29,7 @@ import { LookupDrawer } from './ui/lookup-drawer.js';
 import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
 import { lookupService } from './services/lookup-service.js';
 import { NavigationHistory } from './state/navigation-history.js';
+import { appLogger } from './services/app-logger.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -302,6 +303,11 @@ class ReadingPartnerApp {
             this._bookLoaderModal.show();
         });
 
+        // Initialize the persistent application logger
+        await appLogger.init();
+        appLogger.info('App starting');
+        appLogger.trim(); // cap old entries
+
         // Load saved settings first so we know the preferred backend
         await this._loadSettings();
 
@@ -329,6 +335,7 @@ class ReadingPartnerApp {
             const fastApiAvailable = await ttsEngine.isKokoroFastAPIAvailable();
             this._settingsModal.setFastApiAvailable(fastApiAvailable);
             console.log(`Kokoro FastAPI: ${fastApiAvailable ? 'available' : 'not available'} at ${ttsEngine.getFastApiUrl()}`);
+            appLogger.info(`Kokoro FastAPI: ${fastApiAvailable ? 'available' : 'not available'}`);
 
             // Determine which backend to use
             let backend = savedBackend;
@@ -363,10 +370,13 @@ class ReadingPartnerApp {
             setTimeout(() => this._hideTTSStatus(), 3000);
         } catch (error) {
             console.error('TTS initialization failed:', error);
+            appLogger.error('TTS initialization failed', error.message);
             this._showTTSStatus('TTS initialization failed');
         }
 
         this._isInitialized = true;
+        appLogger.info(`TTS backend: ${ttsEngine.getBackend()}`);
+        appLogger.info('App initialized');
         console.log('Reading Partner initialized');
         console.log('Tip: Run readingPartner.runBenchmark() to test TTS performance');
     }
@@ -1211,6 +1221,8 @@ class ReadingPartnerApp {
             // Save cookie state for resume functionality
             this._saveCookieState();
 
+            appLogger.info(`Book loaded: "${this._currentBook.title}" (${this._currentBook.chapters.length} chapters)`);
+
             if (isFromReader) {
                 this._hideTTSStatus();
                 this._showToast(`Loaded "${this._currentBook.title}"`);
@@ -1218,6 +1230,7 @@ class ReadingPartnerApp {
 
         } catch (error) {
             console.error('Failed to load book:', error);
+            appLogger.error('Failed to load book', error.message);
             if (isFromReader) {
                 this._hideTTSStatus();
                 this._showToast(`Failed to load: ${error.message}`);
@@ -2365,6 +2378,17 @@ class ReadingPartnerApp {
                 llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
             }
 
+            // Save transformers.js version
+            if (settings.transformersVersion !== undefined) {
+                await storage.saveSetting('transformersVersion', settings.transformersVersion);
+                // Propagate to providers so the next worker launch uses the correct version
+                llmClient.setLocalTransformersVersion(settings.transformersVersion);
+                if (this._whisperService) {
+                    this._whisperService.setTransformersVersion(settings.transformersVersion);
+                }
+                appLogger.info(`Transformers.js version set to v${settings.transformersVersion}`);
+            }
+
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
             this._applyJitLoadingSetting();
@@ -3303,6 +3327,12 @@ class ReadingPartnerApp {
             if (localLlmJitLoading !== null) this._localLlmJitLoading = localLlmJitLoading !== false;
             const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
 
+            // Load transformers.js version
+            const transformersVersion = await storage.getSetting('transformersVersion');
+            const tfVersion = transformersVersion || '3';
+            llmClient.setLocalTransformersVersion(tfVersion);
+            appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
+
             // Apply STT backend
             if (this._sttBackend === 'whisper') {
                 this._switchToWhisperSTT(whisperModel, whisperDevice, whisperSilenceTimeout, whisperMaxDuration);
@@ -3344,11 +3374,13 @@ class ReadingPartnerApp {
                 localLlmDevice: localLlmDevice || 'auto',
                 localLlmDeferTts: this._localLlmDeferTts,
                 localLlmJitLoading: this._localLlmJitLoading,
-                mediapipeLlmHfToken: mediapipeLlmHfToken || ''
+                mediapipeLlmHfToken: mediapipeLlmHfToken || '',
+                transformersVersion: tfVersion
             });
 
         } catch (error) {
             console.error('Failed to load settings:', error);
+            appLogger.error('Failed to load settings', error.message);
         }
     }
 
@@ -3368,6 +3400,9 @@ class ReadingPartnerApp {
         }
         if (model) this._whisperService.setModel(model);
         if (device) this._whisperService.setDevice(device);
+        // Propagate transformers.js version from current settings
+        const tfVer = this._settingsModal?.getSettings()?.transformersVersion || '3';
+        this._whisperService.setTransformersVersion(tfVer);
         if (silenceTimeout != null) this._whisperService.setSilenceTimeout(silenceTimeout * 1000);
         if (maxDuration != null) this._whisperService.setMaxDuration(maxDuration * 1000);
 
@@ -3378,6 +3413,7 @@ class ReadingPartnerApp {
         this._quizController?.setSTTService(this._whisperService);
 
         console.log(`STT: Switched to Whisper (${model || 'default'}, ${device || 'auto'})`);
+        appLogger.info(`STT: Whisper (${model || 'default'}, ${device || 'auto'})`);
     }
 
     /**
@@ -3391,6 +3427,7 @@ class ReadingPartnerApp {
         this._quizController?.setSTTService(sttService);
 
         console.log('STT: Switched to Web Speech API');
+        appLogger.info('STT: Web Speech API');
     }
 
     /**
@@ -3406,6 +3443,8 @@ class ReadingPartnerApp {
 
         this._whisperService.setModel(config.model);
         this._whisperService.setDevice(config.device);
+        const tfVer = this._settingsModal?.getSettings()?.transformersVersion || '3';
+        this._whisperService.setTransformersVersion(tfVer);
 
         // Show download progress
         this._settingsModal.setWhisperStatus({ loading: true, statusText: 'Starting download...' });
@@ -3421,12 +3460,15 @@ class ReadingPartnerApp {
         modelDownloadModal.showProgress('Downloading Whisper Model');
 
         try {
+            appLogger.info(`Whisper model download starting: ${config.model}`);
             await this._whisperService.loadModel();
             modelDownloadModal.showComplete('Whisper model ready!');
             this._settingsModal.setWhisperStatus({ loaded: true, statusText: 'Model ready' });
+            appLogger.info(`Whisper model ready: ${config.model}`);
         } catch (error) {
             modelDownloadModal.showError(error.message);
             this._settingsModal.setWhisperStatus({ loaded: false, statusText: `Error: ${error.message}` });
+            appLogger.error(`Whisper model failed: ${error.message}`);
         }
     }
 
@@ -3454,12 +3496,15 @@ class ReadingPartnerApp {
         modelDownloadModal.showProgress('Downloading LLM Model');
 
         try {
+            appLogger.info(`LLM model download starting: ${config.model}`);
             await llmClient.loadLocalModel();
             modelDownloadModal.showComplete('LLM model ready!');
             this._settingsModal.setLocalLlmStatus({ loaded: true, statusText: 'Model ready' });
+            appLogger.info(`LLM model ready: ${config.model}`);
         } catch (error) {
             modelDownloadModal.showError(error.message);
             this._settingsModal.setLocalLlmStatus({ loaded: false, statusText: `Error: ${error.message}` });
+            appLogger.error(`LLM model failed: ${error.message}`);
         }
     }
 
@@ -3913,6 +3958,15 @@ class ReadingPartnerApp {
         }, 2000);
     }
 }
+
+// Capture uncaught errors and unhandled rejections for the persistent log
+window.addEventListener('error', (event) => {
+    appLogger.error(`Uncaught error: ${event.message}`, `${event.filename}:${event.lineno}`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+    const msg = event.reason?.message ?? String(event.reason);
+    appLogger.error(`Unhandled rejection: ${msg}`);
+});
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {

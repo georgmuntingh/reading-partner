@@ -6,6 +6,7 @@
 import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL, MEDIAPIPE_LLM_MODEL } from '../services/llm-client.js';
 import { WHISPER_MODELS, DEFAULT_WHISPER_MODEL } from '../services/whisper-stt-service.js';
 import { mediaSessionManager } from '../services/media-session-manager.js';
+import { appLogger } from '../services/app-logger.js';
 
 export class SettingsModal {
     /**
@@ -78,7 +79,9 @@ export class SettingsModal {
             columnAutoCenter: true,
             // Media session audio
             mediaSessionVolume: 0.01,
-            mediaSessionDuration: 300
+            mediaSessionDuration: 300,
+            // Transformers.js version
+            transformersVersion: '3'
         };
 
         this._buildUI();
@@ -195,6 +198,31 @@ export class SettingsModal {
                                 <p style="margin-top: var(--spacing-sm);"><strong>Testing:</strong> After pressing play in the app, check your notification shade. You should see "Reading Partner" media controls there.</p>
                             </div>
                         </details>
+
+                        <div class="settings-subsection-header">Advanced</div>
+
+                        <div class="form-group">
+                            <label for="settings-transformers-version">Transformers.js Version</label>
+                            <select id="settings-transformers-version" class="form-select">
+                                <option value="3">v3 (stable)</option>
+                                <option value="4">v4 (preview)</option>
+                            </select>
+                            <p class="form-hint">Version of the @huggingface/transformers library used for local STT and LLM inference. Changing this requires a page reload to take effect.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Application Log</div>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            View the recent activity log. Useful for diagnosing issues or inspecting what happened before a crash.
+                        </p>
+
+                        <div style="display: flex; gap: var(--spacing-sm); flex-wrap: wrap; margin-bottom: var(--spacing-sm);">
+                            <button class="btn btn-secondary btn-sm" id="settings-view-log-btn">View Log</button>
+                            <button class="btn btn-secondary btn-sm" id="settings-clear-log-btn">Clear Log</button>
+                        </div>
+
+                        <div id="settings-log-viewer" style="display: none; max-height: 300px; overflow-y: auto; background: var(--bg-color); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: var(--spacing-sm); font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all;">
+                        </div>
                     </details>
 
                     <!-- ===== Appearance ===== -->
@@ -751,7 +779,13 @@ export class SettingsModal {
             quizSystemPrompt: this._container.querySelector('#settings-quiz-system-prompt'),
             cancelBtn: this._container.querySelector('#settings-cancel-btn'),
             saveBtn: this._container.querySelector('#settings-save-btn'),
-            aboutContent: this._container.querySelector('#settings-about-content')
+            aboutContent: this._container.querySelector('#settings-about-content'),
+            // Transformers.js version
+            transformersVersion: this._container.querySelector('#settings-transformers-version'),
+            // Log viewer
+            viewLogBtn: this._container.querySelector('#settings-view-log-btn'),
+            clearLogBtn: this._container.querySelector('#settings-clear-log-btn'),
+            logViewer: this._container.querySelector('#settings-log-viewer')
         };
     }
 
@@ -915,6 +949,13 @@ export class SettingsModal {
                     btn.disabled = false;
                 }, 3000);
             }
+        });
+
+        // Log viewer buttons
+        this._elements.viewLogBtn.addEventListener('click', () => this._showLog());
+        this._elements.clearLogBtn.addEventListener('click', async () => {
+            await appLogger.clear();
+            this._elements.logViewer.textContent = 'Log cleared.';
         });
 
         // Click outside to close
@@ -1156,6 +1197,40 @@ export class SettingsModal {
     }
 
     /**
+     * Show application log entries in the viewer
+     */
+    async _showLog() {
+        const viewer = this._elements.logViewer;
+        viewer.style.display = '';
+        viewer.textContent = 'Loading log...';
+
+        try {
+            const entries = await appLogger.getEntries();
+            if (entries.length === 0) {
+                viewer.textContent = 'No log entries.';
+                return;
+            }
+
+            const lines = entries.map(e => {
+                const time = new Date(e.timestamp).toLocaleString();
+                const lvl = e.level.toUpperCase().padEnd(5);
+                let line = `[${time}] ${lvl} ${e.message}`;
+                if (e.memory) {
+                    line += `  | heap: ${e.memory.usedMB}/${e.memory.totalMB} MB (limit ${e.memory.limitMB} MB)`;
+                }
+                if (e.detail) {
+                    line += `\n         ${e.detail}`;
+                }
+                return line;
+            });
+
+            viewer.textContent = lines.join('\n');
+        } catch (err) {
+            viewer.textContent = 'Failed to load log: ' + err.message;
+        }
+    }
+
+    /**
      * Save settings
      */
     _save() {
@@ -1217,7 +1292,9 @@ export class SettingsModal {
             quizSystemPrompt: this._elements.quizSystemPrompt.value.trim(),
             // Media session settings
             mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.01,
-            mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300
+            mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300,
+            // Transformers.js version
+            transformersVersion: this._elements.transformersVersion.value || '3'
         };
 
         // Validate
@@ -1417,6 +1494,9 @@ export class SettingsModal {
         this._elements.mediaVolumeValue.textContent = (this._settings.mediaSessionVolume || 0.01).toFixed(3);
         this._elements.mediaDuration.value = this._settings.mediaSessionDuration || 300;
         this._elements.mediaDurationValue.textContent = `${this._settings.mediaSessionDuration || 300}s`;
+
+        // Load transformers.js version
+        this._elements.transformersVersion.value = this._settings.transformersVersion || '3';
 
         this._updateBackendUI();
     }

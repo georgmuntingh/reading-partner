@@ -48,16 +48,16 @@ async function loadModel(config) {
     const {
         model = 'onnx-community/whisper-tiny.en',
         device: requestedDevice = 'auto',
-        dtype = null
+        dtype = null,
+        transformersVersion = '3'
     } = config;
 
     try {
-        self.postMessage({ type: 'loading', progress: { status: 'Loading transformers.js library...' } });
+        const cdnUrl = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${transformersVersion}`;
+        self.postMessage({ type: 'loading', progress: { status: `Loading transformers.js v${transformersVersion}...` } });
 
         // Dynamic import of transformers.js from CDN
-        const { pipeline: createPipeline, env } = await import(
-            'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
-        );
+        const { pipeline: createPipeline, env } = await import(cdnUrl);
 
         // Disable local model check - we always download from HF Hub
         env.allowLocalModels = false;

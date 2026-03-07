@@ -36,6 +36,7 @@ export class WhisperSTTService {
         // Configuration
         this._model = DEFAULT_WHISPER_MODEL;
         this._device = 'auto';
+        this._transformersVersion = '3';
 
         // Callbacks (same interface as STTService)
         this.onInterimResult = null;
@@ -126,6 +127,10 @@ export class WhisperSTTService {
         this._device = device;
     }
 
+    setTransformersVersion(version) {
+        this._transformersVersion = version;
+    }
+
     /**
      * Get available models
      * @returns {Array}
@@ -192,7 +197,8 @@ export class WhisperSTTService {
             this._worker.postMessage({
                 type: 'load',
                 model: this._model,
-                device: this._device
+                device: this._device,
+                transformersVersion: this._transformersVersion
             });
         });
     }
