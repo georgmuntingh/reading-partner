@@ -66,6 +66,13 @@ export class TTSEngine {
         this._inferenceCount = 0;
         this._cumulativeSamples = 0; // total Float32 samples generated since init
 
+        // Periodic reinit to combat ONNX WASM memory growth.
+        // After this many inferences the Kokoro instance is recreated.
+        // Log data shows RTF degrades within ~15 inferences (0.4 → 1.3+),
+        // so 25 balances freshness vs. reinit overhead (~5s reload).
+        this._reinitThreshold = 25;
+        this._reinitPending = false;
+
         // Current audio source for stopping playback
         this._currentSource = null;
 
@@ -474,6 +481,31 @@ export class TTSEngine {
             return;
         }
 
+        // Perform a pending reinit before processing the next request.
+        // This is the safest moment — between synthesis calls, nothing active.
+        if (this._reinitPending && this._backend === 'kokoro-js') {
+            this._reinitPending = false;
+            try {
+                appLogger.info(`Kokoro reinit: starting (after ${this._inferenceCount} inferences, cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated)`);
+                const reinitStart = performance.now();
+
+                // Release the old instance
+                this._kokoro = null;
+
+                // Re-create it with the same settings
+                await this._initializeKokoro(this._device, this._dtype);
+
+                const reinitMs = Math.round(performance.now() - reinitStart);
+                this._inferenceCount = 0;
+                this._cumulativeSamples = 0;
+                appLogger.info(`Kokoro reinit: done in ${reinitMs}ms`);
+            } catch (error) {
+                appLogger.error(`Kokoro reinit failed: ${error.message}`);
+                // Continue — the old _kokoro is null so the next generate() will fail,
+                // which the queue will handle via reject()
+            }
+        }
+
         this._isSynthesizing = true;
         const { text, options, resolve, reject } = this._synthesisQueue.shift();
 
@@ -576,7 +608,26 @@ export class TTSEngine {
             console.log(`TTS Benchmark: ${result.synthesisTimeMs}ms for ${result.audioDurationMs}ms audio (RTF: ${result.rtf})`);
         }
 
+        // Schedule reinit if we've exceeded the threshold
+        this._checkReinitNeeded();
+
         return audioBuffer;
+    }
+
+    /**
+     * Check whether a Kokoro reinit should be scheduled.
+     * Called after each inference completes.
+     */
+    _checkReinitNeeded() {
+        if (this._inferenceCount > 0 &&
+            this._inferenceCount % this._reinitThreshold === 0 &&
+            !this._reinitPending) {
+            this._reinitPending = true;
+            appLogger.warn(
+                `Kokoro reinit scheduled after ${this._inferenceCount} inferences ` +
+                `(ONNX WASM memory leak mitigation)`
+            );
+        }
     }
 
     /**
@@ -629,6 +680,9 @@ export class TTSEngine {
         const totalSizeKB = Math.round((totalLength * 4) / 1024);
         console.log(`Concatenated ${chunks.length} chunks into ${totalLength} samples`);
         appLogger.info(`TTS chunked synth: ${chunks.length} chunks, ${totalLength} samples, ${totalSizeKB} KB buffer, speed=${speed}`);
+
+        // Schedule reinit if threshold reached during chunk generation
+        this._checkReinitNeeded();
         return concatenated;
     }
 
@@ -774,6 +828,10 @@ export class TTSEngine {
             return this._playWebSpeech(buffer._webSpeechText, speed);
         }
 
+        const durationSec = buffer.duration?.toFixed(1) || '?';
+        const bufferKB = buffer.length ? Math.round((buffer.length * 4) / 1024) : 0;
+        appLogger.info(`playBuffer START: ${durationSec}s, ${bufferKB} KB, ctx.state=${this._audioContext.state}`);
+
         // Note: Speed is applied at TTS generation time via Kokoro's speed parameter
         // We don't modify playbackRate here to avoid pitch distortion
         return new Promise((resolve, reject) => {
@@ -786,10 +844,12 @@ export class TTSEngine {
 
             source.onended = () => {
                 this._currentSource = null;
+                appLogger.info(`playBuffer END: ${durationSec}s completed`);
                 resolve();
             };
             source.onerror = (e) => {
                 this._currentSource = null;
+                appLogger.error(`playBuffer ERROR: ${e?.message || e}`);
                 reject(e);
             };
 
