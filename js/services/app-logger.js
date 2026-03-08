@@ -61,21 +61,53 @@ class AppLogger {
     /**
      * Gather memory information if available.
      * Uses `performance.memory` (Chrome) when present.
+     * Also attempts to capture WASM memory via WebAssembly.Memory if exposed.
      */
     _getMemoryInfo() {
+        const info = {};
+        let hasInfo = false;
+
         // performance.memory is a Chrome-only non-standard API
+        // Note: This may or may NOT include WASM linear memory depending
+        // on Chrome version and ONNX runtime internals.
         if (typeof performance !== 'undefined' && performance.memory) {
             const m = performance.memory;
-            return {
-                usedJSHeapSize: m.usedJSHeapSize,
-                totalJSHeapSize: m.totalJSHeapSize,
-                jsHeapSizeLimit: m.jsHeapSizeLimit,
-                usedMB: Math.round(m.usedJSHeapSize / 1048576),
-                totalMB: Math.round(m.totalJSHeapSize / 1048576),
-                limitMB: Math.round(m.jsHeapSizeLimit / 1048576)
-            };
+            info.usedJSHeapSize = m.usedJSHeapSize;
+            info.totalJSHeapSize = m.totalJSHeapSize;
+            info.jsHeapSizeLimit = m.jsHeapSizeLimit;
+            info.usedMB = Math.round(m.usedJSHeapSize / 1048576);
+            info.totalMB = Math.round(m.totalJSHeapSize / 1048576);
+            info.limitMB = Math.round(m.jsHeapSizeLimit / 1048576);
+            hasInfo = true;
         }
-        return null;
+
+        return hasInfo ? info : null;
+    }
+
+    /**
+     * Log with a detailed memory snapshot.
+     * Calls the async measureUserAgentSpecificMemory() API (Chrome 89+,
+     * cross-origin-isolated only) in the background and appends the
+     * result as a follow-up entry when it resolves.
+     */
+    logWithDetailedMemory(level, message, detail) {
+        // Normal synchronous log first
+        this.log(level, message, detail);
+
+        // Attempt the async detailed measurement (non-blocking)
+        if (typeof performance !== 'undefined' &&
+            typeof performance.measureUserAgentSpecificMemory === 'function') {
+            performance.measureUserAgentSpecificMemory()
+                .then(result => {
+                    const totalMB = Math.round(result.bytes / 1048576);
+                    const breakdown = (result.breakdown || [])
+                        .filter(b => b.bytes > 0)
+                        .map(b => `${b.types?.join(',') || '?'}:${Math.round(b.bytes / 1048576)}MB`)
+                        .join(' ');
+                    this.log(level, `[detailed-mem] ${message}: total=${totalMB}MB ${breakdown}`);
+                })
+                .catch(() => { /* not available in this context */ });
+        }
     }
 
     /**

@@ -62,6 +62,10 @@ export class TTSEngine {
         this._synthesisQueue = [];
         this._isSynthesizing = false;
 
+        // Cumulative stats for crash diagnostics
+        this._inferenceCount = 0;
+        this._cumulativeSamples = 0; // total Float32 samples generated since init
+
         // Current audio source for stopping playback
         this._currentSource = null;
 
@@ -455,6 +459,9 @@ export class TTSEngine {
     _queueSynthesis(text, options) {
         return new Promise((resolve, reject) => {
             this._synthesisQueue.push({ text, options, resolve, reject });
+            if (this._synthesisQueue.length > 1) {
+                appLogger.info(`TTS queue depth: ${this._synthesisQueue.length} (text: ${text.length} chars queued)`);
+            }
             this._processQueue();
         });
     }
@@ -509,6 +516,14 @@ export class TTSEngine {
 
         const startTime = performance.now();
 
+        // Log BEFORE inference — if the app crashes during generate(),
+        // this will be the last log entry we see
+        this._inferenceCount++;
+        appLogger.logWithDetailedMemory('info',
+            `TTS inference #${this._inferenceCount} START: ${text.length} chars, speed=${speed}, ` +
+            `queue depth=${this._synthesisQueue.length}, cumulative samples=${this._cumulativeSamples}`
+        );
+
         // Generate audio using Kokoro with speed parameter
         const audio = await this._kokoro.generate(text, { voice, speed });
 
@@ -518,6 +533,8 @@ export class TTSEngine {
         // Kokoro returns audio data that we need to convert
         const audioData = audio.audio;
         const sampleRate = audio.sampling_rate || this._sampleRate;
+
+        this._cumulativeSamples += audioData.length;
 
         // Create AudioBuffer
         const audioBuffer = this._audioContext.createBuffer(
@@ -534,9 +551,14 @@ export class TTSEngine {
 
         // Log synthesis details for crash diagnostics
         const bufferSizeKB = Math.round((audioData.length * 4) / 1024); // Float32 = 4 bytes
-        appLogger.info(
-            `TTS synth: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
-            `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen time, speed=${speed}`
+        const cumulativeMB = Math.round((this._cumulativeSamples * 4) / 1048576);
+        // Real-time factor: >1 means generation is slower than playback
+        const rtfValue = synthesisTime / audioDurationMs;
+        const logLevel = rtfValue > 1.5 ? 'warn' : 'info';
+        appLogger[logLevel](
+            `TTS synth #${this._inferenceCount}: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
+            `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen (RTF ${rtfValue.toFixed(2)}), speed=${speed}, ` +
+            `cumulative=${cumulativeMB} MB generated`
         );
 
         // Record benchmark if enabled
@@ -574,9 +596,17 @@ export class TTSEngine {
             const chunk = chunks[i];
             console.log(`  Chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 50)}..."`);
 
+            this._inferenceCount++;
+            appLogger.logWithDetailedMemory('info',
+                `TTS chunk inference #${this._inferenceCount} START: chunk ${i + 1}/${chunks.length}, ` +
+                `${chunk.length} chars, speed=${speed}`
+            );
+
             const audio = await this._kokoro.generate(chunk, { voice, speed });
             const audioData = audio.audio;
             sampleRate = audio.sampling_rate || this._sampleRate;
+
+            this._cumulativeSamples += audioData.length;
 
             const buffer = this._audioContext.createBuffer(1, audioData.length, sampleRate);
             buffer.getChannelData(0).set(audioData);
