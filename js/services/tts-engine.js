@@ -5,6 +5,7 @@
  */
 
 import { splitLongSentence } from '../utils/sentence-splitter.js';
+import { appLogger } from './app-logger.js';
 
 /**
  * @typedef {Object} TTSOptions
@@ -531,6 +532,13 @@ export class TTSEngine {
         // Calculate audio duration in ms
         const audioDurationMs = (audioData.length / sampleRate) * 1000;
 
+        // Log synthesis details for crash diagnostics
+        const bufferSizeKB = Math.round((audioData.length * 4) / 1024); // Float32 = 4 bytes
+        appLogger.info(
+            `TTS synth: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
+            `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen time, speed=${speed}`
+        );
+
         // Record benchmark if enabled
         if (this._benchmarkEnabled) {
             const rtf = synthesisTime / audioDurationMs;
@@ -588,7 +596,9 @@ export class TTSEngine {
             offset += data.length;
         }
 
+        const totalSizeKB = Math.round((totalLength * 4) / 1024);
         console.log(`Concatenated ${chunks.length} chunks into ${totalLength} samples`);
+        appLogger.info(`TTS chunked synth: ${chunks.length} chunks, ${totalLength} samples, ${totalSizeKB} KB buffer, speed=${speed}`);
         return concatenated;
     }
 

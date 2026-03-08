@@ -1530,6 +1530,7 @@ class ReadingPartnerApp {
         // Auto-advance to next chapter if available
         if (playbackChapter < this._currentBook.chapters.length - 1) {
             const nextChapterIndex = playbackChapter + 1;
+            appLogger.info(`Chapter ${playbackChapter} ended, advancing to chapter ${nextChapterIndex}`);
 
             // Update reading state
             this._readingState.goToChapter(nextChapterIndex, 0);
@@ -1551,6 +1552,7 @@ class ReadingPartnerApp {
         } else {
             // End of book
             console.log('End of book reached');
+            appLogger.info('End of book reached');
             this._showToast('End of book reached');
         }
     }
@@ -1568,6 +1570,7 @@ class ReadingPartnerApp {
             this._hideTTSStatus();
         }
 
+        appLogger.info(`Play: sentence ${this._audioController.getCurrentIndex()}, speed=${this._audioController._speed}`);
         this._audioController.play();
     }
 
@@ -1575,6 +1578,7 @@ class ReadingPartnerApp {
      * Pause
      */
     _pause() {
+        appLogger.info(`Pause: sentence ${this._audioController?.getCurrentIndex()}`);
         this._audioController?.pause();
     }
 
