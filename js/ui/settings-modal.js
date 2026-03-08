@@ -356,6 +356,20 @@ export class SettingsModal {
                             <input type="range" id="settings-speed" class="form-input" min="0.5" max="2" step="0.1" value="1">
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-prefetch-count">Precache Sentences: <span id="settings-prefetch-count-value">2</span></label>
+                            <input type="range" id="settings-prefetch-count" class="form-input" min="1" max="10" step="1" value="2">
+                            <p class="form-hint">Number of sentences to buffer ahead during playback. Lower values use less memory; higher values reduce buffering pauses.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Sentence Splitting</div>
+
+                        <div class="form-group">
+                            <label for="settings-max-sentence-length">Max Sentence Length: <span id="settings-max-sentence-length-value">Off</span></label>
+                            <input type="range" id="settings-max-sentence-length" class="form-input" min="0" max="1000" step="50" value="0">
+                            <p class="form-hint">Maximum number of characters per sentence. Long sentences are split at natural punctuation (commas, semicolons, dashes) or, if necessary, at spaces. Set to 0 (Off) for no limit. Changing this reloads the current chapter.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Text Normalization (Kokoro)</div>
 
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
@@ -717,6 +731,10 @@ export class SettingsModal {
             customVoiceGroup: this._container.querySelector('#settings-custom-voice-group'),
             speed: this._container.querySelector('#settings-speed'),
             speedValue: this._container.querySelector('#settings-speed-value'),
+            prefetchCount: this._container.querySelector('#settings-prefetch-count'),
+            prefetchCountValue: this._container.querySelector('#settings-prefetch-count-value'),
+            maxSentenceLength: this._container.querySelector('#settings-max-sentence-length'),
+            maxSentenceLengthValue: this._container.querySelector('#settings-max-sentence-length-value'),
             font: this._container.querySelector('#settings-font'),
             fontSize: this._container.querySelector('#settings-font-size'),
             fontSizeValue: this._container.querySelector('#settings-font-size-value'),
@@ -898,6 +916,18 @@ export class SettingsModal {
         this._elements.speed.addEventListener('input', () => {
             const speed = parseFloat(this._elements.speed.value);
             this._elements.speedValue.textContent = `${speed.toFixed(1)}x`;
+        });
+
+        // Prefetch count slider
+        this._elements.prefetchCount.addEventListener('input', () => {
+            const count = parseInt(this._elements.prefetchCount.value);
+            this._elements.prefetchCountValue.textContent = count;
+        });
+
+        // Max sentence length slider
+        this._elements.maxSentenceLength.addEventListener('input', () => {
+            const val = parseInt(this._elements.maxSentenceLength.value);
+            this._elements.maxSentenceLengthValue.textContent = val === 0 ? 'Off' : `${val} chars`;
         });
 
         // Font size slider
@@ -1269,6 +1299,8 @@ export class SettingsModal {
                 return (isFastAPI && custom) ? custom : this._elements.voice.value;
             })(),
             speed: parseFloat(this._elements.speed.value),
+            prefetchCount: parseInt(this._elements.prefetchCount.value) || 2,
+            maxSentenceLength: parseInt(this._elements.maxSentenceLength.value) || 0,
             font: this._elements.font.value,
             fontSize: parseInt(this._elements.fontSize.value),
             marginSize: this._elements.margin.value,
@@ -1332,6 +1364,8 @@ export class SettingsModal {
         // Detect voice/speed change
         const voiceChanged = settings.voice !== this._settings.voice;
         const speedChanged = settings.speed !== this._settings.speed;
+        const prefetchChanged = settings.prefetchCount !== this._settings.prefetchCount;
+        const maxSentenceLengthChanged = settings.maxSentenceLength !== this._settings.maxSentenceLength;
 
         this._settings = settings;
         this._callbacks.onSave?.(settings);
@@ -1346,6 +1380,14 @@ export class SettingsModal {
 
         if (speedChanged) {
             this._callbacks.onSpeedChange?.(settings.speed);
+        }
+
+        if (prefetchChanged) {
+            this._callbacks.onPrefetchChange?.(settings.prefetchCount);
+        }
+
+        if (maxSentenceLengthChanged) {
+            this._callbacks.onMaxSentenceLengthChange?.(settings.maxSentenceLength);
         }
 
         this._callbacks.onClose?.();
@@ -1444,6 +1486,16 @@ export class SettingsModal {
         }
         this._elements.speed.value = this._settings.speed || 1.0;
         this._elements.speedValue.textContent = `${(this._settings.speed || 1.0).toFixed(1)}x`;
+
+        // Load prefetch count
+        const prefetchCount = this._settings.prefetchCount || 2;
+        this._elements.prefetchCount.value = prefetchCount;
+        this._elements.prefetchCountValue.textContent = prefetchCount;
+
+        // Load max sentence length
+        const maxSentenceLength = this._settings.maxSentenceLength || 0;
+        this._elements.maxSentenceLength.value = maxSentenceLength;
+        this._elements.maxSentenceLengthValue.textContent = maxSentenceLength === 0 ? 'Off' : `${maxSentenceLength} chars`;
 
         // Load typography settings
         this._elements.font.value = this._settings.font || 'default';
