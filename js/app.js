@@ -30,6 +30,7 @@ import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
 import { lookupService } from './services/lookup-service.js';
 import { NavigationHistory } from './state/navigation-history.js';
 import { appLogger } from './services/app-logger.js';
+import { setSentenceSplitterConfig } from './utils/sentence-splitter.js';
 
 class ReadingPartnerApp {
     constructor() {
@@ -203,6 +204,8 @@ class ReadingPartnerApp {
                 onBackendChange: (backend) => this._onTTSBackendChange(backend),
                 onVoiceChange: (voiceId) => this._onVoiceChange(voiceId),
                 onSpeedChange: (speed) => this._onSpeedChange(speed),
+                onPrefetchChange: (count) => this._onPrefetchChange(count),
+                onMaxSentenceLengthChange: (maxLen) => this._onMaxSentenceLengthChange(maxLen),
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config)
@@ -1371,6 +1374,11 @@ class ReadingPartnerApp {
             this._audioController.setSpeed(this._savedSpeed);
         }
 
+        // Restore saved prefetch count
+        if (this._savedPrefetchCount !== undefined) {
+            this._audioController.setPrefetchCount(this._savedPrefetchCount);
+        }
+
         // Apply typography settings
         this._applyTypographySettings();
 
@@ -2132,6 +2140,42 @@ class ReadingPartnerApp {
     }
 
     /**
+     * Handle prefetch count change from settings
+     * @param {number} count
+     */
+    _onPrefetchChange(count) {
+        this._audioController?.setPrefetchCount(count);
+        storage.saveSetting('prefetchCount', count).catch(err =>
+            console.error('Failed to save prefetch count:', err)
+        );
+    }
+
+    /**
+     * Handle max sentence length change from settings.
+     * Updates the splitter config and reloads the current chapter so sentences
+     * are re-split with the new limit.
+     * @param {number} maxLen
+     */
+    async _onMaxSentenceLengthChange(maxLen) {
+        setSentenceSplitterConfig({ maxSentenceLength: maxLen });
+        await storage.saveSetting('maxSentenceLength', maxLen).catch(err =>
+            console.error('Failed to save max sentence length:', err)
+        );
+
+        // Reload the current chapter to re-split sentences
+        if (this._currentBook && this._currentChapterIndex !== undefined) {
+            // Clear cached sentences so the parser re-processes them
+            const chapter = this._currentBook.chapters?.[this._currentChapterIndex];
+            if (chapter) {
+                chapter.loaded = false;
+                chapter.sentences = null;
+                chapter.html = null;
+            }
+            await this._loadChapter(this._currentChapterIndex);
+        }
+    }
+
+    /**
      * Apply typography settings to the reader
      */
     _applyTypographySettings() {
@@ -2232,6 +2276,14 @@ class ReadingPartnerApp {
             if (settings.speed !== undefined) {
                 await storage.saveSetting('playbackSpeed', settings.speed);
                 this._savedSpeed = settings.speed;
+            }
+
+            // Save prefetch and sentence splitting settings
+            if (settings.prefetchCount !== undefined) {
+                await storage.saveSetting('prefetchCount', settings.prefetchCount);
+            }
+            if (settings.maxSentenceLength !== undefined) {
+                await storage.saveSetting('maxSentenceLength', settings.maxSentenceLength);
             }
 
             // Save typography settings
@@ -3222,6 +3274,18 @@ class ReadingPartnerApp {
                 this._savedVoice = voice;
             }
 
+            // Load prefetch count
+            const prefetchCount = await storage.getSetting('prefetchCount');
+            if (prefetchCount !== null) {
+                this._savedPrefetchCount = prefetchCount;
+            }
+
+            // Load max sentence length
+            const maxSentenceLength = await storage.getSetting('maxSentenceLength');
+            if (maxSentenceLength !== null) {
+                setSentenceSplitterConfig({ maxSentenceLength });
+            }
+
             // Load Q&A settings
             const apiKey = await storage.getSetting('qaApiKey');
             if (apiKey !== null) {
@@ -3403,7 +3467,9 @@ class ReadingPartnerApp {
                 mediapipeLlmHfToken: mediapipeLlmHfToken || '',
                 transformersVersion: tfVersion,
                 verboseLogging: verboseLogging === true,
-                kokoroReinitThreshold: reinitVal
+                kokoroReinitThreshold: reinitVal,
+                prefetchCount: this._savedPrefetchCount !== undefined ? this._savedPrefetchCount : 2,
+                maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0
             });
 
         } catch (error) {

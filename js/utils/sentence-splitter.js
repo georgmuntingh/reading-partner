@@ -3,6 +3,29 @@
  * Splits text into sentences using Intl.Segmenter (if available) or regex fallback
  */
 
+// Module-level configuration for sentence splitting
+let _splitterConfig = {
+    maxSentenceLength: 0  // 0 = no limit
+};
+
+/**
+ * Update sentence splitter configuration
+ * @param {{ maxSentenceLength?: number }} config
+ */
+export function setSentenceSplitterConfig(config) {
+    if (config.maxSentenceLength !== undefined) {
+        _splitterConfig.maxSentenceLength = config.maxSentenceLength;
+    }
+}
+
+/**
+ * Get current sentence splitter configuration
+ * @returns {{ maxSentenceLength: number }}
+ */
+export function getSentenceSplitterConfig() {
+    return { ..._splitterConfig };
+}
+
 /**
  * Split text into sentences
  * @param {string} text - Text to split
@@ -28,6 +51,8 @@ export function splitIntoSentences(text, lang = 'en') {
         return [];
     }
 
+    let sentences;
+
     // Use Intl.Segmenter if available (Chrome 87+, Safari 14.1+)
     if ('Segmenter' in Intl) {
         try {
@@ -36,7 +61,7 @@ export function splitIntoSentences(text, lang = 'en') {
 
             const segmenter = new Intl.Segmenter(lang, { granularity: 'sentence' });
             const segments = [...segmenter.segment(processed)];
-            return segments
+            sentences = segments
                 .map(s => restore(s.segment).trim())
                 .filter(s => s.length > 0);
         } catch (e) {
@@ -44,8 +69,20 @@ export function splitIntoSentences(text, lang = 'en') {
         }
     }
 
-    // Fallback: regex-based sentence splitting
-    return splitSentencesFallback(text);
+    if (!sentences) {
+        // Fallback: regex-based sentence splitting
+        sentences = splitSentencesFallback(text);
+    }
+
+    // Post-process: split on ellipsis (...) and semicolons (;)
+    sentences = splitOnAdditionalBreaks(sentences);
+
+    // Post-process: enforce max sentence length if configured
+    if (_splitterConfig.maxSentenceLength > 0) {
+        sentences = enforceMaxSentenceLength(sentences, _splitterConfig.maxSentenceLength);
+    }
+
+    return sentences;
 }
 
 /**
@@ -113,8 +150,8 @@ function splitSentencesFallback(text) {
     });
 
     // Split on sentence-ending punctuation followed by space and capital letter
-    // or followed by end of string
-    const sentenceEndPattern = /([.!?]+)(?:\s+|$)/g;
+    // or followed by end of string (includes semicolons and ellipsis)
+    const sentenceEndPattern = /([.!?]+|;|\.{3}|…)(?:\s+|$)/g;
 
     const sentences = [];
     let lastIndex = 0;
@@ -142,6 +179,59 @@ function splitSentencesFallback(text) {
         });
         return result;
     });
+}
+
+/**
+ * Split sentences further on ellipsis (...) and semicolons (;).
+ * Each part becomes its own sentence if it has non-whitespace content.
+ * @param {string[]} sentences
+ * @returns {string[]}
+ */
+function splitOnAdditionalBreaks(sentences) {
+    const result = [];
+    for (const sentence of sentences) {
+        // Split on ellipsis (... or Unicode …) or semicolon, keeping the delimiter
+        // with the preceding part
+        const parts = sentence.split(/(\.{3}|…|;)\s*/);
+        let current = '';
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            if (part === '...' || part === '\u2026' || part === ';') {
+                // Attach delimiter to the current accumulator
+                current += part;
+                const trimmed = current.trim();
+                if (trimmed.length > 0) {
+                    result.push(trimmed);
+                }
+                current = '';
+            } else {
+                current += part;
+            }
+        }
+        const trimmed = current.trim();
+        if (trimmed.length > 0) {
+            result.push(trimmed);
+        }
+    }
+    return result;
+}
+
+/**
+ * Enforce a maximum sentence length by splitting long sentences at natural break points.
+ * @param {string[]} sentences
+ * @param {number} maxLength - Maximum number of characters per sentence
+ * @returns {string[]}
+ */
+function enforceMaxSentenceLength(sentences, maxLength) {
+    const result = [];
+    for (const sentence of sentences) {
+        if (sentence.length <= maxLength) {
+            result.push(sentence);
+        } else {
+            result.push(...splitLongSentence(sentence, maxLength));
+        }
+    }
+    return result;
 }
 
 /**

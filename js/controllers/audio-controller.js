@@ -286,6 +286,23 @@ export class AudioController {
     }
 
     /**
+     * Set the number of sentences to prefetch ahead
+     * @param {number} count - Number of sentences to buffer ahead (1-10)
+     */
+    setPrefetchCount(count) {
+        this._prefetchAhead = Math.max(1, Math.min(10, count));
+        console.log(`Prefetch ahead set to ${this._prefetchAhead}`);
+    }
+
+    /**
+     * Get the current prefetch count
+     * @returns {number}
+     */
+    getPrefetchCount() {
+        return this._prefetchAhead;
+    }
+
+    /**
      * Set playback speed
      * @param {number} speed - 0.5 to 2.0
      */
