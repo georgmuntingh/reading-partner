@@ -112,6 +112,10 @@ export class LLMClient {
         this._localProvider.setDevice(device);
     }
 
+    setLocalTransformersVersion(version) {
+        this._localProvider.setTransformersVersion(version);
+    }
+
     getLocalAvailableModels() {
         return this._localProvider.getAvailableModels();
     }

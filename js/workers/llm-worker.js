@@ -105,16 +105,17 @@ async function loadModel(config) {
         model = 'HuggingFaceTB/SmolLM2-360M-Instruct',
         device: requestedDevice = 'auto',
         dtype = 'q4f16',
-        chatOptions = null
+        chatOptions = null,
+        transformersVersion = '3'
     } = config;
     currentChatOptions = chatOptions;
+    // Store the CDN URL for later use (e.g. Tensor import during generation)
+    self._transformersCdnUrl = `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${transformersVersion}`;
 
     try {
-        self.postMessage({ type: 'loading', progress: { status: 'Loading transformers.js library...' } });
+        self.postMessage({ type: 'loading', progress: { status: `Loading transformers.js v${transformersVersion}...` } });
 
-        const transformers = await import(
-            'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
-        );
+        const transformers = await import(self._transformersCdnUrl);
 
         // Disable local model check
         transformers.env.allowLocalModels = false;
@@ -233,7 +234,7 @@ async function generate(config) {
 
         // Convert to tensor
         const { Tensor } = await import(
-            'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
+            self._transformersCdnUrl || 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3'
         );
 
         const inputTensor = new Tensor('int64', BigInt64Array.from(inputIds.map(BigInt)), [1, inputIds.length]);

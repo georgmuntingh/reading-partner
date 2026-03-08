@@ -5,6 +5,7 @@
  */
 
 import { splitLongSentence } from '../utils/sentence-splitter.js';
+import { appLogger } from './app-logger.js';
 
 /**
  * @typedef {Object} TTSOptions
@@ -61,11 +62,31 @@ export class TTSEngine {
         this._synthesisQueue = [];
         this._isSynthesizing = false;
 
+        // Cumulative stats for crash diagnostics
+        this._inferenceCount = 0;
+        this._cumulativeSamples = 0; // total Float32 samples generated since init
+
+        // Periodic reinit to combat ONNX WASM memory growth.
+        // After this many inferences the Kokoro instance is recreated.
+        // Log data shows RTF degrades within ~15 inferences (0.4 → 1.3+),
+        // so 25 balances freshness vs. reinit overhead (~5s reload).
+        this._reinitThreshold = 25;
+        this._reinitPending = false;
+
         // Current audio source for stopping playback
         this._currentSource = null;
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
+    }
+
+    /**
+     * Set the Kokoro reinit threshold (number of inferences between reinits).
+     * @param {number} n
+     */
+    setReinitThreshold(n) {
+        const val = Math.max(5, Math.min(200, parseInt(n) || 25));
+        this._reinitThreshold = val;
     }
 
     /**
@@ -454,6 +475,9 @@ export class TTSEngine {
     _queueSynthesis(text, options) {
         return new Promise((resolve, reject) => {
             this._synthesisQueue.push({ text, options, resolve, reject });
+            if (this._synthesisQueue.length > 1 && appLogger.enabled) {
+                appLogger.info(`TTS queue depth: ${this._synthesisQueue.length} (text: ${text.length} chars queued)`);
+            }
             this._processQueue();
         });
     }
@@ -464,6 +488,31 @@ export class TTSEngine {
     async _processQueue() {
         if (this._isSynthesizing || this._synthesisQueue.length === 0) {
             return;
+        }
+
+        // Perform a pending reinit before processing the next request.
+        // This is the safest moment — between synthesis calls, nothing active.
+        if (this._reinitPending && this._backend === 'kokoro-js') {
+            this._reinitPending = false;
+            try {
+                appLogger.info(`Kokoro reinit: starting (after ${this._inferenceCount} inferences, cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated)`);
+                const reinitStart = performance.now();
+
+                // Release the old instance
+                this._kokoro = null;
+
+                // Re-create it with the same settings
+                await this._initializeKokoro(this._device, this._dtype);
+
+                const reinitMs = Math.round(performance.now() - reinitStart);
+                this._inferenceCount = 0;
+                this._cumulativeSamples = 0;
+                appLogger.info(`Kokoro reinit: done in ${reinitMs}ms`);
+            } catch (error) {
+                appLogger.error(`Kokoro reinit failed: ${error.message}`);
+                // Continue — the old _kokoro is null so the next generate() will fail,
+                // which the queue will handle via reject()
+            }
         }
 
         this._isSynthesizing = true;
@@ -508,6 +557,16 @@ export class TTSEngine {
 
         const startTime = performance.now();
 
+        this._inferenceCount++;
+        if (appLogger.enabled) {
+            // Log BEFORE inference — if the app crashes during generate(),
+            // this will be the last log entry we see
+            appLogger.logWithDetailedMemory('info',
+                `TTS inference #${this._inferenceCount} START: ${text.length} chars, speed=${speed}, ` +
+                `queue depth=${this._synthesisQueue.length}, cumulative samples=${this._cumulativeSamples}`
+            );
+        }
+
         // Generate audio using Kokoro with speed parameter
         const audio = await this._kokoro.generate(text, { voice, speed });
 
@@ -517,6 +576,8 @@ export class TTSEngine {
         // Kokoro returns audio data that we need to convert
         const audioData = audio.audio;
         const sampleRate = audio.sampling_rate || this._sampleRate;
+
+        this._cumulativeSamples += audioData.length;
 
         // Create AudioBuffer
         const audioBuffer = this._audioContext.createBuffer(
@@ -530,6 +591,20 @@ export class TTSEngine {
 
         // Calculate audio duration in ms
         const audioDurationMs = (audioData.length / sampleRate) * 1000;
+
+        if (appLogger.enabled) {
+            // Log synthesis details for crash diagnostics
+            const bufferSizeKB = Math.round((audioData.length * 4) / 1024); // Float32 = 4 bytes
+            const cumulativeMB = Math.round((this._cumulativeSamples * 4) / 1048576);
+            // Real-time factor: >1 means generation is slower than playback
+            const rtfValue = synthesisTime / audioDurationMs;
+            const logLevel = rtfValue > 1.5 ? 'warn' : 'info';
+            appLogger[logLevel](
+                `TTS synth #${this._inferenceCount}: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
+                `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen (RTF ${rtfValue.toFixed(2)}), speed=${speed}, ` +
+                `cumulative=${cumulativeMB} MB generated`
+            );
+        }
 
         // Record benchmark if enabled
         if (this._benchmarkEnabled) {
@@ -546,7 +621,26 @@ export class TTSEngine {
             console.log(`TTS Benchmark: ${result.synthesisTimeMs}ms for ${result.audioDurationMs}ms audio (RTF: ${result.rtf})`);
         }
 
+        // Schedule reinit if we've exceeded the threshold
+        this._checkReinitNeeded();
+
         return audioBuffer;
+    }
+
+    /**
+     * Check whether a Kokoro reinit should be scheduled.
+     * Called after each inference completes.
+     */
+    _checkReinitNeeded() {
+        if (this._inferenceCount > 0 &&
+            this._inferenceCount % this._reinitThreshold === 0 &&
+            !this._reinitPending) {
+            this._reinitPending = true;
+            appLogger.warn(
+                `Kokoro reinit scheduled after ${this._inferenceCount} inferences ` +
+                `(ONNX WASM memory leak mitigation)`
+            );
+        }
     }
 
     /**
@@ -566,9 +660,19 @@ export class TTSEngine {
             const chunk = chunks[i];
             console.log(`  Chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 50)}..."`);
 
+            this._inferenceCount++;
+            if (appLogger.enabled) {
+                appLogger.logWithDetailedMemory('info',
+                    `TTS chunk inference #${this._inferenceCount} START: chunk ${i + 1}/${chunks.length}, ` +
+                    `${chunk.length} chars, speed=${speed}`
+                );
+            }
+
             const audio = await this._kokoro.generate(chunk, { voice, speed });
             const audioData = audio.audio;
             sampleRate = audio.sampling_rate || this._sampleRate;
+
+            this._cumulativeSamples += audioData.length;
 
             const buffer = this._audioContext.createBuffer(1, audioData.length, sampleRate);
             buffer.getChannelData(0).set(audioData);
@@ -588,7 +692,14 @@ export class TTSEngine {
             offset += data.length;
         }
 
+        const totalSizeKB = Math.round((totalLength * 4) / 1024);
         console.log(`Concatenated ${chunks.length} chunks into ${totalLength} samples`);
+        if (appLogger.enabled) {
+            appLogger.info(`TTS chunked synth: ${chunks.length} chunks, ${totalLength} samples, ${totalSizeKB} KB buffer, speed=${speed}`);
+        }
+
+        // Schedule reinit if threshold reached during chunk generation
+        this._checkReinitNeeded();
         return concatenated;
     }
 
@@ -734,6 +845,12 @@ export class TTSEngine {
             return this._playWebSpeech(buffer._webSpeechText, speed);
         }
 
+        const durationSec = buffer.duration?.toFixed(1) || '?';
+        const bufferKB = buffer.length ? Math.round((buffer.length * 4) / 1024) : 0;
+        if (appLogger.enabled) {
+            appLogger.info(`playBuffer START: ${durationSec}s, ${bufferKB} KB, ctx.state=${this._audioContext.state}`);
+        }
+
         // Note: Speed is applied at TTS generation time via Kokoro's speed parameter
         // We don't modify playbackRate here to avoid pitch distortion
         return new Promise((resolve, reject) => {
@@ -746,10 +863,12 @@ export class TTSEngine {
 
             source.onended = () => {
                 this._currentSource = null;
+                if (appLogger.enabled) appLogger.info(`playBuffer END: ${durationSec}s completed`);
                 resolve();
             };
             source.onerror = (e) => {
                 this._currentSource = null;
+                appLogger.error(`playBuffer ERROR: ${e?.message || e}`);
                 reject(e);
             };
 
