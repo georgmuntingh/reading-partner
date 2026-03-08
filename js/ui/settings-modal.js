@@ -81,7 +81,10 @@ export class SettingsModal {
             mediaSessionVolume: 0.01,
             mediaSessionDuration: 300,
             // Transformers.js version
-            transformersVersion: '3'
+            transformersVersion: '3',
+            // Diagnostics
+            verboseLogging: false,
+            kokoroReinitThreshold: 25
         };
 
         this._buildUI();
@@ -208,6 +211,20 @@ export class SettingsModal {
                                 <option value="4">v4 (preview)</option>
                             </select>
                             <p class="form-hint">Version of the @huggingface/transformers library used for local STT and LLM inference. Changing this requires a page reload to take effect.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="settings-verbose-logging">
+                                <span>Verbose logging</span>
+                            </label>
+                            <p class="form-hint">Log detailed per-sentence TTS and playback info. Useful for crash diagnosis but adds minor overhead. Critical events (errors, app lifecycle) are always logged.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-reinit-threshold">Kokoro reinit interval</label>
+                            <input type="number" id="settings-reinit-threshold" class="form-input" min="5" max="200" step="1" style="width: 80px;">
+                            <p class="form-hint">Recreate the Kokoro TTS engine after this many inferences to reclaim WASM memory. Lower values use less memory but cause brief pauses. Default: 25.</p>
                         </div>
 
                         <div class="settings-subsection-header">Application Log</div>
@@ -782,6 +799,9 @@ export class SettingsModal {
             aboutContent: this._container.querySelector('#settings-about-content'),
             // Transformers.js version
             transformersVersion: this._container.querySelector('#settings-transformers-version'),
+            // Diagnostics
+            verboseLogging: this._container.querySelector('#settings-verbose-logging'),
+            reinitThreshold: this._container.querySelector('#settings-reinit-threshold'),
             // Log viewer
             viewLogBtn: this._container.querySelector('#settings-view-log-btn'),
             clearLogBtn: this._container.querySelector('#settings-clear-log-btn'),
@@ -1294,7 +1314,9 @@ export class SettingsModal {
             mediaSessionVolume: parseFloat(this._elements.mediaVolume.value) || 0.01,
             mediaSessionDuration: parseInt(this._elements.mediaDuration.value) || 300,
             // Transformers.js version
-            transformersVersion: this._elements.transformersVersion.value || '3'
+            transformersVersion: this._elements.transformersVersion.value || '3',
+            verboseLogging: this._elements.verboseLogging.checked,
+            kokoroReinitThreshold: parseInt(this._elements.reinitThreshold.value) || 25
         };
 
         // Validate
@@ -1497,6 +1519,10 @@ export class SettingsModal {
 
         // Load transformers.js version
         this._elements.transformersVersion.value = this._settings.transformersVersion || '3';
+
+        // Load diagnostics settings
+        this._elements.verboseLogging.checked = this._settings.verboseLogging || false;
+        this._elements.reinitThreshold.value = this._settings.kokoroReinitThreshold || 25;
 
         this._updateBackendUI();
     }

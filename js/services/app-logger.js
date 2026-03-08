@@ -17,6 +17,7 @@ class AppLogger {
         this._db = null;
         this._queue = [];       // buffer entries while DB opens
         this._ready = false;
+        this.enabled = false;   // verbose logging toggle (gated per-sentence logs)
     }
 
     /**

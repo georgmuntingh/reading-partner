@@ -2393,6 +2393,18 @@ class ReadingPartnerApp {
                 appLogger.info(`Transformers.js version set to v${settings.transformersVersion}`);
             }
 
+            // Save verbose logging setting
+            if (settings.verboseLogging !== undefined) {
+                await storage.saveSetting('verboseLogging', settings.verboseLogging);
+                appLogger.enabled = settings.verboseLogging;
+            }
+
+            // Save Kokoro reinit threshold
+            if (settings.kokoroReinitThreshold !== undefined) {
+                await storage.saveSetting('kokoroReinitThreshold', settings.kokoroReinitThreshold);
+                ttsEngine.setReinitThreshold(settings.kokoroReinitThreshold);
+            }
+
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
             this._applyJitLoadingSetting();
@@ -3335,6 +3347,16 @@ class ReadingPartnerApp {
             const transformersVersion = await storage.getSetting('transformersVersion');
             const tfVersion = transformersVersion || '3';
             llmClient.setLocalTransformersVersion(tfVersion);
+
+            // Load verbose logging setting
+            const verboseLogging = await storage.getSetting('verboseLogging');
+            appLogger.enabled = verboseLogging === true;
+
+            // Load Kokoro reinit threshold
+            const kokoroReinitThreshold = await storage.getSetting('kokoroReinitThreshold');
+            const reinitVal = kokoroReinitThreshold || 25;
+            ttsEngine.setReinitThreshold(reinitVal);
+
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
             // Apply STT backend
@@ -3379,7 +3401,9 @@ class ReadingPartnerApp {
                 localLlmDeferTts: this._localLlmDeferTts,
                 localLlmJitLoading: this._localLlmJitLoading,
                 mediapipeLlmHfToken: mediapipeLlmHfToken || '',
-                transformersVersion: tfVersion
+                transformersVersion: tfVersion,
+                verboseLogging: verboseLogging === true,
+                kokoroReinitThreshold: reinitVal
             });
 
         } catch (error) {

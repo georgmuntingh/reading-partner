@@ -117,7 +117,7 @@ export class AudioController {
                 this._status = 'buffering';
                 this._notifyStateChange();
 
-                appLogger.info(`Buffering sentence ${this._currentIndex} (queue: ${this._bufferQueue.size} buffers, generating: ${this._generatingIndices.size})`);
+                if (appLogger.enabled) appLogger.info(`Buffering sentence ${this._currentIndex} (queue: ${this._bufferQueue.size} buffers, generating: ${this._generatingIndices.size})`);
                 console.time(`TTS generate sentence ${this._currentIndex}`);
                 try {
                     buffer = await this._generateBuffer(this._currentIndex);
@@ -138,13 +138,14 @@ export class AudioController {
             // Notify UI of current sentence
             this._onSentenceChange?.(this._currentIndex);
 
-            // Log buffer queue state before playback
-            const queueEstKB = this._estimateQueueMemory();
-            appLogger.info(
-                `Playing sentence ${this._currentIndex}/${this._sentences.length - 1}, ` +
-                `duration=${buffer.duration ? buffer.duration.toFixed(1) : '?'}s, ` +
-                `queue: ${this._bufferQueue.size} buffers (~${queueEstKB} KB)`
-            );
+            if (appLogger.enabled) {
+                const queueEstKB = this._estimateQueueMemory();
+                appLogger.info(
+                    `Playing sentence ${this._currentIndex}/${this._sentences.length - 1}, ` +
+                    `duration=${buffer.duration ? buffer.duration.toFixed(1) : '?'}s, ` +
+                    `queue: ${this._bufferQueue.size} buffers (~${queueEstKB} KB)`
+                );
+            }
 
             // Start buffering next sentences in background (don't await)
             this._maintainBuffer();
@@ -353,7 +354,7 @@ export class AudioController {
                 cleaned++;
             }
         }
-        if (cleaned > 0) {
+        if (cleaned > 0 && appLogger.enabled) {
             appLogger.info(`Evicted ${cleaned} old buffer(s), queue now: ${this._bufferQueue.size} (~${this._estimateQueueMemory()} KB)`);
         }
     }
@@ -397,12 +398,14 @@ export class AudioController {
             const genTime = Math.round(performance.now() - genStart);
             this._bufferQueue.set(index, buffer);
 
-            const bufferKB = buffer.length ? Math.round((buffer.length * 4) / 1024) : 0;
-            appLogger.info(
-                `Buffer ready: sentence ${index}, ${sentence.length} chars, ` +
-                `${genTime}ms gen, ${bufferKB} KB, ` +
-                `queue total: ${this._bufferQueue.size} buffers (~${this._estimateQueueMemory()} KB)`
-            );
+            if (appLogger.enabled) {
+                const bufferKB = buffer.length ? Math.round((buffer.length * 4) / 1024) : 0;
+                appLogger.info(
+                    `Buffer ready: sentence ${index}, ${sentence.length} chars, ` +
+                    `${genTime}ms gen, ${bufferKB} KB, ` +
+                    `queue total: ${this._bufferQueue.size} buffers (~${this._estimateQueueMemory()} KB)`
+                );
+            }
             console.log(`TTS ready for sentence ${index}`);
             return buffer;
         } finally {
@@ -433,7 +436,7 @@ export class AudioController {
      * Clear all buffers
      */
     _clearBuffers() {
-        if (this._bufferQueue.size > 0) {
+        if (this._bufferQueue.size > 0 && appLogger.enabled) {
             appLogger.info(`Clearing ${this._bufferQueue.size} buffers (~${this._estimateQueueMemory()} KB)`);
         }
         this._bufferQueue.clear();

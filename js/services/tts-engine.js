@@ -81,6 +81,15 @@ export class TTSEngine {
     }
 
     /**
+     * Set the Kokoro reinit threshold (number of inferences between reinits).
+     * @param {number} n
+     */
+    setReinitThreshold(n) {
+        const val = Math.max(5, Math.min(200, parseInt(n) || 25));
+        this._reinitThreshold = val;
+    }
+
+    /**
      * Set progress callback for model loading
      * @param {(progress: {status: string, progress?: number}) => void} callback
      */
@@ -466,7 +475,7 @@ export class TTSEngine {
     _queueSynthesis(text, options) {
         return new Promise((resolve, reject) => {
             this._synthesisQueue.push({ text, options, resolve, reject });
-            if (this._synthesisQueue.length > 1) {
+            if (this._synthesisQueue.length > 1 && appLogger.enabled) {
                 appLogger.info(`TTS queue depth: ${this._synthesisQueue.length} (text: ${text.length} chars queued)`);
             }
             this._processQueue();
@@ -548,13 +557,15 @@ export class TTSEngine {
 
         const startTime = performance.now();
 
-        // Log BEFORE inference — if the app crashes during generate(),
-        // this will be the last log entry we see
         this._inferenceCount++;
-        appLogger.logWithDetailedMemory('info',
-            `TTS inference #${this._inferenceCount} START: ${text.length} chars, speed=${speed}, ` +
-            `queue depth=${this._synthesisQueue.length}, cumulative samples=${this._cumulativeSamples}`
-        );
+        if (appLogger.enabled) {
+            // Log BEFORE inference — if the app crashes during generate(),
+            // this will be the last log entry we see
+            appLogger.logWithDetailedMemory('info',
+                `TTS inference #${this._inferenceCount} START: ${text.length} chars, speed=${speed}, ` +
+                `queue depth=${this._synthesisQueue.length}, cumulative samples=${this._cumulativeSamples}`
+            );
+        }
 
         // Generate audio using Kokoro with speed parameter
         const audio = await this._kokoro.generate(text, { voice, speed });
@@ -581,17 +592,19 @@ export class TTSEngine {
         // Calculate audio duration in ms
         const audioDurationMs = (audioData.length / sampleRate) * 1000;
 
-        // Log synthesis details for crash diagnostics
-        const bufferSizeKB = Math.round((audioData.length * 4) / 1024); // Float32 = 4 bytes
-        const cumulativeMB = Math.round((this._cumulativeSamples * 4) / 1048576);
-        // Real-time factor: >1 means generation is slower than playback
-        const rtfValue = synthesisTime / audioDurationMs;
-        const logLevel = rtfValue > 1.5 ? 'warn' : 'info';
-        appLogger[logLevel](
-            `TTS synth #${this._inferenceCount}: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
-            `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen (RTF ${rtfValue.toFixed(2)}), speed=${speed}, ` +
-            `cumulative=${cumulativeMB} MB generated`
-        );
+        if (appLogger.enabled) {
+            // Log synthesis details for crash diagnostics
+            const bufferSizeKB = Math.round((audioData.length * 4) / 1024); // Float32 = 4 bytes
+            const cumulativeMB = Math.round((this._cumulativeSamples * 4) / 1048576);
+            // Real-time factor: >1 means generation is slower than playback
+            const rtfValue = synthesisTime / audioDurationMs;
+            const logLevel = rtfValue > 1.5 ? 'warn' : 'info';
+            appLogger[logLevel](
+                `TTS synth #${this._inferenceCount}: ${text.length} chars, ${Math.round(audioDurationMs)}ms audio, ` +
+                `${bufferSizeKB} KB buffer, ${Math.round(synthesisTime)}ms gen (RTF ${rtfValue.toFixed(2)}), speed=${speed}, ` +
+                `cumulative=${cumulativeMB} MB generated`
+            );
+        }
 
         // Record benchmark if enabled
         if (this._benchmarkEnabled) {
@@ -648,10 +661,12 @@ export class TTSEngine {
             console.log(`  Chunk ${i + 1}/${chunks.length}: "${chunk.substring(0, 50)}..."`);
 
             this._inferenceCount++;
-            appLogger.logWithDetailedMemory('info',
-                `TTS chunk inference #${this._inferenceCount} START: chunk ${i + 1}/${chunks.length}, ` +
-                `${chunk.length} chars, speed=${speed}`
-            );
+            if (appLogger.enabled) {
+                appLogger.logWithDetailedMemory('info',
+                    `TTS chunk inference #${this._inferenceCount} START: chunk ${i + 1}/${chunks.length}, ` +
+                    `${chunk.length} chars, speed=${speed}`
+                );
+            }
 
             const audio = await this._kokoro.generate(chunk, { voice, speed });
             const audioData = audio.audio;
@@ -679,7 +694,9 @@ export class TTSEngine {
 
         const totalSizeKB = Math.round((totalLength * 4) / 1024);
         console.log(`Concatenated ${chunks.length} chunks into ${totalLength} samples`);
-        appLogger.info(`TTS chunked synth: ${chunks.length} chunks, ${totalLength} samples, ${totalSizeKB} KB buffer, speed=${speed}`);
+        if (appLogger.enabled) {
+            appLogger.info(`TTS chunked synth: ${chunks.length} chunks, ${totalLength} samples, ${totalSizeKB} KB buffer, speed=${speed}`);
+        }
 
         // Schedule reinit if threshold reached during chunk generation
         this._checkReinitNeeded();
@@ -830,7 +847,9 @@ export class TTSEngine {
 
         const durationSec = buffer.duration?.toFixed(1) || '?';
         const bufferKB = buffer.length ? Math.round((buffer.length * 4) / 1024) : 0;
-        appLogger.info(`playBuffer START: ${durationSec}s, ${bufferKB} KB, ctx.state=${this._audioContext.state}`);
+        if (appLogger.enabled) {
+            appLogger.info(`playBuffer START: ${durationSec}s, ${bufferKB} KB, ctx.state=${this._audioContext.state}`);
+        }
 
         // Note: Speed is applied at TTS generation time via Kokoro's speed parameter
         // We don't modify playbackRate here to avoid pitch distortion
@@ -844,7 +863,7 @@ export class TTSEngine {
 
             source.onended = () => {
                 this._currentSource = null;
-                appLogger.info(`playBuffer END: ${durationSec}s completed`);
+                if (appLogger.enabled) appLogger.info(`playBuffer END: ${durationSec}s completed`);
                 resolve();
             };
             source.onerror = (e) => {
