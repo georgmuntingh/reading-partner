@@ -62,6 +62,10 @@ class ReadingPartnerApp {
             contextAfter: 5
         };
 
+        // Q&A input preference: 'voice' (microphone) or 'text'.
+        // Persisted in storage under 'qaInputMode'.
+        this._qaInputMode = 'voice';
+
         // Quiz Settings
         this._quizSettings = {
             quizMode: 'multiple-choice',
@@ -178,7 +182,8 @@ class ReadingPartnerApp {
                 onContinueReading: () => this._continueReadingFromQA(),
                 onAskAnother: () => this._askAnotherQuestion(),
                 onTextSubmit: (text) => this._submitTextQuestion(text),
-                onRetryVoice: () => this._retryVoiceInput()
+                onRetryVoice: () => this._retryVoiceInput(),
+                onInputModeChange: (mode) => this._onQAInputModeChange(mode)
             }
         );
 
@@ -191,7 +196,11 @@ class ReadingPartnerApp {
                 onMCAnswer: (index) => this._quizController?.submitMCAnswer(index),
                 onTextAnswer: (text) => this._quizController?.submitFreeFormAnswer(text),
                 onVoiceAnswer: () => this._quizController?.submitVoiceAnswer(),
-                onSkipToAnswer: () => this._quizController?.skipToAnswer()
+                onSkipToAnswer: () => this._quizController?.skipToAnswer(),
+                onLookup: (text, context) => {
+                    const idx = this._readerView?.getCurrentIndex?.() ?? 0;
+                    this._performLookup(text, idx, context);
+                }
             }
         );
 
@@ -1726,14 +1735,8 @@ class ReadingPartnerApp {
         // Set Q&A mode active for Media Session (headset controls)
         mediaSessionManager.setQAModeActive(true);
 
-        // Start voice Q&A
-        if (this._qaController.isSTTSupported()) {
-            this._qaController.startVoiceQA();
-        } else {
-            // STT not supported, show text input
-            this._qaOverlay.setState(QAState.IDLE);
-            this._qaOverlay.showTextInput();
-        }
+        // Start in the user's preferred input mode
+        this._startQAInPreferredMode();
     }
 
     /**
@@ -1838,13 +1841,8 @@ class ReadingPartnerApp {
         this._qaOverlay.reset();
         this._qaOverlay.setHistory(this._qaController?.getHistory() || []);
 
-        // Start new Q&A
-        if (this._qaController?.isSTTSupported()) {
-            this._qaController.startVoiceQA();
-        } else {
-            this._qaOverlay.setState(QAState.IDLE);
-            this._qaOverlay.showTextInput();
-        }
+        // Start new Q&A in the user's preferred input mode
+        this._startQAInPreferredMode();
     }
 
     /**
@@ -1855,7 +1853,9 @@ class ReadingPartnerApp {
         if (!this._qaController) {
             this._initializeQAController();
         }
-        this._qaOverlay.hideTextInput();
+        // Display the typed question as the transcript so the user sees it
+        // next to the streaming answer (voice mode gets this for free via STT).
+        this._qaOverlay.setTranscript(text);
         this._qaController.startTextQA(text);
     }
 
@@ -1870,10 +1870,67 @@ class ReadingPartnerApp {
         // Request microphone permission first
         const hasPermission = await this._qaController.requestMicPermission();
         if (hasPermission) {
-            this._qaOverlay.hideTextInput();
+            this._qaOverlay.setInputMode('voice', { silent: true });
             this._qaController.startVoiceQA();
         } else {
             this._showToast('Microphone permission denied');
+        }
+    }
+
+    /**
+     * Start a new Q&A session using the user's preferred input mode.
+     * Falls back to text input if STT is unavailable.
+     */
+    _startQAInPreferredMode() {
+        const sttOk = this._qaController?.isSTTSupported();
+        const mode = this._qaInputMode === 'text' || !sttOk ? 'text' : 'voice';
+
+        this._qaOverlay.setInputMode(mode, { silent: true });
+
+        if (mode === 'voice') {
+            this._qaController.startVoiceQA();
+        } else {
+            // Text mode: stay IDLE and let the user type. onTextSubmit is wired.
+            this._qaOverlay.setState(QAState.IDLE);
+        }
+    }
+
+    /**
+     * Handle user toggling the Q&A input mode via the inline icon.
+     * Persists the preference and updates any in-flight listening state.
+     * @param {'voice' | 'text'} mode
+     */
+    async _onQAInputModeChange(mode) {
+        this._qaInputMode = mode;
+        try {
+            await storage.saveSetting('qaInputMode', mode);
+        } catch (err) {
+            console.warn('Failed to persist qaInputMode:', err);
+        }
+
+        if (!this._qaController) return;
+
+        if (mode === 'text') {
+            // Cancel any in-progress listening so the mic releases.
+            this._qaController.abortListening();
+            this._qaOverlay.setState(QAState.IDLE);
+        } else {
+            // Switching to voice: start listening if supported.
+            if (this._qaController.isSTTSupported()) {
+                const hasPermission = await this._qaController.requestMicPermission();
+                if (hasPermission) {
+                    this._qaController.startVoiceQA();
+                } else {
+                    this._showToast('Microphone permission denied');
+                    // Revert to text mode since voice is unusable
+                    this._qaInputMode = 'text';
+                    this._qaOverlay.setInputMode('text', { silent: true });
+                }
+            } else {
+                this._showToast('Voice input is not supported in this browser');
+                this._qaInputMode = 'text';
+                this._qaOverlay.setInputMode('text', { silent: true });
+            }
         }
     }
 
@@ -3171,8 +3228,10 @@ class ReadingPartnerApp {
      * Perform a word/phrase lookup
      * @param {string} text - The selected text
      * @param {number} sentenceIndex - The sentence index of the selection
+     * @param {string} [explicitContext] - Override the surrounding sentence
+     *   (used when looking up from quiz overlay text, which isn't part of the book).
      */
-    async _performLookup(text, sentenceIndex) {
+    async _performLookup(text, sentenceIndex, explicitContext) {
         if (!llmClient.hasApiKey()) {
             this._lookupDrawer.showLoading(text);
             this._lookupDrawer.showError('Please set an OpenRouter API key in Settings to use word lookup.');
@@ -3184,10 +3243,15 @@ class ReadingPartnerApp {
         // Show loading state in drawer
         this._lookupDrawer.showLoading(text);
 
-        // Get surrounding sentence for context
-        const chapter = this._currentBook.chapters?.[this._currentChapterIndex];
-        const sentences = chapter?.sentences || [];
-        const contextSentence = sentences[sentenceIndex] || '';
+        // Get surrounding sentence for context (or use the explicit override)
+        let contextSentence;
+        if (typeof explicitContext === 'string' && explicitContext.length > 0) {
+            contextSentence = explicitContext;
+        } else {
+            const chapter = this._currentBook.chapters?.[this._currentChapterIndex];
+            const sentences = chapter?.sentences || [];
+            contextSentence = sentences[sentenceIndex] || '';
+        }
 
         try {
             const entry = await lookupService.lookup({
@@ -3312,6 +3376,11 @@ class ReadingPartnerApp {
             const contextAfter = await storage.getSetting('qaContextAfter');
             if (contextAfter !== null) {
                 this._qaSettings.contextAfter = contextAfter;
+            }
+
+            const qaInputMode = await storage.getSetting('qaInputMode');
+            if (qaInputMode === 'voice' || qaInputMode === 'text') {
+                this._qaInputMode = qaInputMode;
             }
 
             // Load typography settings
