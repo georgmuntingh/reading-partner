@@ -195,6 +195,9 @@ body {
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-lg);
     z-index: 1000;
+    /* Status toast is informational — never swallow taps on the controls
+       it sits above (reader controls, quiz dialog buttons on mobile). */
+    pointer-events: none;
 }
 
 .tts-status .spinner {
