@@ -332,6 +332,13 @@ class ReadingPartnerApp {
         // Initialize TTS engine in background
         ttsEngine.onProgress((progress) => {
             this._showTTSStatus(progress.status);
+            // Auto-hide when a stage completes so the overlay doesn't linger
+            // after background events like the periodic Kokoro reinit, where
+            // no explicit hide is scheduled by the caller.
+            if (progress.progress === 100) {
+                clearTimeout(this._ttsStatusHideTimer);
+                this._ttsStatusHideTimer = setTimeout(() => this._hideTTSStatus(), 3000);
+            }
         });
 
         try {
@@ -2663,12 +2670,15 @@ class ReadingPartnerApp {
         const status = this._elements.ttsStatus;
         status.querySelector('p').textContent = message;
         status.classList.remove('hidden');
+        // Any new status cancels a pending auto-hide; callers re-schedule as needed.
+        clearTimeout(this._ttsStatusHideTimer);
     }
 
     /**
      * Hide TTS status
      */
     _hideTTSStatus() {
+        clearTimeout(this._ttsStatusHideTimer);
         this._elements.ttsStatus.classList.add('hidden');
     }
 
