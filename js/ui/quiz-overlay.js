@@ -4,6 +4,7 @@
  */
 
 import { QuizState } from '../controllers/quiz-controller.js';
+import { LookupSelection } from './lookup-selection.js';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D'];
 
@@ -18,6 +19,7 @@ export class QuizOverlay {
      * @param {(text: string) => void} callbacks.onTextAnswer
      * @param {() => void} callbacks.onVoiceAnswer
      * @param {() => void} callbacks.onSkipToAnswer
+     * @param {(text: string, context: string) => void} [callbacks.onLookup]
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -33,6 +35,7 @@ export class QuizOverlay {
 
         this._buildUI();
         this._setupEventListeners();
+        this._setupLookupSelection();
     }
 
     _buildUI() {
@@ -48,7 +51,7 @@ export class QuizOverlay {
                     </button>
                 </div>
 
-                <div class="quiz-content">
+                <div class="quiz-content quiz-lookup-enabled">
                     <!-- Status (loading/generating) -->
                     <div class="quiz-status-section" id="quiz-status-section">
                         <div class="quiz-icon" id="quiz-icon"></div>
@@ -57,15 +60,15 @@ export class QuizOverlay {
 
                     <!-- Question text -->
                     <div class="quiz-question-section hidden" id="quiz-question-section">
-                        <div class="quiz-question-text" id="quiz-question-text"></div>
+                        <div class="quiz-question-text" id="quiz-question-text" data-lookup-context></div>
                     </div>
 
                     <!-- MC Options -->
                     <div class="quiz-options-section hidden" id="quiz-options-section">
-                        <button class="quiz-option" data-index="0"><span class="quiz-option-label">A)</span> <span class="quiz-option-text"></span></button>
-                        <button class="quiz-option" data-index="1"><span class="quiz-option-label">B)</span> <span class="quiz-option-text"></span></button>
-                        <button class="quiz-option" data-index="2"><span class="quiz-option-label">C)</span> <span class="quiz-option-text"></span></button>
-                        <button class="quiz-option" data-index="3"><span class="quiz-option-label">D)</span> <span class="quiz-option-text"></span></button>
+                        <button class="quiz-option" data-index="0"><span class="quiz-option-label">A)</span> <span class="quiz-option-text" data-lookup-context></span></button>
+                        <button class="quiz-option" data-index="1"><span class="quiz-option-label">B)</span> <span class="quiz-option-text" data-lookup-context></span></button>
+                        <button class="quiz-option" data-index="2"><span class="quiz-option-label">C)</span> <span class="quiz-option-text" data-lookup-context></span></button>
+                        <button class="quiz-option" data-index="3"><span class="quiz-option-label">D)</span> <span class="quiz-option-text" data-lookup-context></span></button>
                     </div>
 
                     <!-- Free-form input -->
@@ -92,7 +95,7 @@ export class QuizOverlay {
                     <!-- Feedback -->
                     <div class="quiz-feedback-section hidden" id="quiz-feedback-section">
                         <label class="quiz-label">Feedback:</label>
-                        <div class="quiz-feedback" id="quiz-feedback"></div>
+                        <div class="quiz-feedback" id="quiz-feedback" data-lookup-context></div>
                     </div>
                 </div>
 
@@ -139,6 +142,16 @@ export class QuizOverlay {
         this._elements.optionsSection.addEventListener('click', (e) => {
             const btn = e.target.closest('.quiz-option');
             if (!btn || btn.disabled) return;
+
+            // If the user is selecting text inside this option, don't submit.
+            const sel = window.getSelection();
+            if (sel && !sel.isCollapsed && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                if (btn.contains(range.startContainer) || btn.contains(range.endContainer)) {
+                    return;
+                }
+            }
+
             const index = parseInt(btn.dataset.index, 10);
             this._callbacks.onMCAnswer?.(index);
         });
@@ -174,6 +187,15 @@ export class QuizOverlay {
                 case 'close':
                     this._callbacks.onClose?.();
                     break;
+            }
+        });
+    }
+
+    _setupLookupSelection() {
+        this._lookupSelection = new LookupSelection({
+            container: this._elements.dialog,
+            onLookup: (text, context) => {
+                this._callbacks.onLookup?.(text, context);
             }
         });
     }

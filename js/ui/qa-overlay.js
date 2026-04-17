@@ -18,6 +18,7 @@ export class QAOverlay {
      * @param {() => void} callbacks.onAskAnother - Ask another question
      * @param {(text: string) => void} callbacks.onTextSubmit - Submit text question
      * @param {() => void} callbacks.onRetryVoice - Retry voice input
+     * @param {(mode: 'voice' | 'text') => void} [callbacks.onInputModeChange] - User toggled input mode
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -28,7 +29,7 @@ export class QAOverlay {
         this._response = '';
         this._history = [];
         this._historyIndex = -1;
-        this._showTextInput = false;
+        this._inputMode = 'voice';
 
         this._buildUI();
         this._setupEventListeners();
@@ -58,23 +59,36 @@ export class QAOverlay {
                     </div>
 
                     <div class="qa-transcript-section" id="qa-transcript-section">
-                        <label class="qa-label">Your Question:</label>
+                        <div class="qa-label-row">
+                            <label class="qa-label">Your Question:</label>
+                            <button class="qa-mode-toggle-btn" id="qa-mode-toggle-text" title="Type your question instead" aria-label="Type your question instead">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="6" width="20" height="12" rx="2"/>
+                                    <line x1="6" y1="10" x2="6" y2="10"/>
+                                    <line x1="10" y1="10" x2="10" y2="10"/>
+                                    <line x1="14" y1="10" x2="14" y2="10"/>
+                                    <line x1="18" y1="10" x2="18" y2="10"/>
+                                    <line x1="6" y1="14" x2="18" y2="14"/>
+                                </svg>
+                            </button>
+                        </div>
                         <div class="qa-transcript" id="qa-transcript"></div>
                     </div>
 
                     <div class="qa-text-input-section hidden" id="qa-text-input-section">
-                        <label class="qa-label">Type your question:</label>
+                        <div class="qa-label-row">
+                            <label class="qa-label">Type your question:</label>
+                            <button class="qa-mode-toggle-btn" id="qa-mode-toggle-voice" title="Use microphone instead" aria-label="Use microphone instead">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                </svg>
+                            </button>
+                        </div>
                         <div class="qa-text-input-wrapper">
                             <input type="text" class="qa-text-input" id="qa-text-input" placeholder="Enter your question...">
                             <button class="btn btn-primary qa-submit-btn" id="qa-submit-btn">Ask</button>
                         </div>
-                        <button class="btn btn-secondary qa-retry-voice-btn" id="qa-retry-voice-btn">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
-                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-                            </svg>
-                            Try Voice Again
-                        </button>
                     </div>
 
                     <div class="qa-response-section hidden" id="qa-response-section">
@@ -122,7 +136,8 @@ export class QAOverlay {
             textInputSection: this._container.querySelector('#qa-text-input-section'),
             textInput: this._container.querySelector('#qa-text-input'),
             submitBtn: this._container.querySelector('#qa-submit-btn'),
-            retryVoiceBtn: this._container.querySelector('#qa-retry-voice-btn'),
+            modeToggleText: this._container.querySelector('#qa-mode-toggle-text'),
+            modeToggleVoice: this._container.querySelector('#qa-mode-toggle-voice'),
             responseSection: this._container.querySelector('#qa-response-section'),
             response: this._container.querySelector('#qa-response'),
             historySection: this._container.querySelector('#qa-history-section'),
@@ -163,9 +178,13 @@ export class QAOverlay {
             }
         });
 
-        // Retry voice button
-        this._elements.retryVoiceBtn.addEventListener('click', () => {
-            this._callbacks.onRetryVoice?.();
+        // Inline mode toggles
+        this._elements.modeToggleText.addEventListener('click', () => {
+            this.setInputMode('text');
+        });
+
+        this._elements.modeToggleVoice.addEventListener('click', () => {
+            this.setInputMode('voice');
         });
 
         // History navigation
@@ -343,7 +362,7 @@ export class QAOverlay {
     }
 
     /**
-     * Update sections visibility based on state
+     * Update sections visibility based on state and input mode
      * @param {string} state
      * @param {Object} data
      */
@@ -353,10 +372,15 @@ export class QAOverlay {
         this._elements.textInputSection.classList.add('hidden');
         this._elements.responseSection.classList.add('hidden');
 
+        const isText = this._inputMode === 'text';
+
         switch (state) {
             case QAState.IDLE:
-                if (this._showTextInput) {
+                // Show the input UI for whichever mode the user is in.
+                if (isText) {
                     this._elements.textInputSection.classList.remove('hidden');
+                } else {
+                    this._elements.transcriptSection.classList.remove('hidden');
                 }
                 break;
 
@@ -452,20 +476,43 @@ export class QAOverlay {
     }
 
     /**
-     * Show text input mode (when STT fails)
+     * Set input mode ('voice' or 'text'). Updates UI visibility and fires
+     * onInputModeChange callback if the mode actually changed.
+     * @param {'voice' | 'text'} mode
+     * @param {{ silent?: boolean }} [options] - silent=true skips the callback
      */
-    showTextInput() {
-        this._showTextInput = true;
-        this._elements.textInputSection.classList.remove('hidden');
-        this._elements.textInput.focus();
+    setInputMode(mode, { silent = false } = {}) {
+        if (mode !== 'voice' && mode !== 'text') return;
+        const changed = this._inputMode !== mode;
+        this._inputMode = mode;
+
+        this._updateSectionsVisibility(this._state, {});
+        this._updateControls(this._state);
+
+        if (mode === 'text') {
+            // Focus the text input so the user can start typing immediately
+            setTimeout(() => this._elements.textInput?.focus(), 0);
+        }
+
+        if (changed && !silent) {
+            this._callbacks.onInputModeChange?.(mode);
+        }
     }
 
     /**
-     * Hide text input mode
+     * Get the current input mode.
+     * @returns {'voice' | 'text'}
      */
-    hideTextInput() {
-        this._showTextInput = false;
-        this._elements.textInputSection.classList.add('hidden');
+    getInputMode() {
+        return this._inputMode;
+    }
+
+    /**
+     * Backwards-compatible alias used by app.js when STT fails or is
+     * unavailable. Switches to text mode without firing the change callback.
+     */
+    showTextInput() {
+        this.setInputMode('text', { silent: true });
     }
 
     /**
@@ -542,12 +589,11 @@ export class QAOverlay {
     }
 
     /**
-     * Reset the overlay
+     * Reset the overlay. Preserves the current input mode (user preference).
      */
     reset() {
         this._transcript = '';
         this._response = '';
-        this._showTextInput = false;
 
         this._elements.transcript.textContent = '';
         this._elements.response.textContent = '';

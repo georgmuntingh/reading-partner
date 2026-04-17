@@ -729,6 +729,43 @@
     letter-spacing: 0.05em;
 }
 
+/* Row that pairs the "Your Question" / "Type your question" label with a
+   small mic/keyboard toggle icon on the right. */
+.qa-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-sm);
+}
+.qa-label-row .qa-label {
+    margin-bottom: 0;
+}
+
+/* Compact icon button used to toggle between voice and text input modes. */
+.qa-mode-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.qa-mode-toggle-btn:hover {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    border-color: var(--primary-color);
+}
+.qa-mode-toggle-btn:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
+
 .qa-transcript-section,
 .qa-response-section,
 .qa-text-input-section,
@@ -1166,6 +1203,58 @@
     overflow-y: auto;
     line-height: 1.6;
     white-space: pre-wrap;
+}
+
+/* Allow text selection (for dictionary lookup) on quiz question text,
+   MC option text, and feedback. Button chrome itself stays unselectable
+   so the surrounding click area still submits answers. */
+.quiz-option {
+    user-select: none;
+    -webkit-user-select: none;
+}
+.quiz-option-text,
+.quiz-question-text,
+.quiz-feedback {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+}
+
+/* Floating lookup-only toolbar used inside the quiz overlay.
+   Matches the look of the reader's highlight toolbar lookup button,
+   but simpler (one button). Drawn above the quiz overlay (z-index 300)
+   and above the lookup drawer trigger. */
+.lookup-selection-toolbar {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    padding: 4px;
+    background-color: var(--text-color);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    z-index: 550;
+    animation: toolbar-appear 0.15s ease-out;
+}
+.lookup-selection-toolbar.hidden {
+    display: none;
+}
+.lookup-selection-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    background-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
+    opacity: 0.9;
+    transition: transform 0.1s ease, opacity 0.1s ease;
+}
+.lookup-selection-btn:hover {
+    transform: scale(1.15);
+    opacity: 1;
 }
 
 /* Quiz Controls */

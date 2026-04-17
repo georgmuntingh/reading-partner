@@ -589,6 +589,19 @@ export class QAController {
     }
 
     /**
+     * Abort an in-progress voice capture without triggering the full
+     * stop()/teardown sequence. Used when the user switches from voice
+     * to text input mid-listening.
+     */
+    abortListening() {
+        try {
+            this._sttService?.abortListening();
+        } catch (_) {
+            // swallow: aborting a non-running STT should be a no-op
+        }
+    }
+
+    /**
      * Request microphone permission
      * @returns {Promise<boolean>}
      */
