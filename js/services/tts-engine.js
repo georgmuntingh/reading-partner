@@ -81,6 +81,23 @@ export class TTSEngine {
     }
 
     /**
+     * Attach state-change logging to an AudioContext.
+     * On Chrome Android the context silently transitions to 'suspended' when
+     * the tab backgrounds or audio output is interrupted (phone call,
+     * Bluetooth reconnect); capturing the transition here makes stutters
+     * and dropped playback diagnosable.
+     * @param {AudioContext} ctx
+     */
+    _attachAudioContextMonitor(ctx) {
+        if (!ctx || ctx._rpStateChangeAttached) return;
+        ctx._rpStateChangeAttached = true;
+        ctx.addEventListener('statechange', () => {
+            appLogger.info(`AudioContext state=${ctx.state} sampleRate=${ctx.sampleRate}`);
+        });
+        appLogger.info(`AudioContext created state=${ctx.state} sampleRate=${ctx.sampleRate}`);
+    }
+
+    /**
      * Set the Kokoro reinit threshold (number of inferences between reinits).
      * @param {number} n
      */
@@ -230,6 +247,7 @@ export class TTSEngine {
                     // Ensure we have an AudioContext for decoding
                     if (!this._audioContext) {
                         this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                        this._attachAudioContextMonitor(this._audioContext);
                     }
 
                     this._reportProgress({ status: 'TTS ready (Kokoro FastAPI)', progress: 100 });
@@ -340,8 +358,13 @@ export class TTSEngine {
 
         this._reportProgress({ status: 'Model loaded', progress: 100 });
 
-        // Initialize audio context
-        this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        // Initialize audio context.
+        // A reinit reuses the existing context — only allocate when missing so
+        // we don't accumulate AudioContexts across periodic Kokoro reinits.
+        if (!this._audioContext) {
+            this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this._attachAudioContextMonitor(this._audioContext);
+        }
     }
 
     /**
@@ -495,7 +518,12 @@ export class TTSEngine {
         if (this._reinitPending && this._backend === 'kokoro-js') {
             this._reinitPending = false;
             try {
-                appLogger.info(`Kokoro reinit: starting (after ${this._inferenceCount} inferences, cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated)`);
+                const ctxState = this._audioContext ? this._audioContext.state : 'none';
+                appLogger.info(
+                    `Kokoro reinit: starting (after ${this._inferenceCount} inferences, ` +
+                    `cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated, ` +
+                    `ctx=${ctxState}, queueDepth=${this._synthesisQueue.length})`
+                );
                 const reinitStart = performance.now();
 
                 // Release the old instance
@@ -737,6 +765,7 @@ export class TTSEngine {
         // Decode WAV to AudioBuffer
         if (!this._audioContext) {
             this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this._attachAudioContextMonitor(this._audioContext);
         }
         const audioBuffer = await this._audioContext.decodeAudioData(arrayBuffer);
 
@@ -773,6 +802,7 @@ export class TTSEngine {
 
         if (!this._audioContext) {
             this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this._attachAudioContextMonitor(this._audioContext);
         }
 
         // Create a tiny silent buffer as placeholder
@@ -1103,6 +1133,7 @@ export class TTSEngine {
     getAudioContext() {
         if (!this._audioContext) {
             this._audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            this._attachAudioContextMonitor(this._audioContext);
         }
         return this._audioContext;
     }
