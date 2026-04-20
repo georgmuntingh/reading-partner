@@ -297,12 +297,32 @@ export class TTSEngine {
         // Determine dtype based on device
         // WebGPU works well with fp32/fp16, WASM benefits from quantization
         let dtype = options.dtype;
+        let dtypeAutoDowngraded = false;
         if (!dtype) {
             dtype = device === 'webgpu' ? 'fp32' : 'q8';
+            // On low-memory mobile devices, q8 Kokoro peaks around ~800 MB of
+            // heap during model load (see diagnostic logs) which Android will
+            // kill. Downgrade the default to q4 when we suspect the device is
+            // memory-constrained. Users can still explicitly pick q8 in
+            // settings (options.dtype will be set in that case).
+            if (device === 'wasm' &&
+                typeof navigator !== 'undefined' &&
+                typeof navigator.deviceMemory === 'number' &&
+                navigator.deviceMemory < 4) {
+                dtype = 'q4';
+                dtypeAutoDowngraded = true;
+            }
         }
 
         this._device = device;
         this._dtype = dtype;
+        if (dtypeAutoDowngraded) {
+            appLogger.warn(
+                `Kokoro dtype auto-downgraded to q4 ` +
+                `(deviceMemory=${navigator.deviceMemory}GB, device=${device}) ` +
+                `to reduce OOM risk on mobile`
+            );
+        }
 
         try {
             this._reportProgress({ status: `Loading TTS engine (${device})...` });
@@ -314,6 +334,7 @@ export class TTSEngine {
             this._isReady = true;
             this._reportProgress({ status: `TTS ready (${device}, ${dtype})`, progress: 100 });
             console.log(`Kokoro TTS initialized: device=${device}, dtype=${dtype}`);
+            appLogger.info(`Kokoro TTS initialized: device=${device} dtype=${dtype}`);
             return true;
 
         } catch (error) {

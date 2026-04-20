@@ -400,7 +400,10 @@ class ReadingPartnerApp {
         }
 
         this._isInitialized = true;
-        appLogger.info(`TTS backend: ${ttsEngine.getBackend()}`);
+        appLogger.info(
+            `TTS backend=${ttsEngine.getBackend()} ` +
+            `device=${ttsEngine.getDevice()} dtype=${ttsEngine.getDtype()}`
+        );
         appLogger.info('App initialized');
         console.log('Reading Partner initialized');
         console.log('Tip: Run readingPartner.runBenchmark() to test TTS performance');
