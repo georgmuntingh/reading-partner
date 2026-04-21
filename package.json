@@ -7,7 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "vite",
     "build": "node scripts/generate-build-info.js && vite build",
-    "preview": "vite preview"
+    "build:app": "cross-env VITE_BASE_PATH=./ VITE_TARGET=app npm run build",
+    "preview": "vite preview",
+    "cap:sync": "npm run build:app && cap sync android",
+    "cap:open:android": "cap open android"
   },
   "repository": {
     "type": "git",
@@ -21,9 +24,15 @@
   },
   "homepage": "https://github.com/georgmuntingh/reading-partner#readme",
   "devDependencies": {
+    "@capacitor/cli": "^7.0.0",
+    "cross-env": "^7.0.3",
     "vite": "^6.4.1"
   },
   "dependencies": {
-    "marked": "^17.0.1"
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "epubjs": "^0.3.93",
+    "marked": "^17.0.1",
+    "pdfjs-dist": "4.9.155"
   }
 }
