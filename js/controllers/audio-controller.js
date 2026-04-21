@@ -41,9 +41,18 @@ export class AudioController {
 
         // Generation tracking
         this._generatingIndices = new Set();
+        // Waiters for in-flight generations, keyed by index. Replaces a
+        // 50ms polling loop that woke the CPU unnecessarily on mobile.
+        /** @type {Map<number, Array<{resolve: Function, reject: Function, timer: ReturnType<typeof setTimeout>}>>} */
+        this._bufferReadyWaiters = new Map();
 
         // Debounce timer for play-after-skip
         this._skipPlayTimer = null;
+
+        // Diagnostics for inter-sentence stutter on mobile.
+        // _lastPlayEndMs is set after each sentence finishes; the next
+        // iteration measures the gap to source.start() and warns if audible.
+        this._lastPlayEndMs = 0;
     }
 
     /**
@@ -106,11 +115,13 @@ export class AudioController {
      * Main playback loop
      */
     async _playbackLoop() {
+        this._lastPlayEndMs = 0;
         while (!this._stopRequested && this._currentIndex < this._sentences.length) {
             this._isPlaying = true;
 
             // Get or wait for buffer
             let buffer = this._bufferQueue.get(this._currentIndex);
+            const bufferReadyUpfront = !!buffer;
 
             if (!buffer) {
                 // Show buffering state
@@ -147,6 +158,19 @@ export class AudioController {
                 );
             }
 
+            // Mobile stutter diagnostic: gap between the previous sentence
+            // ending and this one starting. Anything > ~50ms is audible.
+            if (this._lastPlayEndMs > 0) {
+                const gapMs = Math.round(performance.now() - this._lastPlayEndMs);
+                if (gapMs > 50) {
+                    appLogger.warn(
+                        `Playback gap ${gapMs}ms before sentence ${this._currentIndex} ` +
+                        `(bufferReady=${bufferReadyUpfront}, queue=${this._bufferQueue.size}, ` +
+                        `generating=${this._generatingIndices.size})`
+                    );
+                }
+            }
+
             // Start buffering next sentences in background (don't await)
             this._maintainBuffer();
 
@@ -157,6 +181,7 @@ export class AudioController {
                 console.error('Playback error:', error);
                 appLogger.error(`Playback error at sentence ${this._currentIndex}: ${error.message}`);
             }
+            this._lastPlayEndMs = performance.now();
 
             if (this._stopRequested) break;
 
@@ -387,20 +412,25 @@ export class AudioController {
         }
 
         if (this._generatingIndices.has(index)) {
-            // Already generating, wait for it
+            // Already generating — attach as a waiter; the in-flight generator
+            // will resolve/reject us when it settles. Avoids a 50ms polling
+            // loop that added unnecessary CPU wakeups on mobile.
             return new Promise((resolve, reject) => {
-                const checkBuffer = setInterval(() => {
-                    if (this._bufferQueue.has(index)) {
-                        clearInterval(checkBuffer);
-                        resolve(this._bufferQueue.get(index));
+                let list = this._bufferReadyWaiters.get(index);
+                if (!list) {
+                    list = [];
+                    this._bufferReadyWaiters.set(index, list);
+                }
+                const entry = { resolve, reject, timer: null };
+                entry.timer = setTimeout(() => {
+                    const current = this._bufferReadyWaiters.get(index);
+                    if (current) {
+                        const i = current.indexOf(entry);
+                        if (i >= 0) current.splice(i, 1);
                     }
-                }, 50);
-
-                // Timeout after 30 seconds
-                setTimeout(() => {
-                    clearInterval(checkBuffer);
                     reject(new Error('Buffer generation timeout'));
                 }, 30000);
+                list.push(entry);
             });
         }
 
@@ -424,9 +454,33 @@ export class AudioController {
                 );
             }
             console.log(`TTS ready for sentence ${index}`);
+            this._resolveBufferWaiters(index, buffer);
             return buffer;
+        } catch (error) {
+            this._rejectBufferWaiters(index, error);
+            throw error;
         } finally {
             this._generatingIndices.delete(index);
+        }
+    }
+
+    _resolveBufferWaiters(index, buffer) {
+        const list = this._bufferReadyWaiters.get(index);
+        if (!list) return;
+        this._bufferReadyWaiters.delete(index);
+        for (const w of list) {
+            clearTimeout(w.timer);
+            w.resolve(buffer);
+        }
+    }
+
+    _rejectBufferWaiters(index, error) {
+        const list = this._bufferReadyWaiters.get(index);
+        if (!list) return;
+        this._bufferReadyWaiters.delete(index);
+        for (const w of list) {
+            clearTimeout(w.timer);
+            w.reject(error);
         }
     }
 

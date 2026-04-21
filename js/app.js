@@ -320,6 +320,12 @@ class ReadingPartnerApp {
         appLogger.info('App starting');
         appLogger.trim(); // cap old entries
 
+        // Mobile crash/reload diagnostics.
+        // appLogger is backed by IndexedDB, so entries survive a renderer kill
+        // or auto-reload; the goal here is to leave breadcrumbs the next session
+        // can correlate against a sudden reload on Chrome Android.
+        this._setupMobileDiagnostics();
+
         // Load saved settings first so we know the preferred backend
         await this._loadSettings();
 
@@ -394,10 +400,76 @@ class ReadingPartnerApp {
         }
 
         this._isInitialized = true;
-        appLogger.info(`TTS backend: ${ttsEngine.getBackend()}`);
+        appLogger.info(
+            `TTS backend=${ttsEngine.getBackend()} ` +
+            `device=${ttsEngine.getDevice()} dtype=${ttsEngine.getDtype()}`
+        );
         appLogger.info('App initialized');
         console.log('Reading Partner initialized');
         console.log('Tip: Run readingPartner.runBenchmark() to test TTS performance');
+    }
+
+    /**
+     * Wire up mobile-lifecycle + crash breadcrumbs.
+     * Cheap listeners that let us tell, after a reload, whether the renderer
+     * was backgrounded / frozen / errored right before it died.
+     */
+    _setupMobileDiagnostics() {
+        // Reload detection: if this navigation was a reload or bfcache restore,
+        // that's the signal the tab was probably killed by Android.
+        try {
+            const nav = performance.getEntriesByType('navigation')[0];
+            if (nav) {
+                const deviceMemory = navigator.deviceMemory ?? 'unknown';
+                const hw = navigator.hardwareConcurrency ?? 'unknown';
+                appLogger.info(
+                    `Navigation type=${nav.type} ` +
+                    `ua="${navigator.userAgent}" ` +
+                    `deviceMemoryGB=${deviceMemory} hwConcurrency=${hw}`
+                );
+                if (nav.type === 'reload' || nav.type === 'back_forward') {
+                    appLogger.warn(
+                        `Page ${nav.type} detected — prior session may have been killed. ` +
+                        `Check preceding log entries for the cause.`
+                    );
+                }
+            }
+        } catch (err) {
+            // performance.getEntriesByType may not be available in very old browsers
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            appLogger.info(`visibility=${document.visibilityState}`);
+        });
+        window.addEventListener('pagehide', (e) => {
+            // persisted=true means the page went into bfcache; false means it
+            // is being unloaded (possibly about to be killed).
+            appLogger.info(`pagehide persisted=${e.persisted}`);
+        });
+        window.addEventListener('pageshow', (e) => {
+            appLogger.info(`pageshow persisted=${e.persisted}`);
+        });
+        // Page Lifecycle API: Chrome fires these on mobile when the tab is
+        // frozen / discarded to reclaim resources.
+        document.addEventListener('freeze', () => {
+            appLogger.warn('freeze — tab frozen by the browser');
+        });
+        document.addEventListener('resume', () => {
+            appLogger.info('resume — tab thawed');
+        });
+
+        // Global error capture so a crash leaves a trail before the renderer
+        // dies. Keep messages short to avoid IndexedDB bloat.
+        window.addEventListener('error', (event) => {
+            const msg = event?.message || String(event?.error || 'unknown');
+            const src = event?.filename ? ` @${event.filename}:${event.lineno || '?'}` : '';
+            appLogger.error(`window.error: ${msg}${src}`);
+        });
+        window.addEventListener('unhandledrejection', (event) => {
+            const reason = event?.reason;
+            const msg = (reason && (reason.message || String(reason))) || 'unknown';
+            appLogger.error(`unhandledrejection: ${msg}`);
+        });
     }
 
     /**

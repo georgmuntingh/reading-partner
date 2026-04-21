@@ -17,6 +17,8 @@
  * keep the silent audio element's play/pause state in sync with TTS state.
  */
 
+import { appLogger } from './app-logger.js';
+
 /**
  * Generate a WAV audio data URI with low-amplitude white noise.
  * The white noise ensures Android detects a real audio signal and shows
@@ -175,14 +177,37 @@ class MediaSessionManager {
 
         this._silentAudio.addEventListener('play', () => {
             console.log('Media Session: Audio element started PLAYING');
+            appLogger.info('silentAudio: play');
         });
 
         this._silentAudio.addEventListener('pause', () => {
             console.log('Media Session: Audio element PAUSED');
+            appLogger.info('silentAudio: pause');
         });
 
         this._silentAudio.addEventListener('error', (e) => {
-            console.error('Media Session: Audio error', e.target.error);
+            const err = e.target.error;
+            const code = err ? err.code : '?';
+            const msg = err ? err.message || '' : '';
+            console.error('Media Session: Audio error', err);
+            appLogger.error(`silentAudio: error code=${code} ${msg}`);
+        });
+
+        // Extra diagnostic events for mobile: Chrome Android can silently
+        // stall the keepalive loop, which in turn lets AudioContext auto-
+        // suspend and produces stutter on the next TTS sentence.
+        this._silentAudio.addEventListener('stalled', () => {
+            appLogger.warn('silentAudio: stalled');
+        });
+        this._silentAudio.addEventListener('suspend', () => {
+            appLogger.info('silentAudio: suspend');
+        });
+        this._silentAudio.addEventListener('ended', () => {
+            // loop=true means this should normally never fire
+            appLogger.warn('silentAudio: ended (loop should prevent this)');
+        });
+        this._silentAudio.addEventListener('emptied', () => {
+            appLogger.warn('silentAudio: emptied');
         });
 
         // Preload the audio
