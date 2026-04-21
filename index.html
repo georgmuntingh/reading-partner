@@ -5,7 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Reading Partner - TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
-  <script type="module" crossorigin src="/reading-partner/assets/index-DKRPa4a7.js"></script>
+    <style>
+        .android-install {
+            padding: var(--spacing-md, 1rem);
+            font-size: 0.9em;
+            opacity: 0.8;
+            text-align: center;
+        }
+        body.is-native-app .android-install { display: none; }
+    </style>
+  <script type="module" crossorigin src="/reading-partner/assets/index-BsFrKD8Z.js"></script>
   <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-DiRgvsdh.css">
 </head>
 <body>
@@ -70,6 +79,10 @@
                     <p id="loading-text">Loading...</p>
                 </div>
             </div>
+            <footer class="android-install" id="android-install-link">
+                <a href="https://github.com/georgmuntingh/reading-partner/releases/latest/download/reading-partner.apk"
+                   rel="noopener">Install the Android app</a>
+            </footer>
         </div>
 
         <!-- Reader Screen -->
@@ -319,10 +332,8 @@
         <!-- Content will be rendered by ImageViewerModal component -->
     </div>
 
-    <!-- Scripts -->
-    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/epubjs@0.3.93/dist/epub.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.0/dist/ort.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@4.9.155/build/pdf.min.mjs" type="module"></script>
+    <!-- Scripts. epub.js and pdf.js are bundled from npm via js/app.js so the
+         app boots without a CDN round-trip (needed for the Android APK and
+         for offline-capable Pages visits). -->
 </body>
 </html>
