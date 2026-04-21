@@ -6,7 +6,12 @@
     <title>Reading Partner - TTS Reader</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
     <style>
-        .android-install { font-size: 0.9em; opacity: 0.8; margin-top: -0.25rem; }
+        .android-install {
+            padding: var(--spacing-md, 1rem);
+            font-size: 0.9em;
+            opacity: 0.8;
+            text-align: center;
+        }
         body.is-native-app .android-install { display: none; }
     </style>
   <script type="module" crossorigin src="/reading-partner/pr-previews/pr-60/assets/index-CRdEUE7-.js"></script>
@@ -19,10 +24,6 @@
             <div class="upload-container">
                 <h1>Reading Partner</h1>
                 <p class="subtitle">Upload a file to start listening</p>
-                <p class="android-install" id="android-install-link">
-                    <a href="https://github.com/georgmuntingh/reading-partner/releases/latest/download/reading-partner.apk"
-                       rel="noopener">Install the Android app</a>
-                </p>
 
                 <!-- Q&A Setup Section -->
                 <div class="qa-setup" id="qa-setup">
@@ -78,6 +79,10 @@
                     <p id="loading-text">Loading...</p>
                 </div>
             </div>
+            <footer class="android-install" id="android-install-link">
+                <a href="https://github.com/georgmuntingh/reading-partner/releases/latest/download/reading-partner.apk"
+                   rel="noopener">Install the Android app</a>
+            </footer>
         </div>
 
         <!-- Reader Screen -->
