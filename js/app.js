@@ -3,6 +3,22 @@
  * EPUB TTS Reader with Q&A capabilities
  */
 
+// Bundle epub.js and pdf.js from npm so the app boots offline (Capacitor APK,
+// cached Pages visits). Expose them on window to preserve existing global
+// usage in epub-parser.js and pdf-converter.js.
+import ePub from 'epubjs';
+import * as pdfjsLib from 'pdfjs-dist';
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+window.ePub = ePub;
+window.pdfjsLib = pdfjsLib;
+
+// Tag the body so Capacitor-only UI (e.g. the "Install the Android app" link
+// that only makes sense on the web build) can be hidden via CSS.
+if (window.Capacitor?.isNativePlatform?.()) {
+    document.body.classList.add('is-native-app');
+}
+
 import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/parser-factory.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';

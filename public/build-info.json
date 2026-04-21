@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-02-17T20:03:38.111Z",
-  "commit": "38052298f5bbec25de0f3cb04700e9d589c66fed",
-  "commitShort": "3805229",
-  "branch": "claude/webgpu-local-ai-inference-H9uei",
-  "lastCommitDate": "2026-02-17T10:15:18+01:00"
+  "buildTime": "2026-04-21T12:19:50.753Z",
+  "commit": "0a861b2c64d71e53eb7c702c83164d1f719d3a8a",
+  "commitShort": "0a861b2",
+  "branch": "claude/electron-apk-packaging-1h0e5",
+  "lastCommitDate": "2026-04-21T11:59:15+00:00"
 }
