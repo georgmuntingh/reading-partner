@@ -1509,11 +1509,10 @@ class ReadingPartnerApp {
      * - Double tap back / Previous track: Exit Q&A mode and continue reading
      */
     _initializeMediaSession() {
-        if (!mediaSessionManager.isSupported()) {
-            console.log('Media Session API not supported on this device');
-            return;
-        }
-
+        // Note: we always initialize even if the web Media Session API isn't
+        // supported, because the native Android bridge (MainActivity.java)
+        // forwards hardware media-button key events via `native-media-key`
+        // CustomEvents into the page.
         mediaSessionManager.initialize({
             onPlay: () => {
                 this._play();

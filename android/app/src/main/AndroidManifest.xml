@@ -40,5 +40,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Microphone for speech-to-text (Whisper / browser STT). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Capacitor's BridgeWebChromeClient requires BOTH RECORD_AUDIO and
+         MODIFY_AUDIO_SETTINGS to grant a WebView getUserMedia() request.
+         Without this, allowing the runtime mic prompt still results in a
+         NotAllowedError / "Microphone permission denied" in the webview. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

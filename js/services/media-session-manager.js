@@ -141,11 +141,10 @@ class MediaSessionManager {
      * Initialize the Media Session manager
      */
     initialize({ onPlay, onPause, onEnterQAMode, onExitQAMode, onQAPlayPause, onQANextQuestion }) {
-        if (!this._isSupported) {
-            console.warn('Media Session API not supported');
-            return;
-        }
-
+        // Note: we initialize even if the web Media Session API is unsupported,
+        // because the native Android MediaSession in MainActivity.java forwards
+        // key events via `native-media-key` CustomEvents and we still want to
+        // react to them in Capacitor WebView.
         this._onPlay = onPlay;
         this._onPause = onPause;
         this._onEnterQAMode = onEnterQAMode;
@@ -154,11 +153,110 @@ class MediaSessionManager {
         this._onQANextQuestion = onQANextQuestion;
 
         this._createSilentAudio();
-        this._setupActionHandlers();
+        if (this._isSupported) {
+            this._setupActionHandlers();
+        } else {
+            console.warn('Media Session API not supported; relying on native MediaSession bridge');
+        }
+        this._setupNativeMediaKeyBridge();
         this._isInitialized = true;
 
         console.log('Media Session Manager initialized');
         console.log('Media Session debug: Call mediaSessionManager.diagnose() for diagnostic info');
+    }
+
+    /**
+     * Handle a media key action coming from either the web Media Session API
+     * or the native Android bridge. Keeps the two pathways in sync.
+     * @param {'play'|'pause'|'playpause'|'stop'|'nexttrack'|'previoustrack'} action
+     */
+    async _handleAction(action) {
+        const currentState = this._isSupported ? navigator.mediaSession.playbackState : null;
+
+        switch (action) {
+            case 'play':
+                if (this._isQAModeActive) {
+                    this._onQAPlayPause?.();
+                    return;
+                }
+                try {
+                    if (this._silentAudio && this._silentAudio.paused) {
+                        await this._silentAudio.play();
+                    }
+                } catch (e) {
+                    console.warn('Media Session: Could not play audio:', e.message);
+                }
+                if (this._isSupported) navigator.mediaSession.playbackState = 'playing';
+                this._onPlay?.();
+                return;
+
+            case 'pause':
+                if (this._isQAModeActive) {
+                    this._onQAPlayPause?.();
+                    return;
+                }
+                if (!this._isAndroid && this._silentAudio) {
+                    this._silentAudio.pause();
+                }
+                if (this._isSupported) navigator.mediaSession.playbackState = 'paused';
+                this._onPause?.();
+                return;
+
+            case 'playpause':
+                // Native headset single-tap: toggle based on current logical state.
+                if (this._isQAModeActive) {
+                    this._onQAPlayPause?.();
+                    return;
+                }
+                if (currentState === 'playing') {
+                    await this._handleAction('pause');
+                } else {
+                    await this._handleAction('play');
+                }
+                return;
+
+            case 'stop':
+                if (this._isQAModeActive) {
+                    this._onQAPlayPause?.();
+                    return;
+                }
+                if (this._silentAudio) this._silentAudio.pause();
+                if (this._isSupported) navigator.mediaSession.playbackState = 'paused';
+                this._onPause?.();
+                return;
+
+            case 'nexttrack':
+                if (this._isQAModeActive) {
+                    this._onQANextQuestion?.();
+                } else {
+                    this._onEnterQAMode?.();
+                }
+                return;
+
+            case 'previoustrack':
+                if (this._isQAModeActive) {
+                    this._onExitQAMode?.();
+                }
+                return;
+        }
+    }
+
+    /**
+     * Listen for key events forwarded by the native Android MediaSession
+     * (see MainActivity.java). These fire regardless of whether the web
+     * Media Session API is actually plumbed into Android's system controls.
+     */
+    _setupNativeMediaKeyBridge() {
+        if (this._nativeBridgeInstalled) return;
+        this._nativeBridgeInstalled = true;
+
+        window.addEventListener('native-media-key', (e) => {
+            const action = e?.detail;
+            if (typeof action !== 'string') return;
+            console.log(`Media Session: native-media-key '${action}'`);
+            appLogger.info(`native-media-key: ${action}`);
+            this._handleAction(action);
+        });
     }
 
     /**
@@ -221,107 +319,29 @@ class MediaSessionManager {
      * so we use playbackState to determine actual state, not audio element.
      */
     _setupActionHandlers() {
-        // PLAY action - browser sends this when audio is PAUSED
-        // On Android with continuous audio, we check playbackState instead
-        navigator.mediaSession.setActionHandler('play', async () => {
+        navigator.mediaSession.setActionHandler('play', () => {
             console.log('Media Session: PLAY action received');
-            if (this._isQAModeActive) {
-                console.log('Media Session: Play in Q&A mode - delegating to exit Q&A');
-                this._onQAPlayPause?.();
-                return;
-            }
-
-            // On Android, audio may already be playing, so check playbackState
-            const currentState = navigator.mediaSession.playbackState;
-            console.log(`Media Session: Current state is '${currentState}'`);
-
-            if (currentState === 'paused' || currentState === 'none') {
-                // Start the silent audio to keep session active
-                try {
-                    if (this._silentAudio.paused) {
-                        await this._silentAudio.play();
-                    }
-                } catch (e) {
-                    console.warn('Media Session: Could not play audio:', e.message);
-                }
-
-                navigator.mediaSession.playbackState = 'playing';
-                this._onPlay?.();
-            } else {
-                // Already playing, maybe toggle to pause?
-                console.log('Media Session: Already playing, ignoring duplicate play');
-            }
+            this._handleAction('play');
         });
 
-        // PAUSE action - browser sends this when audio is PLAYING
-        // On Android with continuous audio, we check playbackState instead
         navigator.mediaSession.setActionHandler('pause', () => {
             console.log('Media Session: PAUSE action received');
-            if (this._isQAModeActive) {
-                console.log('Media Session: Pause in Q&A mode - delegating to exit Q&A');
-                this._onQAPlayPause?.();
-                return;
-            }
-
-            // On Android, we might get pause actions even when logically paused
-            const currentState = navigator.mediaSession.playbackState;
-            console.log(`Media Session: Current state is '${currentState}'`);
-
-            if (currentState === 'playing') {
-                // On desktop, pause the silent audio so next button sends "play"
-                // On Android, keep audio playing but set state to paused
-                if (!this._isAndroid) {
-                    this._silentAudio.pause();
-                }
-
-                navigator.mediaSession.playbackState = 'paused';
-                this._onPause?.();
-            } else if (currentState === 'paused' || currentState === 'none') {
-                // Received pause but we're already paused - treat as toggle/play
-                console.log('Media Session: Received pause while paused, treating as play');
-                try {
-                    if (this._silentAudio.paused) {
-                        this._silentAudio.play();
-                    }
-                } catch (e) {
-                    console.warn('Media Session: Could not play audio:', e.message);
-                }
-                navigator.mediaSession.playbackState = 'playing';
-                this._onPlay?.();
-            }
+            this._handleAction('pause');
         });
 
-        // Next track (double tap on headsets)
-        // Reading mode: Enter Q&A mode
-        // Q&A mode: Ask another question
         navigator.mediaSession.setActionHandler('nexttrack', () => {
             console.log('Media Session: NEXTTRACK action received');
-            if (this._isQAModeActive) {
-                console.log('Media Session: Next track in Q&A mode - asking another question');
-                this._onQANextQuestion?.();
-            } else {
-                this._onEnterQAMode?.();
-            }
+            this._handleAction('nexttrack');
         });
 
-        // Previous track - Exit Q&A mode and continue reading
         navigator.mediaSession.setActionHandler('previoustrack', () => {
             console.log('Media Session: PREVIOUSTRACK action received');
-            if (this._isQAModeActive) {
-                this._onExitQAMode?.();
-            }
+            this._handleAction('previoustrack');
         });
 
         navigator.mediaSession.setActionHandler('stop', () => {
             console.log('Media Session: STOP action received');
-            if (this._isQAModeActive) {
-                console.log('Media Session: Stop in Q&A mode - delegating to exit Q&A');
-                this._onQAPlayPause?.();
-                return;
-            }
-            this._silentAudio.pause();
-            navigator.mediaSession.playbackState = 'paused';
-            this._onPause?.();
+            this._handleAction('stop');
         });
 
         try {
