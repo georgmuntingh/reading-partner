@@ -534,49 +534,61 @@ export class TTSEngine {
             return;
         }
 
-        // Perform a pending reinit before processing the next request.
-        // This is the safest moment — between synthesis calls, nothing active.
-        if (this._reinitPending && this._backend === 'kokoro-js') {
-            this._reinitPending = false;
-            try {
-                const ctxState = this._audioContext ? this._audioContext.state : 'none';
-                appLogger.info(
-                    `Kokoro reinit: starting (after ${this._inferenceCount} inferences, ` +
-                    `cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated, ` +
-                    `ctx=${ctxState}, queueDepth=${this._synthesisQueue.length})`
-                );
-                const reinitStart = performance.now();
-
-                // Release the old instance
-                this._kokoro = null;
-
-                // Re-create it with the same settings
-                await this._initializeKokoro(this._device, this._dtype);
-
-                const reinitMs = Math.round(performance.now() - reinitStart);
-                this._inferenceCount = 0;
-                this._cumulativeSamples = 0;
-                appLogger.info(`Kokoro reinit: done in ${reinitMs}ms`);
-            } catch (error) {
-                appLogger.error(`Kokoro reinit failed: ${error.message}`);
-                // Continue — the old _kokoro is null so the next generate() will fail,
-                // which the queue will handle via reject()
-            }
-        }
-
+        // Claim the lock synchronously so any _processQueue call triggered
+        // while we await the reinit below sees _isSynthesizing=true and returns.
+        // Otherwise a concurrent invocation can drain the queue, leaving our
+        // shift() below to return undefined.
         this._isSynthesizing = true;
-        const { text, options, resolve, reject } = this._synthesisQueue.shift();
 
         try {
-            let buffer;
-            if (this._backend === 'kokoro-fastapi') {
-                buffer = await this._synthesizeKokoroFastAPI(text, options);
-            } else {
-                buffer = await this._synthesizeKokoro(text, options);
+            // Perform a pending reinit before processing the next request.
+            // This is the safest moment — between synthesis calls, nothing active.
+            if (this._reinitPending && this._backend === 'kokoro-js') {
+                this._reinitPending = false;
+                try {
+                    const ctxState = this._audioContext ? this._audioContext.state : 'none';
+                    appLogger.info(
+                        `Kokoro reinit: starting (after ${this._inferenceCount} inferences, ` +
+                        `cumulative ${Math.round((this._cumulativeSamples * 4) / 1048576)} MB generated, ` +
+                        `ctx=${ctxState}, queueDepth=${this._synthesisQueue.length})`
+                    );
+                    const reinitStart = performance.now();
+
+                    // Release the old instance
+                    this._kokoro = null;
+
+                    // Re-create it with the same settings
+                    await this._initializeKokoro(this._device, this._dtype);
+
+                    const reinitMs = Math.round(performance.now() - reinitStart);
+                    this._inferenceCount = 0;
+                    this._cumulativeSamples = 0;
+                    appLogger.info(`Kokoro reinit: done in ${reinitMs}ms`);
+                } catch (error) {
+                    appLogger.error(`Kokoro reinit failed: ${error.message}`);
+                    // Continue — the old _kokoro is null so the next generate() will fail,
+                    // which the queue will handle via reject()
+                }
             }
-            resolve(buffer);
-        } catch (error) {
-            reject(error);
+
+            const next = this._synthesisQueue.shift();
+            if (!next) {
+                // Queue was drained externally (e.g. stopAudio) while we awaited.
+                return;
+            }
+            const { text, options, resolve, reject } = next;
+
+            try {
+                let buffer;
+                if (this._backend === 'kokoro-fastapi') {
+                    buffer = await this._synthesizeKokoroFastAPI(text, options);
+                } else {
+                    buffer = await this._synthesizeKokoro(text, options);
+                }
+                resolve(buffer);
+            } catch (error) {
+                reject(error);
+            }
         } finally {
             this._isSynthesizing = false;
             // Process next item in queue
