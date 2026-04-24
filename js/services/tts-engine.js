@@ -31,6 +31,23 @@ import { appLogger } from './app-logger.js';
 const DEFAULT_FASTAPI_URL = 'http://localhost:8880';
 
 /**
+ * Heuristic: are we running on a memory-constrained mobile device?
+ *
+ * Used to pick a lighter dtype for the WebGPU path. `navigator.deviceMemory`
+ * is coarse (quantized to 0.25/0.5/1/2/4/8) and caps at 8 GB even on
+ * higher-end phones, so we combine it with a UA check to avoid applying the
+ * downgrade to desktop Chrome, which also reports 8 GB.
+ * @returns {boolean}
+ */
+function _isLikelyMobile() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+    if (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 4) return true;
+    return false;
+}
+
+/**
  * TTS Engine class
  * Uses Kokoro FastAPI, Kokoro TTS (ONNX), or Web Speech API
  */
@@ -198,10 +215,40 @@ export class TTSEngine {
         // Reset state so re-initialization happens
         this._isReady = false;
         this._isLoading = false;
-        this._kokoro = null;
+        await this._disposeKokoro();
 
         // Re-initialize with the new backend
         await this.initialize({ backend });
+    }
+
+    /**
+     * Release the current Kokoro instance's ONNX sessions.
+     *
+     * Just setting `this._kokoro = null` is not enough: transformers.js keeps
+     * ONNX Runtime sessions alive (WASM linear memory + WebGPU buffers) until
+     * `model.dispose()` is explicitly awaited. Without this, the periodic
+     * reinit does nothing — old sessions accumulate across reinit cycles and
+     * Android eventually kills the WebView for exceeding its process-memory
+     * budget (invisible to `performance.memory`, which only reports JS heap).
+     *
+     * `PreTrainedModel.dispose()` returns Promise<Promise[]>: one inner
+     * promise per session, so we also await the inner array.
+     */
+    async _disposeKokoro() {
+        const instance = this._kokoro;
+        this._kokoro = null;
+        if (!instance) return;
+        try {
+            const model = instance.model;
+            if (model && typeof model.dispose === 'function') {
+                const sessionPromises = await model.dispose();
+                if (Array.isArray(sessionPromises)) {
+                    await Promise.all(sessionPromises);
+                }
+            }
+        } catch (error) {
+            appLogger.warn(`Kokoro dispose failed: ${error.message}`);
+        }
     }
 
     /**
@@ -312,16 +359,39 @@ export class TTSEngine {
                 dtype = 'q4';
                 dtypeAutoDowngraded = true;
             }
+            // Note: we deliberately do NOT auto-downgrade WebGPU to fp16 on
+            // mobile — kokoro-js with fp16 on WebGPU produces silent output
+            // (numerical issues in attention/layer-norm layers) on at least
+            // Chrome WebView 147 / Samsung S928B. q8/q4 weights aren't
+            // exported for the WebGPU target either. fp32 is the only known-
+            // good config; mobile memory pressure is mitigated via a more
+            // aggressive reinit threshold set below.
         }
 
         this._device = device;
         this._dtype = dtype;
         if (dtypeAutoDowngraded) {
+            const dm = (typeof navigator !== 'undefined' && typeof navigator.deviceMemory === 'number')
+                ? `${navigator.deviceMemory}GB`
+                : 'unknown';
             appLogger.warn(
-                `Kokoro dtype auto-downgraded to q4 ` +
-                `(deviceMemory=${navigator.deviceMemory}GB, device=${device}) ` +
+                `Kokoro dtype auto-downgraded to ${dtype} ` +
+                `(deviceMemory=${dm}, device=${device}) ` +
                 `to reduce OOM risk on mobile`
             );
+        }
+
+        // Mobile WebGPU: Kokoro-82M at fp32 is ~328 MB of weights; on Android
+        // WebView the process gets killed around ~500 MB of JS heap (the OS
+        // counts total RSS, not just JS heap). Default reinit at 25 was too
+        // high — a crash was observed at inference #9 before reinit ever ran.
+        // Cycle more aggressively on mobile so the dispose-then-reload path
+        // actually has a chance to reclaim native memory before the ceiling
+        // is hit. The reinit itself takes ~7s; at threshold 10 that's
+        // roughly one pause per ~10 sentences, a deliberate trade-off.
+        if (device === 'webgpu' && _isLikelyMobile() && this._reinitThreshold > 10) {
+            this._reinitThreshold = 10;
+            appLogger.info(`Kokoro reinit threshold lowered to ${this._reinitThreshold} (mobile WebGPU)`);
         }
 
         try {
@@ -554,8 +624,11 @@ export class TTSEngine {
                     );
                     const reinitStart = performance.now();
 
-                    // Release the old instance
-                    this._kokoro = null;
+                    // Release the old instance's ONNX sessions BEFORE allocating
+                    // the new one — otherwise we briefly hold two full models in
+                    // memory, which on mobile is enough to push the WebView past
+                    // its process-memory budget.
+                    await this._disposeKokoro();
 
                     // Re-create it with the same settings
                     await this._initializeKokoro(this._device, this._dtype);
@@ -1174,13 +1247,13 @@ export class TTSEngine {
     /**
      * Cleanup resources
      */
-    destroy() {
+    async destroy() {
         this.stopWebSpeech();
         if (this._audioContext) {
             this._audioContext.close();
             this._audioContext = null;
         }
-        this._kokoro = null;
+        await this._disposeKokoro();
         this._isReady = false;
         this._isLoading = false;
     }
