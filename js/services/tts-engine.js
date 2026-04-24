@@ -359,17 +359,13 @@ export class TTSEngine {
                 dtype = 'q4';
                 dtypeAutoDowngraded = true;
             }
-            // Mobile WebGPU: fp32 Kokoro-82M is ~328 MB of weights. On Android
-            // WebView the process gets killed well before jsHeapSizeLimit is
-            // reached (crash logs show death around ~500 MB heap even with a
-            // reported 2144 MB limit — the OS low-memory killer counts total
-            // RSS, which includes WASM linear memory and WebGPU buffers that
-            // `performance.memory` does not see). Default to fp16 to roughly
-            // halve baseline memory. Users can still override in settings.
-            if (device === 'webgpu' && _isLikelyMobile()) {
-                dtype = 'fp16';
-                dtypeAutoDowngraded = true;
-            }
+            // Note: we deliberately do NOT auto-downgrade WebGPU to fp16 on
+            // mobile — kokoro-js with fp16 on WebGPU produces silent output
+            // (numerical issues in attention/layer-norm layers) on at least
+            // Chrome WebView 147 / Samsung S928B. q8/q4 weights aren't
+            // exported for the WebGPU target either. fp32 is the only known-
+            // good config; mobile memory pressure is mitigated via a more
+            // aggressive reinit threshold set below.
         }
 
         this._device = device;
@@ -383,6 +379,19 @@ export class TTSEngine {
                 `(deviceMemory=${dm}, device=${device}) ` +
                 `to reduce OOM risk on mobile`
             );
+        }
+
+        // Mobile WebGPU: Kokoro-82M at fp32 is ~328 MB of weights; on Android
+        // WebView the process gets killed around ~500 MB of JS heap (the OS
+        // counts total RSS, not just JS heap). Default reinit at 25 was too
+        // high — a crash was observed at inference #9 before reinit ever ran.
+        // Cycle more aggressively on mobile so the dispose-then-reload path
+        // actually has a chance to reclaim native memory before the ceiling
+        // is hit. The reinit itself takes ~7s; at threshold 10 that's
+        // roughly one pause per ~10 sentences, a deliberate trade-off.
+        if (device === 'webgpu' && _isLikelyMobile() && this._reinitThreshold > 10) {
+            this._reinitThreshold = 10;
+            appLogger.info(`Kokoro reinit threshold lowered to ${this._reinitThreshold} (mobile WebGPU)`);
         }
 
         try {
