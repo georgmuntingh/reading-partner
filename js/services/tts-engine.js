@@ -198,10 +198,40 @@ export class TTSEngine {
         // Reset state so re-initialization happens
         this._isReady = false;
         this._isLoading = false;
-        this._kokoro = null;
+        await this._disposeKokoro();
 
         // Re-initialize with the new backend
         await this.initialize({ backend });
+    }
+
+    /**
+     * Release the current Kokoro instance's ONNX sessions.
+     *
+     * Just setting `this._kokoro = null` is not enough: transformers.js keeps
+     * ONNX Runtime sessions alive (WASM linear memory + WebGPU buffers) until
+     * `model.dispose()` is explicitly awaited. Without this, the periodic
+     * reinit does nothing — old sessions accumulate across reinit cycles and
+     * Android eventually kills the WebView for exceeding its process-memory
+     * budget (invisible to `performance.memory`, which only reports JS heap).
+     *
+     * `PreTrainedModel.dispose()` returns Promise<Promise[]>: one inner
+     * promise per session, so we also await the inner array.
+     */
+    async _disposeKokoro() {
+        const instance = this._kokoro;
+        this._kokoro = null;
+        if (!instance) return;
+        try {
+            const model = instance.model;
+            if (model && typeof model.dispose === 'function') {
+                const sessionPromises = await model.dispose();
+                if (Array.isArray(sessionPromises)) {
+                    await Promise.all(sessionPromises);
+                }
+            }
+        } catch (error) {
+            appLogger.warn(`Kokoro dispose failed: ${error.message}`);
+        }
     }
 
     /**
@@ -554,8 +584,11 @@ export class TTSEngine {
                     );
                     const reinitStart = performance.now();
 
-                    // Release the old instance
-                    this._kokoro = null;
+                    // Release the old instance's ONNX sessions BEFORE allocating
+                    // the new one — otherwise we briefly hold two full models in
+                    // memory, which on mobile is enough to push the WebView past
+                    // its process-memory budget.
+                    await this._disposeKokoro();
 
                     // Re-create it with the same settings
                     await this._initializeKokoro(this._device, this._dtype);
@@ -1174,13 +1207,13 @@ export class TTSEngine {
     /**
      * Cleanup resources
      */
-    destroy() {
+    async destroy() {
         this.stopWebSpeech();
         if (this._audioContext) {
             this._audioContext.close();
             this._audioContext = null;
         }
-        this._kokoro = null;
+        await this._disposeKokoro();
         this._isReady = false;
         this._isLoading = false;
     }
