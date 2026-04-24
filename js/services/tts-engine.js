@@ -31,6 +31,23 @@ import { appLogger } from './app-logger.js';
 const DEFAULT_FASTAPI_URL = 'http://localhost:8880';
 
 /**
+ * Heuristic: are we running on a memory-constrained mobile device?
+ *
+ * Used to pick a lighter dtype for the WebGPU path. `navigator.deviceMemory`
+ * is coarse (quantized to 0.25/0.5/1/2/4/8) and caps at 8 GB even on
+ * higher-end phones, so we combine it with a UA check to avoid applying the
+ * downgrade to desktop Chrome, which also reports 8 GB.
+ * @returns {boolean}
+ */
+function _isLikelyMobile() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+    if (typeof navigator.deviceMemory === 'number' && navigator.deviceMemory <= 4) return true;
+    return false;
+}
+
+/**
  * TTS Engine class
  * Uses Kokoro FastAPI, Kokoro TTS (ONNX), or Web Speech API
  */
@@ -342,14 +359,28 @@ export class TTSEngine {
                 dtype = 'q4';
                 dtypeAutoDowngraded = true;
             }
+            // Mobile WebGPU: fp32 Kokoro-82M is ~328 MB of weights. On Android
+            // WebView the process gets killed well before jsHeapSizeLimit is
+            // reached (crash logs show death around ~500 MB heap even with a
+            // reported 2144 MB limit — the OS low-memory killer counts total
+            // RSS, which includes WASM linear memory and WebGPU buffers that
+            // `performance.memory` does not see). Default to fp16 to roughly
+            // halve baseline memory. Users can still override in settings.
+            if (device === 'webgpu' && _isLikelyMobile()) {
+                dtype = 'fp16';
+                dtypeAutoDowngraded = true;
+            }
         }
 
         this._device = device;
         this._dtype = dtype;
         if (dtypeAutoDowngraded) {
+            const dm = (typeof navigator !== 'undefined' && typeof navigator.deviceMemory === 'number')
+                ? `${navigator.deviceMemory}GB`
+                : 'unknown';
             appLogger.warn(
-                `Kokoro dtype auto-downgraded to q4 ` +
-                `(deviceMemory=${navigator.deviceMemory}GB, device=${device}) ` +
+                `Kokoro dtype auto-downgraded to ${dtype} ` +
+                `(deviceMemory=${dm}, device=${device}) ` +
                 `to reduce OOM risk on mobile`
             );
         }
