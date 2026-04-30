@@ -14,8 +14,8 @@
         }
         body.is-native-app .android-install { display: none; }
     </style>
-  <script type="module" crossorigin src="/reading-partner/assets/index--VwH1dQu.js"></script>
-  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-DiRgvsdh.css">
+  <script type="module" crossorigin src="/reading-partner/assets/index-CZ-SG8u_.js"></script>
+  <link rel="stylesheet" crossorigin href="/reading-partner/assets/index-D_NItDl7.css">
 </head>
 <body>
     <div id="app">
@@ -78,6 +78,16 @@
                     <div class="spinner"></div>
                     <p id="loading-text">Loading...</p>
                 </div>
+
+                <button class="startup-log-link" id="startup-view-log-btn" type="button" title="View activity log from previous session">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                        <line x1="8" y1="13" x2="16" y2="13"/>
+                        <line x1="8" y1="17" x2="16" y2="17"/>
+                    </svg>
+                    View startup log
+                </button>
             </div>
             <footer class="android-install" id="android-install-link">
                 <a href="https://github.com/georgmuntingh/reading-partner/releases/latest/download/reading-partner.apk"
@@ -330,6 +340,30 @@
     <!-- Image Viewer Modal -->
     <div id="image-viewer-modal" class="image-viewer-modal hidden">
         <!-- Content will be rendered by ImageViewerModal component -->
+    </div>
+
+    <!-- Startup Log Modal -->
+    <div id="startup-log-modal" class="modal-overlay hidden">
+        <div class="modal startup-log-modal">
+            <div class="modal-header">
+                <h2>Startup Log</h2>
+                <button class="btn-icon modal-close-btn" id="startup-log-close-btn" aria-label="Close">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-content">
+                <p class="form-hint" style="margin-top: 0;">Recent activity log. Useful for diagnosing what happened before a crash. Newest entries first.</p>
+                <div id="startup-log-viewer" class="startup-log-viewer">Loading log...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary btn-sm" id="startup-log-copy-btn">Copy</button>
+                <button class="btn btn-secondary btn-sm" id="startup-log-clear-btn">Clear</button>
+                <button class="btn btn-primary btn-sm" id="startup-log-done-btn">Done</button>
+            </div>
+        </div>
     </div>
 
     <!-- Scripts. epub.js and pdf.js are bundled from npm via js/app.js so the
