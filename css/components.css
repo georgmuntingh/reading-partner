@@ -610,6 +610,54 @@
     padding-top: var(--spacing-md);
 }
 
+/* Startup screen log link */
+.startup-log-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: var(--spacing-lg);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: none;
+    border: none;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: transparent;
+    transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+.startup-log-link:hover,
+.startup-log-link:focus-visible {
+    color: var(--primary-color);
+    text-decoration-color: currentColor;
+    outline: none;
+}
+
+.startup-log-link svg {
+    flex-shrink: 0;
+}
+
+/* Startup log modal */
+.startup-log-modal {
+    max-width: 720px;
+}
+
+.startup-log-viewer {
+    max-height: 60vh;
+    overflow-y: auto;
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-sm);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-color);
+}
+
 /* Q&A Overlay */
 .qa-overlay {
     position: fixed;
