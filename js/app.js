@@ -142,6 +142,7 @@ class ReadingPartnerApp {
         this._setupKeyboardShortcuts();
         this._setupFullscreen();
         this._setupQASetup();
+        this._setupStartupLogModal();
 
         // Initialize storage and reading state
         this._readingState = new ReadingStateController({
@@ -1778,6 +1779,91 @@ class ReadingPartnerApp {
         if (setupModel) {
             setupModel.value = this._qaSettings.model || DEFAULT_MODEL;
         }
+    }
+
+    /**
+     * Wire up the "View startup log" button on the upload screen.
+     * Renders entries from appLogger into a modal so users can inspect
+     * what happened just before a previous crash.
+     */
+    _setupStartupLogModal() {
+        const openBtn = document.getElementById('startup-view-log-btn');
+        const modal = document.getElementById('startup-log-modal');
+        const viewer = document.getElementById('startup-log-viewer');
+        const closeBtn = document.getElementById('startup-log-close-btn');
+        const doneBtn = document.getElementById('startup-log-done-btn');
+        const clearBtn = document.getElementById('startup-log-clear-btn');
+        const copyBtn = document.getElementById('startup-log-copy-btn');
+
+        if (!openBtn || !modal || !viewer) return;
+
+        const formatEntries = (entries) => entries.map(e => {
+            const time = new Date(e.timestamp).toLocaleString();
+            const lvl = (e.level || 'info').toUpperCase().padEnd(5);
+            let line = `[${time}] ${lvl} ${e.message}`;
+            if (e.memory) {
+                line += `  | heap: ${e.memory.usedMB}/${e.memory.totalMB} MB (limit ${e.memory.limitMB} MB)`;
+            }
+            if (e.detail) {
+                line += `\n         ${e.detail}`;
+            }
+            return line;
+        }).join('\n');
+
+        const render = async () => {
+            viewer.textContent = 'Loading log...';
+            try {
+                const entries = await appLogger.getEntries();
+                viewer.textContent = entries.length === 0
+                    ? 'No log entries yet.'
+                    : formatEntries(entries);
+                viewer.scrollTop = 0;
+            } catch (err) {
+                viewer.textContent = 'Failed to load log: ' + (err?.message || err);
+            }
+        };
+
+        const open = () => {
+            modal.classList.remove('hidden');
+            // Force reflow so the transition runs
+            void modal.offsetHeight;
+            modal.classList.add('active');
+            render();
+        };
+
+        const close = () => {
+            modal.classList.remove('active');
+            setTimeout(() => {
+                if (!modal.classList.contains('active')) {
+                    modal.classList.add('hidden');
+                }
+            }, 300);
+        };
+
+        openBtn.addEventListener('click', open);
+        closeBtn?.addEventListener('click', close);
+        doneBtn?.addEventListener('click', close);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) close();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && modal.classList.contains('active')) close();
+        });
+
+        clearBtn?.addEventListener('click', async () => {
+            await appLogger.clear();
+            viewer.textContent = 'Log cleared.';
+        });
+
+        copyBtn?.addEventListener('click', async () => {
+            const text = viewer.textContent || '';
+            try {
+                await navigator.clipboard.writeText(text);
+                this._showToast?.('Log copied to clipboard');
+            } catch {
+                this._showToast?.('Failed to copy log');
+            }
+        });
     }
 
     /**
