@@ -12,7 +12,7 @@
 import { storage } from '../services/storage.js';
 import { llmClient } from '../services/llm-client.js';
 import { embeddingProvider } from '../services/embedding-provider.js';
-import { chunkSentences, extractFromChunk } from '../services/kg-extractor.js';
+import { chunkSentences, extractFromChunkBatch } from '../services/kg-extractor.js';
 import { KGResolver } from '../services/kg-resolver.js';
 
 export const KG_STATE = Object.freeze({
@@ -69,6 +69,7 @@ export class KGController {
         const chunkSize = settings.kgChunkSize ?? 6;
         const chunkOverlap = settings.kgChunkOverlap ?? 2;
         const similarityThreshold = settings.kgSimilarityThreshold ?? 0.88;
+        const chunksPerRequest = Math.max(1, settings.kgChunksPerRequest ?? 4);
         const targetBackend = settings.kgExtractionBackend;
 
         const prevBackend = llmClient.getBackend();
@@ -106,16 +107,33 @@ export class KGController {
             // 3) Chunk the chapter
             const chunks = chunkSentences(chapter.sentences, chunkSize, chunkOverlap);
 
-            // 4) Phase A — extract every chunk sequentially. Per-chunk
-            //    failures still log + continue (one bad chunk should not
-            //    kill the chapter).
+            // 4) Phase A — extract chunks in groups of K (kgChunksPerRequest).
+            //    Each group is a single LLM call returning per-chunk entities/
+            //    relations, so a 20-chunk chapter with K=4 makes 5 LLM calls
+            //    instead of 20. Per-batch failures log + skip (one bad batch
+            //    loses K chunks but the rest of the chapter still completes).
             const extractions = new Array(chunks.length).fill(null);
-            for (let i = 0; i < chunks.length; i++) {
-                this.onProgress?.({ stage: 'extract', current: i + 1, total: chunks.length });
+            for (let start = 0; start < chunks.length; start += chunksPerRequest) {
+                const end = Math.min(start + chunksPerRequest, chunks.length);
+                const batchTexts = chunks.slice(start, end).map((c) => c.text);
+                this.onProgress?.({
+                    stage: 'extract',
+                    current: start + 1,
+                    total: chunks.length,
+                    batchSize: batchTexts.length
+                });
+                let batchResults;
                 try {
-                    extractions[i] = await extractFromChunk(chunks[i].text);
+                    batchResults = await extractFromChunkBatch(batchTexts);
                 } catch (err) {
-                    console.warn(`[kg-controller] chunk ${i} extraction threw:`, err?.message);
+                    console.warn(
+                        `[kg-controller] batch ${start}-${end - 1} extraction threw:`,
+                        err?.message
+                    );
+                    continue;
+                }
+                for (let j = 0; j < batchResults.length; j++) {
+                    extractions[start + j] = batchResults[j];
                 }
             }
 

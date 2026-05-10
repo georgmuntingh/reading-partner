@@ -73,6 +73,9 @@ const baseSettings = {
     kgExtractionBackend: 'openrouter',
     kgChunkSize: 2,
     kgChunkOverlap: 1,
+    // Pin existing per-chunk-behaviour tests to K=1 so they keep modelling
+    // one LLM call per chunk. The batched path has its own specs further down.
+    kgChunksPerRequest: 1,
     kgSimilarityThreshold: 0.5
 };
 
@@ -338,6 +341,101 @@ describe('KGController.buildChapterGraph', () => {
         expect(resolveEvents.length).toBeGreaterThan(0);
         expect(resolveEvents[0]).toMatchObject({ stage: 'resolve', current: 1 });
         expect(resolveEvents[resolveEvents.length - 1].current).toBe(resolveEvents.length);
+    });
+
+    it('with kgChunksPerRequest=4 sends 4 chunks per LLM call (1 batched extraction call for 4 chunks)', async () => {
+        // 8 sentences with chunkSize=2, overlap=1 → 7 chunks.
+        // K=4 → ceil(7/4) = 2 extraction LLM calls.
+        const longBook = {
+            id: 'b1',
+            chapters: [{
+                sentences: ['s1.', 's2.', 's3.', 's4.', 's5.', 's6.', 's7.', 's8.']
+            }]
+        };
+        await storage.saveBook(longBook);
+        const batchSettings = { ...baseSettings, kgChunksPerRequest: 4 };
+
+        // First batch (4 chunks) → return passages array of length 4
+        // Second batch (3 chunks) → return passages array of length 3
+        const passagesOf = (n) => JSON.stringify({
+            passages: Array.from({ length: n }, () => ({
+                entities: [{ name: 'X', type: 'OTHER', aliases: [], bloom: 'Remember' }],
+                relations: []
+            }))
+        });
+        llmClient.complete
+            .mockResolvedValueOnce(passagesOf(4))
+            .mockResolvedValueOnce(passagesOf(3));
+
+        const ctrl = new KGController({ getSettings: () => batchSettings, getBook: () => longBook });
+        await ctrl.buildChapterGraph(0);
+
+        expect(llmClient.complete).toHaveBeenCalledTimes(2);
+        expect(llmClient.complete.mock.calls[0][0].prompt).toContain('--- Passage 1 ---');
+        expect(llmClient.complete.mock.calls[0][0].prompt).toContain('--- Passage 4 ---');
+        expect(llmClient.complete.mock.calls[1][0].prompt).toContain('--- Passage 3 ---');
+        expect(ctrl.state).toBe(KG_STATE.DONE);
+    });
+
+    it('emits batched stage="extract" progress with batchSize=K', async () => {
+        const longBook = {
+            id: 'b1',
+            chapters: [{
+                sentences: ['s1.', 's2.', 's3.', 's4.', 's5.', 's6.']
+            }]
+        };
+        await storage.saveBook(longBook);
+        const batchSettings = { ...baseSettings, kgChunksPerRequest: 4 };
+        const passagesOf = (n) => JSON.stringify({
+            passages: Array.from({ length: n }, () => ({ entities: [], relations: [] }))
+        });
+        llmClient.complete.mockResolvedValue(passagesOf(4));
+        const events = [];
+        const ctrl = new KGController({ getSettings: () => batchSettings, getBook: () => longBook });
+        ctrl.onProgress = (p) => events.push(p);
+        await ctrl.buildChapterGraph(0);
+
+        const extractEvents = events.filter((e) => e.stage === 'extract');
+        expect(extractEvents.length).toBeGreaterThanOrEqual(1);
+        expect(extractEvents[0]).toMatchObject({
+            stage: 'extract',
+            current: 1,
+            batchSize: expect.any(Number)
+        });
+        // Each event's batchSize must be <= K
+        for (const e of extractEvents) {
+            expect(e.batchSize).toBeLessThanOrEqual(4);
+        }
+    });
+
+    it('one bad batch loses K chunks but the rest of the chapter still completes', async () => {
+        const longBook = {
+            id: 'b1',
+            chapters: [{
+                sentences: ['s1.', 's2.', 's3.', 's4.', 's5.', 's6.', 's7.']
+            }]
+        };
+        await storage.saveBook(longBook);
+        const batchSettings = { ...baseSettings, kgChunksPerRequest: 4 };
+        const passagesOf = (n) => JSON.stringify({
+            passages: Array.from({ length: n }, () => ({
+                entities: [{ name: 'Y', type: 'OTHER', aliases: [], bloom: 'Remember' }],
+                relations: []
+            }))
+        });
+        // First batch: malformed JSON; second batch: valid
+        llmClient.complete
+            .mockResolvedValueOnce('not even json')
+            .mockResolvedValueOnce(passagesOf(2));   // however many chunks land here
+
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const ctrl = new KGController({ getSettings: () => batchSettings, getBook: () => longBook });
+        await ctrl.buildChapterGraph(0);
+        expect(ctrl.state).toBe(KG_STATE.DONE);
+        // Y must be in the graph (from the surviving batch)
+        const nodes = await storage.getKGNodesForBook('b1');
+        expect(nodes.map((n) => n.canonicalName)).toContain('Y');
+        warn.mockRestore();
     });
 
     it('aborts the build with ERROR state when batch embedding fails', async () => {

@@ -16,7 +16,7 @@ vi.mock('../js/services/llm-client.js', () => {
     };
 });
 
-import { chunkSentences, extractFromChunk, KG_EXTRACTION_SYSTEM_PROMPT } from '../js/services/kg-extractor.js';
+import { chunkSentences, extractFromChunk, extractFromChunkBatch, KG_EXTRACTION_SYSTEM_PROMPT, KG_BATCH_EXTRACTION_SYSTEM_PROMPT } from '../js/services/kg-extractor.js';
 import { llmClient } from '../js/services/llm-client.js';
 
 const sentencesOfLength = (n) => Array.from({ length: n }, (_, i) => `S${i}.`);
@@ -122,5 +122,83 @@ describe('extractFromChunk', () => {
         llmClient.complete.mockResolvedValueOnce('"just a string"');
         const out = await extractFromChunk('text');
         expect(out).toBeNull();
+    });
+});
+
+describe('extractFromChunkBatch', () => {
+    let warnSpy;
+    beforeEach(() => {
+        llmClient.complete.mockReset();
+        warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    it('returns [] for empty input without calling the LLM', async () => {
+        const out = await extractFromChunkBatch([]);
+        expect(out).toEqual([]);
+        expect(llmClient.complete).not.toHaveBeenCalled();
+    });
+
+    it('K=1 falls back to the single-passage prompt (not the batch prompt)', async () => {
+        llmClient.complete.mockResolvedValueOnce(JSON.stringify({
+            entities: [{ name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }],
+            relations: []
+        }));
+        const out = await extractFromChunkBatch(['Arthur drew the sword.']);
+        expect(out).toHaveLength(1);
+        expect(out[0].entities[0].name).toBe('Arthur');
+        // System prompt should be the single-chunk one
+        expect(llmClient.complete.mock.calls[0][0].system).toBe(KG_EXTRACTION_SYSTEM_PROMPT);
+    });
+
+    it('K>=2 uses the batch prompt and unpacks the passages array in order', async () => {
+        llmClient.complete.mockResolvedValueOnce(JSON.stringify({
+            passages: [
+                { entities: [{ name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }], relations: [] },
+                { entities: [{ name: 'Excalibur', type: 'OBJECT', aliases: [], bloom: 'Remember' }], relations: [] },
+                { entities: [], relations: [] }
+            ]
+        }));
+        const out = await extractFromChunkBatch(['A.', 'B.', 'C.']);
+        expect(llmClient.complete).toHaveBeenCalledTimes(1);
+        expect(llmClient.complete.mock.calls[0][0].system).toBe(KG_BATCH_EXTRACTION_SYSTEM_PROMPT);
+        expect(llmClient.complete.mock.calls[0][0].prompt).toContain('--- Passage 1 ---');
+        expect(llmClient.complete.mock.calls[0][0].prompt).toContain('--- Passage 3 ---');
+        expect(out).toHaveLength(3);
+        expect(out[0].entities[0].name).toBe('Arthur');
+        expect(out[1].entities[0].name).toBe('Excalibur');
+        expect(out[2].entities).toEqual([]);
+    });
+
+    it('returns one null per input chunk when the batch JSON is malformed', async () => {
+        llmClient.complete.mockResolvedValueOnce('not even json');
+        const out = await extractFromChunkBatch(['A.', 'B.']);
+        expect(out).toEqual([null, null]);
+        expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('returns one null per input chunk when the network call fails', async () => {
+        llmClient.complete.mockRejectedValueOnce(new Error('network down'));
+        const out = await extractFromChunkBatch(['A.', 'B.', 'C.']);
+        expect(out).toEqual([null, null, null]);
+        expect(warnSpy).toHaveBeenCalled();
+    });
+
+    it('pads with null when the model returns fewer passages than requested', async () => {
+        llmClient.complete.mockResolvedValueOnce(JSON.stringify({
+            passages: [
+                { entities: [{ name: 'A', type: 'OTHER', aliases: [], bloom: 'Remember' }], relations: [] }
+                // missing entries for inputs 2 and 3
+            ]
+        }));
+        const out = await extractFromChunkBatch(['A.', 'B.', 'C.']);
+        expect(out[0].entities[0].name).toBe('A');
+        expect(out[1]).toBeNull();
+        expect(out[2]).toBeNull();
+    });
+
+    it('caps maxTokens at maxTokensCap regardless of batch size', async () => {
+        llmClient.complete.mockResolvedValueOnce(JSON.stringify({ passages: [{ entities: [], relations: [] }] }));
+        await extractFromChunkBatch(['A.', 'B.', 'C.', 'D.', 'E.', 'F.', 'G.', 'H.', 'I.', 'J.', 'K.', 'L.'], { maxTokensPerChunk: 1000, maxTokensCap: 4000 });
+        expect(llmClient.complete.mock.calls[0][0].maxTokens).toBe(4000);
     });
 });

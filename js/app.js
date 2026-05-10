@@ -2731,6 +2731,9 @@ class ReadingPartnerApp {
             if (settings.kgChunkOverlap !== undefined) {
                 await storage.saveSetting('kgChunkOverlap', settings.kgChunkOverlap);
             }
+            if (settings.kgChunksPerRequest !== undefined) {
+                await storage.saveSetting('kgChunksPerRequest', settings.kgChunksPerRequest);
+            }
             if (settings.kgSimilarityThreshold !== undefined) {
                 await storage.saveSetting('kgSimilarityThreshold', settings.kgSimilarityThreshold);
             }
@@ -3396,7 +3399,11 @@ class ReadingPartnerApp {
             text.textContent = `Downloading embedding model${file}${pct}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'extract') {
-            text.textContent = `Extracting chunk ${p.current}/${p.total}…`;
+            const span = p.batchSize && p.batchSize > 1
+                ? `${p.current}-${Math.min(p.current + p.batchSize - 1, p.total)}`
+                : `${p.current}`;
+            const label = p.batchSize && p.batchSize > 1 ? 'chunks' : 'chunk';
+            text.textContent = `Extracting ${label} ${span}/${p.total}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'embed') {
             text.textContent = `Embedding ${p.count} entit${p.count === 1 ? 'y' : 'ies'}…`;
@@ -3837,6 +3844,7 @@ class ReadingPartnerApp {
             const kgExtractionBackend = await storage.getSetting('kgExtractionBackend');
             const kgChunkSize = await storage.getSetting('kgChunkSize');
             const kgChunkOverlap = await storage.getSetting('kgChunkOverlap');
+            const kgChunksPerRequest = await storage.getSetting('kgChunksPerRequest');
             const kgSimilarityThreshold = await storage.getSetting('kgSimilarityThreshold');
             const kgEmbeddingSource = await storage.getSetting('kgEmbeddingSource');
             const kgCloudEmbeddingModel = await storage.getSetting('kgCloudEmbeddingModel');
@@ -3895,6 +3903,7 @@ class ReadingPartnerApp {
                 kgExtractionBackend: kgExtractionBackend || 'openrouter',
                 kgChunkSize: kgChunkSize !== null ? kgChunkSize : 6,
                 kgChunkOverlap: kgChunkOverlap !== null ? kgChunkOverlap : 2,
+                kgChunksPerRequest: kgChunksPerRequest !== null ? kgChunksPerRequest : 4,
                 kgSimilarityThreshold: kgSimilarityThreshold !== null ? kgSimilarityThreshold : 0.88,
                 kgEmbeddingSource: kgEmbeddingSource || 'openrouter',
                 kgCloudEmbeddingModel: kgCloudEmbeddingModel || 'openai/text-embedding-3-small',

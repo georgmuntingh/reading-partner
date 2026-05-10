@@ -89,6 +89,7 @@ export class SettingsModal {
             kgExtractionBackend: 'openrouter',
             kgChunkSize: 6,
             kgChunkOverlap: 2,
+            kgChunksPerRequest: 4,
             kgSimilarityThreshold: 0.88,
             // Embedding backend — defaults to cloud (uses the OpenRouter API key
             // configured for Q&A) so first-time users don't have to wait on a
@@ -748,6 +749,12 @@ export class SettingsModal {
                             <p class="form-hint">Sentences shared between consecutive chunks to preserve context across boundaries</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-chunks-per-request">Chunks per Request: <span id="settings-kg-chunks-per-request-value">4</span></label>
+                            <input type="range" id="settings-kg-chunks-per-request" class="form-input" min="1" max="16" step="1" value="4">
+                            <p class="form-hint">How many chunks share a single extraction LLM call. Higher = fewer round-trips and faster, but the model has to attend to more text at once, so very high values may produce noisier graphs. Set to 1 to send each chunk individually.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Entity Resolution</div>
 
                         <div class="form-group">
@@ -916,6 +923,8 @@ export class SettingsModal {
             kgChunkSizeValue: this._container.querySelector('#settings-kg-chunk-size-value'),
             kgChunkOverlap: this._container.querySelector('#settings-kg-chunk-overlap'),
             kgChunkOverlapValue: this._container.querySelector('#settings-kg-chunk-overlap-value'),
+            kgChunksPerRequest: this._container.querySelector('#settings-kg-chunks-per-request'),
+            kgChunksPerRequestValue: this._container.querySelector('#settings-kg-chunks-per-request-value'),
             kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
             kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
             kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
@@ -1029,6 +1038,9 @@ export class SettingsModal {
         });
         this._elements.kgChunkOverlap.addEventListener('input', () => {
             this._elements.kgChunkOverlapValue.textContent = parseInt(this._elements.kgChunkOverlap.value);
+        });
+        this._elements.kgChunksPerRequest.addEventListener('input', () => {
+            this._elements.kgChunksPerRequestValue.textContent = parseInt(this._elements.kgChunksPerRequest.value);
         });
         this._elements.kgSimilarityThreshold.addEventListener('input', () => {
             this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
@@ -1474,6 +1486,7 @@ export class SettingsModal {
             kgExtractionBackend: this._elements.kgBackend.value,
             kgChunkSize: parseInt(this._elements.kgChunkSize.value) || 6,
             kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
+            kgChunksPerRequest: parseInt(this._elements.kgChunksPerRequest.value) || 4,
             kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
@@ -1713,6 +1726,9 @@ export class SettingsModal {
         const kgChunkOverlap = this._settings.kgChunkOverlap ?? 2;
         this._elements.kgChunkOverlap.value = kgChunkOverlap;
         this._elements.kgChunkOverlapValue.textContent = kgChunkOverlap;
+        const kgChunksPerRequest = this._settings.kgChunksPerRequest ?? 4;
+        this._elements.kgChunksPerRequest.value = kgChunksPerRequest;
+        this._elements.kgChunksPerRequestValue.textContent = kgChunksPerRequest;
         const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
         this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
         this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);

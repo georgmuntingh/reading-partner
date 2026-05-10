@@ -70,6 +70,7 @@ const settings = {
     kgExtractionBackend: 'openrouter',
     kgChunkSize: 4,
     kgChunkOverlap: 1,
+    kgChunksPerRequest: 1,
     kgSimilarityThreshold: 0.5
 };
 
