@@ -3634,3 +3634,132 @@
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
 }
+
+/* ========== Knowledge Graph Explorer ========== */
+
+.graph-explorer {
+    position: fixed;
+    inset: 0;
+    background: var(--bg-color);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.graph-explorer.hidden {
+    display: none;
+}
+
+.graph-explorer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+    background: var(--surface-color);
+}
+
+.graph-explorer-header h2 {
+    margin: 0;
+    font-size: var(--font-size-lg);
+}
+
+.graph-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+.graph-body.hidden {
+    display: none;
+}
+
+.cy-canvas {
+    flex: 1;
+    min-width: 0;
+    background: var(--bg-color);
+}
+
+.kg-side-panel {
+    width: 320px;
+    border-left: 1px solid var(--border-color);
+    padding: var(--spacing-lg);
+    overflow-y: auto;
+    background: var(--surface-color);
+}
+
+.kg-side-panel.hidden {
+    display: none;
+}
+
+.kg-side-panel h3 {
+    margin-top: 0;
+}
+
+.kg-side-panel h4 {
+    margin-top: var(--spacing-md);
+    margin-bottom: var(--spacing-sm);
+}
+
+.kg-context-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.kg-context-list li {
+    margin-bottom: var(--spacing-xs);
+}
+
+.kg-context-list a {
+    color: var(--text-primary, inherit);
+    text-decoration: underline;
+}
+
+.graph-empty-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--spacing-xl);
+    text-align: center;
+    color: var(--text-secondary);
+}
+
+.graph-empty-state.hidden {
+    display: none;
+}
+
+/* Knowledge Graph build status toast — same pattern as .tts-status */
+.kg-status {
+    position: fixed;
+    bottom: var(--spacing-lg);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    background-color: var(--surface-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    z-index: 1000;
+    pointer-events: none;
+    max-width: 90vw;
+}
+
+.kg-status.hidden {
+    display: none;
+}
+
+.kg-status .spinner {
+    width: 20px;
+    height: 20px;
+    border-width: 2px;
+}
+
+.kg-status p {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin: 0;
+}

@@ -219,6 +219,28 @@
                             <path d="M9 14l2 2 4-4"/>
                         </svg>
                     </button>
+                    <button class="btn-icon btn-kg-build" id="kg-build-btn" aria-label="Build knowledge graph for this chapter" title="Build knowledge graph for this chapter">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="6" cy="6" r="2"/>
+                            <circle cx="18" cy="6" r="2"/>
+                            <circle cx="6" cy="18" r="2"/>
+                            <circle cx="18" cy="18" r="2"/>
+                            <circle cx="12" cy="12" r="2"/>
+                            <line x1="7.4" y1="7.4" x2="10.6" y2="10.6"/>
+                            <line x1="16.6" y1="7.4" x2="13.4" y2="10.6"/>
+                            <line x1="7.4" y1="16.6" x2="10.6" y2="13.4"/>
+                            <line x1="16.6" y1="16.6" x2="13.4" y2="13.4"/>
+                        </svg>
+                    </button>
+                    <button class="btn-icon btn-kg-open" id="kg-open-btn" aria-label="Open knowledge graph" title="Open knowledge graph">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="5" cy="12" r="3"/>
+                            <circle cx="19" cy="6" r="3"/>
+                            <circle cx="19" cy="18" r="3"/>
+                            <line x1="7.5" y1="11" x2="16.5" y2="7"/>
+                            <line x1="7.5" y1="13" x2="16.5" y2="17"/>
+                        </svg>
+                    </button>
                     <button class="btn-icon" id="fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="fullscreen-expand-icon">
                             <polyline points="15 3 21 3 21 9"/>
@@ -326,6 +348,17 @@
     <!-- Chapter Overview Overlay -->
     <div id="chapter-overview" class="chapter-overview hidden">
         <!-- Content will be rendered by ChapterOverview component -->
+    </div>
+
+    <!-- Knowledge Graph Explorer Overlay -->
+    <div id="graph-explorer" class="graph-explorer hidden">
+        <!-- Content will be rendered by GraphExplorer component -->
+    </div>
+
+    <!-- Knowledge Graph Build Status Toast -->
+    <div id="kg-status" class="kg-status hidden">
+        <div class="spinner"></div>
+        <p id="kg-status-text">Building knowledge graph…</p>
     </div>
 
     <!-- Settings Modal -->

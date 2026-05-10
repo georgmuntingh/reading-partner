@@ -32,6 +32,7 @@ async function loadModel({ model = 'Xenova/all-MiniLM-L6-v2', transformersVersio
         });
 
         const transformers = await import(
+            /* @vite-ignore */
             `https://cdn.jsdelivr.net/npm/@huggingface/transformers@${transformersVersion}`
         );
 

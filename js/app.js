@@ -30,6 +30,7 @@ import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
+import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -41,6 +42,7 @@ import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
 import { ChapterOverview } from './ui/chapter-overview.js';
 import { SearchPanel } from './ui/search-panel.js';
+import { GraphExplorer } from './ui/graph-explorer.js';
 import { LookupDrawer } from './ui/lookup-drawer.js';
 import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
 import { lookupService } from './services/lookup-service.js';
@@ -303,6 +305,24 @@ class ReadingPartnerApp {
             }
         );
 
+        // Initialize Knowledge Graph (controller + explorer overlay)
+        this._kgController = new KGController({
+            getSettings: () => this._settingsModal?.getSettings() ?? {},
+            getBook: () => this._currentBook
+        });
+        this._kgController.onProgress = (p) => this._showKGProgress(p);
+
+        this._graphExplorer = new GraphExplorer({
+            container: document.getElementById('graph-explorer'),
+            getBook: () => this._currentBook,
+            onJumpToSentence: (chapterIndex, sentenceIndex) =>
+                this._jumpToKGContext(chapterIndex, sentenceIndex)
+        });
+
+        // Setup KG buttons in the reader controls
+        this._elements.kgBuildBtn?.addEventListener('click', () => this._onBuildKGClick());
+        this._elements.kgOpenBtn?.addEventListener('click', () => this._graphExplorer.open());
+
         // Setup search button
         this._elements.searchBtn?.addEventListener('click', () => {
             this._toggleSearchPanel();
@@ -537,6 +557,8 @@ class ReadingPartnerApp {
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
             quizBtn: document.getElementById('quiz-btn'),
+            kgBuildBtn: document.getElementById('kg-build-btn'),
+            kgOpenBtn: document.getElementById('kg-open-btn'),
             fullscreenBtn: document.getElementById('fullscreen-btn'),
             fullscreenExpandIcon: document.getElementById('fullscreen-expand-icon'),
             fullscreenCollapseIcon: document.getElementById('fullscreen-collapse-icon'),
@@ -551,7 +573,9 @@ class ReadingPartnerApp {
             navHomeBtn: document.getElementById('nav-home-btn'),
 
             // Status
-            ttsStatus: document.getElementById('tts-status')
+            ttsStatus: document.getElementById('tts-status'),
+            kgStatus: document.getElementById('kg-status'),
+            kgStatusText: document.getElementById('kg-status-text')
         };
     }
 
@@ -3296,6 +3320,84 @@ class ReadingPartnerApp {
         this._readerView.highlightSentence(highlight.startSentenceIndex);
         this._playbackChapterIndex = highlight.chapterIndex;
         this._playbackSentenceIndex = highlight.startSentenceIndex;
+    }
+
+    // ========== Knowledge Graph ==========
+
+    async _onBuildKGClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        if (this._kgController.state === KG_STATE.RUNNING) {
+            this._showToast('Knowledge graph build already in progress');
+            return;
+        }
+        try {
+            this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
+            await this._kgController.buildChapterGraph(this._currentChapterIndex);
+        } catch (error) {
+            console.error('KG build failed:', error);
+            this._showToast(`KG build failed: ${error.message}`);
+        } finally {
+            this._elements.kgBuildBtn?.removeAttribute('disabled');
+            // Auto-hide the status toast a few seconds after the run finishes.
+            setTimeout(() => this._hideKGStatus(), 3000);
+        }
+    }
+
+    /**
+     * Render the controller's progress events into the #kg-status toast.
+     * Stages: 'embed-load' | 'extract' | 'done' | 'error'
+     */
+    _showKGProgress(p) {
+        const el = this._elements.kgStatus;
+        const text = this._elements.kgStatusText;
+        if (!el || !text) return;
+
+        if (p.stage === 'embed-load') {
+            const pct = typeof p.progress === 'number' ? ` (${Math.round(p.progress)}%)` : '';
+            const file = p.file ? ` ${p.file}` : '';
+            text.textContent = `Downloading embedding model${file}${pct}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'extract') {
+            text.textContent = `Extracting chunk ${p.current}/${p.total}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'done') {
+            text.textContent = 'Knowledge graph updated.';
+            el.classList.remove('hidden');
+        } else if (p.stage === 'error') {
+            text.textContent = `Error: ${p.error || 'unknown'}`;
+            el.classList.remove('hidden');
+        }
+    }
+
+    _hideKGStatus() {
+        this._elements.kgStatus?.classList.add('hidden');
+    }
+
+    /**
+     * Jump from a graph node's context link back into the reader.
+     */
+    async _jumpToKGContext(chapterIndex, sentenceIndex) {
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+        this._viewDecoupled = false;
+        this._updateNavHistoryButtons();
+        this._pause();
+
+        if (chapterIndex !== this._currentChapterIndex) {
+            this._readingState.goToChapter(chapterIndex, sentenceIndex);
+            await this._loadChapter(chapterIndex, false);
+            this._navigation.setCurrentChapter(chapterIndex);
+        }
+        this._audioController.goToSentence(sentenceIndex);
+        this._readerView.highlightSentence(sentenceIndex);
     }
 
     // ========== Search ==========
