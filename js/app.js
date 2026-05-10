@@ -1654,6 +1654,9 @@ class ReadingPartnerApp {
 
         // Update Media Session metadata for headset controls
         this._updateMediaSessionMetadata();
+
+        // Reflect KG-processed state on the build button for the new chapter
+        this._updateKGBuildButtonState();
     }
 
     /**
@@ -2731,8 +2734,14 @@ class ReadingPartnerApp {
             if (settings.kgSimilarityThreshold !== undefined) {
                 await storage.saveSetting('kgSimilarityThreshold', settings.kgSimilarityThreshold);
             }
-            if (settings.kgEmbeddingModel !== undefined) {
-                await storage.saveSetting('kgEmbeddingModel', settings.kgEmbeddingModel);
+            if (settings.kgEmbeddingSource !== undefined) {
+                await storage.saveSetting('kgEmbeddingSource', settings.kgEmbeddingSource);
+            }
+            if (settings.kgCloudEmbeddingModel !== undefined) {
+                await storage.saveSetting('kgCloudEmbeddingModel', settings.kgCloudEmbeddingModel);
+            }
+            if (settings.kgLocalEmbeddingModel !== undefined) {
+                await storage.saveSetting('kgLocalEmbeddingModel', settings.kgLocalEmbeddingModel);
             }
 
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
@@ -3333,6 +3342,14 @@ class ReadingPartnerApp {
             this._showToast('Knowledge graph build already in progress');
             return;
         }
+        // Idempotent: if this chapter has already been processed, do not
+        // recompute. The button would normally be disabled, but guard here
+        // too in case state drifts.
+        const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
+        if (chapter?.kgProcessed === true) {
+            this._showToast('Knowledge graph already built for this chapter — open it instead.');
+            return;
+        }
         try {
             this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
             await this._kgController.buildChapterGraph(this._currentChapterIndex);
@@ -3340,9 +3357,27 @@ class ReadingPartnerApp {
             console.error('KG build failed:', error);
             this._showToast(`KG build failed: ${error.message}`);
         } finally {
-            this._elements.kgBuildBtn?.removeAttribute('disabled');
-            // Auto-hide the status toast a few seconds after the run finishes.
+            // Re-evaluate the button: stays disabled if processed succeeded,
+            // re-enabled if the build failed (so the user can retry).
+            this._updateKGBuildButtonState();
             setTimeout(() => this._hideKGStatus(), 3000);
+        }
+    }
+
+    /**
+     * Reflect the current chapter's kgProcessed flag on the build button:
+     * disabled (with hint title) when already processed, enabled otherwise.
+     */
+    _updateKGBuildButtonState() {
+        const btn = this._elements.kgBuildBtn;
+        if (!btn) return;
+        const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
+        if (chapter?.kgProcessed === true) {
+            btn.setAttribute('disabled', 'true');
+            btn.title = 'Knowledge graph already built for this chapter';
+        } else {
+            btn.removeAttribute('disabled');
+            btn.title = 'Build knowledge graph for this chapter';
         }
     }
 
@@ -3797,7 +3832,9 @@ class ReadingPartnerApp {
             const kgChunkSize = await storage.getSetting('kgChunkSize');
             const kgChunkOverlap = await storage.getSetting('kgChunkOverlap');
             const kgSimilarityThreshold = await storage.getSetting('kgSimilarityThreshold');
-            const kgEmbeddingModel = await storage.getSetting('kgEmbeddingModel');
+            const kgEmbeddingSource = await storage.getSetting('kgEmbeddingSource');
+            const kgCloudEmbeddingModel = await storage.getSetting('kgCloudEmbeddingModel');
+            const kgLocalEmbeddingModel = await storage.getSetting('kgLocalEmbeddingModel');
 
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
@@ -3853,7 +3890,9 @@ class ReadingPartnerApp {
                 kgChunkSize: kgChunkSize !== null ? kgChunkSize : 6,
                 kgChunkOverlap: kgChunkOverlap !== null ? kgChunkOverlap : 2,
                 kgSimilarityThreshold: kgSimilarityThreshold !== null ? kgSimilarityThreshold : 0.88,
-                kgEmbeddingModel: kgEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
+                kgEmbeddingSource: kgEmbeddingSource || 'openrouter',
+                kgCloudEmbeddingModel: kgCloudEmbeddingModel || 'openai/text-embedding-3-small',
+                kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
             });
 
         } catch (error) {

@@ -35,9 +35,17 @@ export class KGController {
 
     /**
      * Build the knowledge graph for a single chapter.
+     *
+     * If the chapter has already been processed (chapter.kgProcessed === true),
+     * this is a no-op unless { force: true } is passed. The button in the
+     * reader is grayed out for processed chapters, but the controller also
+     * short-circuits as defense in depth.
+     *
      * @param {number} chapterIndex
+     * @param {{ force?: boolean }} [opts]
      */
-    async buildChapterGraph(chapterIndex) {
+    async buildChapterGraph(chapterIndex, opts = {}) {
+        const { force = false } = opts;
         if (this.state === KG_STATE.RUNNING) {
             throw new Error('KG build already in progress');
         }
@@ -49,6 +57,11 @@ export class KGController {
         if (!chapter) throw new Error(`KGController: chapter ${chapterIndex} not found`);
         if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
             this.state = KG_STATE.IDLE;
+            return;
+        }
+        if (!force && chapter.kgProcessed === true) {
+            this.state = KG_STATE.DONE;
+            this.onProgress?.({ stage: 'done', chapterIndex, skipped: true });
             return;
         }
 
@@ -64,7 +77,18 @@ export class KGController {
         }
 
         try {
-            // 1) Ensure embedding worker is loaded; forward download progress.
+            // 1) Configure the embedding backend before each build so settings
+            //    changes (cloud ↔ local, model swap, key rotation) take effect.
+            const embeddingSource = settings.kgEmbeddingSource || 'openrouter';
+            embeddingProvider.setSource(embeddingSource);
+            if (embeddingSource === 'openrouter') {
+                if (settings.kgCloudEmbeddingModel) embeddingProvider.setCloudModel(settings.kgCloudEmbeddingModel);
+                if (settings.apiKey) embeddingProvider.setApiKey(settings.apiKey);
+            } else {
+                if (settings.kgLocalEmbeddingModel) embeddingProvider.setLocalModel(settings.kgLocalEmbeddingModel);
+            }
+
+            // Forward download progress (only fires for the local source).
             embeddingProvider.onProgress = (p) => this.onProgress?.({
                 stage: 'embed-load',
                 status: p?.status,
@@ -73,7 +97,6 @@ export class KGController {
                 total: p?.total,
                 progress: p?.progress
             });
-            if (settings.kgEmbeddingModel) embeddingProvider.setModel(settings.kgEmbeddingModel);
             await embeddingProvider.load();
 
             // 2) Resolver (per-book candidate set)

@@ -33,10 +33,16 @@ vi.mock('../js/services/embedding-provider.js', () => {
         onProgress: null,
         load: vi.fn(),
         embed: vi.fn(async (texts) => texts.map((t) => fakeEmbedding(t))),
+        setSource: vi.fn(),
         setModel: vi.fn(),
+        setLocalModel: vi.fn(),
+        setCloudModel: vi.fn(),
+        setApiKey: vi.fn(),
+        setCloudEndpoint: vi.fn(),
         setTransformersVersion: vi.fn(),
         unload: vi.fn(),
-        isReady: vi.fn(() => true)
+        isReady: vi.fn(() => true),
+        getSource: vi.fn(() => 'openrouter')
     };
     // Default load() implementation: emit one progress event then resolve
     inst.load.mockImplementation(async () => {
@@ -78,6 +84,10 @@ beforeEach(async () => {
     llmClient.getBackend.mockReturnValue('openrouter');
     embeddingProvider.embed.mockClear();
     embeddingProvider.load.mockClear();
+    embeddingProvider.setSource.mockClear();
+    embeddingProvider.setCloudModel.mockClear();
+    embeddingProvider.setLocalModel.mockClear();
+    embeddingProvider.setApiKey.mockClear();
 });
 
 describe('KGController.buildChapterGraph', () => {
@@ -216,5 +226,70 @@ describe('KGController.buildChapterGraph', () => {
         await ctrl.buildChapterGraph(0);
         expect(ctrl.state).toBe(KG_STATE.IDLE);
         expect(llmClient.complete).not.toHaveBeenCalled();
+    });
+
+    it('skips when chapter is already kgProcessed and emits a skipped progress event', async () => {
+        const events = [];
+        const book = {
+            id: 'b1',
+            chapters: [{ sentences: ['x.', 'y.', 'z.'], kgProcessed: true }]
+        };
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
+        ctrl.onProgress = (p) => events.push(p);
+        await ctrl.buildChapterGraph(0);
+
+        expect(llmClient.complete).not.toHaveBeenCalled();
+        expect(ctrl.state).toBe(KG_STATE.DONE);
+        const done = events.find((e) => e.stage === 'done');
+        expect(done).toMatchObject({ stage: 'done', skipped: true, chapterIndex: 0 });
+    });
+
+    it('force=true overrides kgProcessed and runs the pipeline anyway', async () => {
+        llmClient.complete.mockResolvedValue('{"entities":[],"relations":[]}');
+        const book = {
+            id: 'b1',
+            chapters: [{ sentences: ['x.', 'y.', 'z.'], kgProcessed: true }]
+        };
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
+        await ctrl.buildChapterGraph(0, { force: true });
+        expect(llmClient.complete).toHaveBeenCalled();
+        expect(ctrl.state).toBe(KG_STATE.DONE);
+    });
+
+    it('configures embeddingProvider with cloud source + cloud model + api key when source=openrouter', async () => {
+        llmClient.complete.mockResolvedValue('{"entities":[],"relations":[]}');
+        const book = makeBook();
+        await storage.saveBook(book);
+        const settings = {
+            ...baseSettings,
+            kgEmbeddingSource: 'openrouter',
+            kgCloudEmbeddingModel: 'qwen/qwen3-embedding-4b',
+            apiKey: 'sk-fake'
+        };
+        const ctrl = new KGController({ getSettings: () => settings, getBook: () => book });
+        await ctrl.buildChapterGraph(0);
+        expect(embeddingProvider.setSource).toHaveBeenCalledWith('openrouter');
+        expect(embeddingProvider.setCloudModel).toHaveBeenCalledWith('qwen/qwen3-embedding-4b');
+        expect(embeddingProvider.setApiKey).toHaveBeenCalledWith('sk-fake');
+        expect(embeddingProvider.setLocalModel).not.toHaveBeenCalled();
+    });
+
+    it('configures embeddingProvider with local source + local model when source=local', async () => {
+        llmClient.complete.mockResolvedValue('{"entities":[],"relations":[]}');
+        const book = makeBook();
+        await storage.saveBook(book);
+        const settings = {
+            ...baseSettings,
+            kgEmbeddingSource: 'local',
+            kgLocalEmbeddingModel: 'Xenova/bge-small-en-v1.5'
+        };
+        const ctrl = new KGController({ getSettings: () => settings, getBook: () => book });
+        await ctrl.buildChapterGraph(0);
+        expect(embeddingProvider.setSource).toHaveBeenCalledWith('local');
+        expect(embeddingProvider.setLocalModel).toHaveBeenCalledWith('Xenova/bge-small-en-v1.5');
+        expect(embeddingProvider.setCloudModel).not.toHaveBeenCalled();
+        expect(embeddingProvider.setApiKey).not.toHaveBeenCalled();
     });
 });

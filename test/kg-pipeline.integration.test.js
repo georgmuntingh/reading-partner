@@ -46,10 +46,16 @@ vi.mock('../js/services/embedding-provider.js', () => {
         onProgress: null,
         load: vi.fn(),
         embed: vi.fn(async (texts) => texts.map((t) => fakeEmbedding(t))),
+        setSource: vi.fn(),
         setModel: vi.fn(),
+        setLocalModel: vi.fn(),
+        setCloudModel: vi.fn(),
+        setApiKey: vi.fn(),
+        setCloudEndpoint: vi.fn(),
         setTransformersVersion: vi.fn(),
         unload: vi.fn(),
-        isReady: vi.fn(() => true)
+        isReady: vi.fn(() => true),
+        getSource: vi.fn(() => 'openrouter')
     };
     inst.load.mockResolvedValue();
     return { embeddingProvider: inst };
@@ -133,7 +139,31 @@ describe('KG pipeline integration', () => {
         expect(call).toBeGreaterThan(0);
     });
 
-    it('rebuilding the same chapter does not double-count edges (live edge dedup)', async () => {
+    it('clicking the build button on an already-processed chapter is a no-op (skip path)', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword', type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: [{ source: 'Arthur', target: 'sword', relation: 'drew' }]
+        }));
+        const book = {
+            id: 'b1',
+            chapters: [{ sentences: ['Arthur drew the sword.', 'It glowed.', 'He smiled.'] }]
+        };
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => settings, getBook: () => book });
+
+        await ctrl.buildChapterGraph(0);
+        expect(book.chapters[0].kgProcessed).toBe(true);
+        const completeCallsAfterFirst = llmClient.complete.mock.calls.length;
+
+        // Second click should hit the skip-on-processed short-circuit.
+        await ctrl.buildChapterGraph(0);
+        expect(llmClient.complete.mock.calls.length).toBe(completeCallsAfterFirst);
+    });
+
+    it('force rebuild dedupes edges via the resolver (no doubling)', async () => {
         llmClient.complete.mockResolvedValue(JSON.stringify({
             entities: [
                 { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
@@ -152,8 +182,8 @@ describe('KG pipeline integration', () => {
         const edgesAfterFirst = await storage.getKGEdgesForBook('b1');
         expect(edgesAfterFirst).toHaveLength(1);
 
-        // Build again; controller must reuse the same edge row.
-        await ctrl.buildChapterGraph(0);
+        // Force rebuild: the resolver's edge dedup must keep the count at 1.
+        await ctrl.buildChapterGraph(0, { force: true });
         const edgesAfterSecond = await storage.getKGEdgesForBook('b1');
         expect(edgesAfterSecond).toHaveLength(1);
         expect(edgesAfterSecond[0].id).toBe(edgesAfterFirst[0].id);

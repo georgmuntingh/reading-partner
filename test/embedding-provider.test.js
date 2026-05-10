@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmbeddingProvider } from '../js/services/embedding-provider.js';
 
 class MockWorker {
@@ -29,6 +29,7 @@ class MockWorker {
  */
 function makeProvider() {
     const ep = new EmbeddingProvider();
+    ep.setSource('local'); // these specs target the worker-based local path
     const w = new MockWorker();
     ep._worker = w;
     ep._worker.onmessage = (e) => ep._dispatch(e.data);
@@ -110,6 +111,7 @@ describe('EmbeddingProvider — message protocol', () => {
 
     it('id-less error during load rejects the load promise', async () => {
         const ep = new EmbeddingProvider();
+        ep.setSource('local');
         const w = new MockWorker();
         ep._worker = w;
         ep._worker.onmessage = (e) => ep._dispatch(e.data);
@@ -125,6 +127,7 @@ describe('EmbeddingProvider — message protocol', () => {
 
     it('ready event resolves the load promise and flips isReady() to true', async () => {
         const ep = new EmbeddingProvider();
+        ep.setSource('local');
         const w = new MockWorker();
         ep._worker = w;
         ep._worker.onmessage = (e) => ep._dispatch(e.data);
@@ -141,6 +144,7 @@ describe('EmbeddingProvider — message protocol', () => {
 describe('EmbeddingProvider — lifecycle', () => {
     it('embed() before load() lazily kicks off load()', async () => {
         const ep = new EmbeddingProvider();
+        ep.setSource('local');
         const w = new MockWorker();
         const loadSpy = vi.spyOn(ep, 'load').mockImplementation(async () => {
             ep._worker = w;
@@ -168,5 +172,117 @@ describe('EmbeddingProvider — lifecycle', () => {
         await expect(p).rejects.toThrow(/unloaded/i);
         expect(w.terminated).toBe(true);
         expect(ep.isReady()).toBe(false);
+    });
+});
+
+describe('EmbeddingProvider — cloud (OpenRouter) source', () => {
+    let originalFetch;
+    beforeEach(() => {
+        originalFetch = globalThis.fetch;
+    });
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    it('default source is openrouter', () => {
+        const ep = new EmbeddingProvider();
+        expect(ep.getSource()).toBe('openrouter');
+    });
+
+    it('embed() throws when no API key is configured', async () => {
+        const ep = new EmbeddingProvider();
+        await expect(ep.embed(['hello'])).rejects.toThrow(/API key/i);
+    });
+
+    it('embed() POSTs to the configured cloud endpoint with the configured model and Bearer auth', async () => {
+        const ep = new EmbeddingProvider();
+        ep.setApiKey('sk-test-key');
+        ep.setCloudModel('openai/text-embedding-3-small');
+        const fetchSpy = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                data: [
+                    { index: 0, embedding: [3, 4] },
+                    { index: 1, embedding: [0, 1] }
+                ]
+            })
+        }));
+        globalThis.fetch = fetchSpy;
+
+        const out = await ep.embed(['alpha', 'beta']);
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [url, init] = fetchSpy.mock.calls[0];
+        expect(url).toBe('https://openrouter.ai/api/v1/embeddings');
+        expect(init.method).toBe('POST');
+        expect(init.headers.Authorization).toBe('Bearer sk-test-key');
+        const body = JSON.parse(init.body);
+        expect(body.model).toBe('openai/text-embedding-3-small');
+        expect(body.input).toEqual(['alpha', 'beta']);
+
+        // Returned vectors must be L2-normalised Float32Arrays
+        expect(out).toHaveLength(2);
+        expect(out[0]).toBeInstanceOf(Float32Array);
+        // (3,4) / 5 = (0.6, 0.8); compare with f32 tolerance
+        expect(out[0][0]).toBeCloseTo(0.6, 5);
+        expect(out[0][1]).toBeCloseTo(0.8, 5);
+        expect(out[1][0]).toBeCloseTo(0, 5);
+        expect(out[1][1]).toBeCloseTo(1, 5);
+    });
+
+    it('embed() reorders by index when the server returns rows out of order', async () => {
+        const ep = new EmbeddingProvider();
+        ep.setApiKey('sk-x');
+        globalThis.fetch = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({
+                data: [
+                    { index: 1, embedding: [0, 1] },
+                    { index: 0, embedding: [1, 0] }
+                ]
+            })
+        }));
+        const out = await ep.embed(['a', 'b']);
+        expect(Array.from(out[0])).toEqual([1, 0]);
+        expect(Array.from(out[1])).toEqual([0, 1]);
+    });
+
+    it('embed() throws a descriptive error on non-2xx responses', async () => {
+        const ep = new EmbeddingProvider();
+        ep.setApiKey('sk-x');
+        globalThis.fetch = vi.fn(async () => ({
+            ok: false,
+            status: 401,
+            statusText: 'Unauthorized',
+            text: async () => 'invalid api key'
+        }));
+        await expect(ep.embed(['x'])).rejects.toThrow(/401/);
+    });
+
+    it('embed() throws when the response payload is empty', async () => {
+        const ep = new EmbeddingProvider();
+        ep.setApiKey('sk-x');
+        globalThis.fetch = vi.fn(async () => ({
+            ok: true,
+            json: async () => ({ data: [] })
+        }));
+        await expect(ep.embed(['x'])).rejects.toThrow(/empty/i);
+    });
+
+    it('isReady() reflects api-key presence on the cloud path', () => {
+        const ep = new EmbeddingProvider();
+        expect(ep.isReady()).toBe(false);
+        ep.setApiKey('sk');
+        expect(ep.isReady()).toBe(true);
+    });
+
+    it('switching from local → openrouter tears down the worker', () => {
+        const ep = new EmbeddingProvider();
+        ep.setSource('local');
+        ep._worker = { terminate: vi.fn(), postMessage: vi.fn(), onmessage: null, onerror: null };
+        ep._ready = true;
+        ep.setSource('openrouter');
+        expect(ep._worker).toBeNull();
+        expect(ep._ready).toBe(false);
+        expect(ep.getSource()).toBe('openrouter');
     });
 });

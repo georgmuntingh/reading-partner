@@ -90,7 +90,12 @@ export class SettingsModal {
             kgChunkSize: 6,
             kgChunkOverlap: 2,
             kgSimilarityThreshold: 0.88,
-            kgEmbeddingModel: 'Xenova/all-MiniLM-L6-v2'
+            // Embedding backend — defaults to cloud (uses the OpenRouter API key
+            // configured for Q&A) so first-time users don't have to wait on a
+            // local model download.
+            kgEmbeddingSource: 'openrouter',
+            kgCloudEmbeddingModel: 'openai/text-embedding-3-small',
+            kgLocalEmbeddingModel: 'Xenova/all-MiniLM-L6-v2'
         };
 
         this._buildUI();
@@ -716,9 +721,10 @@ export class SettingsModal {
 
                         <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
                             Extracts entities and relations from each chapter and resolves them into a knowledge graph.
-                            Entity embeddings are always generated locally on this device; only the extraction LLM call
-                            uses the backend selected below.
+                            The extraction LLM and the embedding model can each be configured independently.
                         </p>
+
+                        <div class="settings-subsection-header">Extraction</div>
 
                         <div class="form-group">
                             <label for="settings-kg-backend">Extraction Backend</label>
@@ -742,10 +748,42 @@ export class SettingsModal {
                             <p class="form-hint">Sentences shared between consecutive chunks to preserve context across boundaries</p>
                         </div>
 
+                        <div class="settings-subsection-header">Entity Resolution</div>
+
                         <div class="form-group">
                             <label for="settings-kg-similarity-threshold">Similarity Threshold: <span id="settings-kg-similarity-threshold-value">0.88</span></label>
                             <input type="range" id="settings-kg-similarity-threshold" class="form-input" min="0.5" max="0.99" step="0.01" value="0.88">
                             <p class="form-hint">Cosine similarity above which two extracted entities are merged into the same node</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Embedding Model</div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-embedding-source">Embedding Source</label>
+                            <select id="settings-kg-embedding-source" class="form-select">
+                                <option value="openrouter">OpenRouter (Cloud)</option>
+                                <option value="local">Local (transformers.js)</option>
+                            </select>
+                            <p class="form-hint">Cloud embeddings reuse the OpenRouter API key from the LLM section. Local embeddings run a small transformers.js model on this device (~25 MB download on first use).</p>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-cloud-embedding-options">
+                            <label for="settings-kg-cloud-embedding-model">Cloud Embedding Model</label>
+                            <select id="settings-kg-cloud-embedding-model" class="form-select">
+                                <option value="openai/text-embedding-3-small">OpenAI text-embedding-3-small</option>
+                                <option value="openai/text-embedding-3-large">OpenAI text-embedding-3-large</option>
+                                <option value="qwen/qwen3-embedding-4b">Qwen3-Embedding-4B</option>
+                                <option value="qwen/qwen3-embedding-8b">Qwen3-Embedding-8B</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-local-embedding-options">
+                            <label for="settings-kg-local-embedding-model">Local Embedding Model</label>
+                            <select id="settings-kg-local-embedding-model" class="form-select">
+                                <option value="Xenova/all-MiniLM-L6-v2">all-MiniLM-L6-v2 (384-d, ~25 MB)</option>
+                                <option value="Xenova/bge-small-en-v1.5">BGE-small EN v1.5 (384-d, ~33 MB)</option>
+                                <option value="Xenova/multilingual-e5-small">Multilingual E5 small (384-d, ~118 MB)</option>
+                            </select>
                         </div>
                     </details>
 
@@ -879,7 +917,12 @@ export class SettingsModal {
             kgChunkOverlap: this._container.querySelector('#settings-kg-chunk-overlap'),
             kgChunkOverlapValue: this._container.querySelector('#settings-kg-chunk-overlap-value'),
             kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
-            kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value')
+            kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
+            kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
+            kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
+            kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
+            kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
+            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model')
         };
     }
 
@@ -989,6 +1032,11 @@ export class SettingsModal {
         });
         this._elements.kgSimilarityThreshold.addEventListener('input', () => {
             this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
+        });
+
+        // KG embedding source — show only the matching sub-option group
+        this._elements.kgEmbeddingSource.addEventListener('change', () => {
+            this._updateKGEmbeddingSourceUI();
         });
 
         // Max sentence length slider
@@ -1153,6 +1201,12 @@ export class SettingsModal {
             'mediapipe': 'Runs Gemma3-1B-IT on-device using MediaPipe + WebGPU. Requires a Chromium browser with WebGPU. ~600 MB download on first use.'
         };
         this._elements.llmBackendHint.textContent = hints[backend] || '';
+    }
+
+    _updateKGEmbeddingSourceUI() {
+        const source = this._elements.kgEmbeddingSource.value;
+        this._elements.kgCloudEmbeddingOptions.style.display = source === 'openrouter' ? '' : 'none';
+        this._elements.kgLocalEmbeddingOptions.style.display = source === 'local' ? '' : 'none';
     }
 
     /**
@@ -1421,7 +1475,9 @@ export class SettingsModal {
             kgChunkSize: parseInt(this._elements.kgChunkSize.value) || 6,
             kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
             kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
-            kgEmbeddingModel: this._settings.kgEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
+            kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
+            kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
+            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
         };
 
         // Validate
@@ -1660,6 +1716,10 @@ export class SettingsModal {
         const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
         this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
         this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);
+        this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
+        this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
+        this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
+        this._updateKGEmbeddingSourceUI();
 
         this._updateBackendUI();
     }
