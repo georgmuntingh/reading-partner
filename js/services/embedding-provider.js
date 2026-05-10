@@ -23,6 +23,14 @@ export const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
 export const DEFAULT_CLOUD_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 export const DEFAULT_CLOUD_EMBEDDING_ENDPOINT = 'https://openrouter.ai/api/v1/embeddings';
 
+/**
+ * Max input strings per single call to the underlying backend. Inputs larger
+ * than this are split into multiple sequential sub-requests and stitched
+ * back together. Set well under OpenAI's 2048 cap and small enough that
+ * transformers.js doesn't OOM on a typical GPU.
+ */
+export const EMBED_MAX_BATCH = 256;
+
 export const CLOUD_EMBEDDING_MODELS = [
     { id: 'openai/text-embedding-3-small', name: 'OpenAI text-embedding-3-small' },
     { id: 'openai/text-embedding-3-large', name: 'OpenAI text-embedding-3-large' },
@@ -121,10 +129,31 @@ export class EmbeddingProvider {
      * Generate one L2-normalised embedding per input string. Auto-loads the
      * local model on first call when source='local'; cloud path makes a
      * direct fetch.
+     *
+     * Inputs longer than EMBED_MAX_BATCH are automatically split into
+     * multiple sequential sub-requests so callers can pass an entire
+     * chapter's entities in one call without worrying about provider limits.
+     *
      * @param {string[]} texts
      * @returns {Promise<Float32Array[]>}
      */
     async embed(texts) {
+        if (!Array.isArray(texts) || texts.length === 0) {
+            throw new Error('embed: texts must be a non-empty array');
+        }
+        if (texts.length <= EMBED_MAX_BATCH) {
+            return this._embedRaw(texts);
+        }
+        const out = [];
+        for (let i = 0; i < texts.length; i += EMBED_MAX_BATCH) {
+            const slice = texts.slice(i, i + EMBED_MAX_BATCH);
+            const part = await this._embedRaw(slice);
+            for (const e of part) out.push(e);
+        }
+        return out;
+    }
+
+    _embedRaw(texts) {
         if (this._source === 'openrouter') return this._embedCloud(texts);
         return this._embedLocal(texts);
     }

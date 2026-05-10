@@ -292,4 +292,66 @@ describe('KGController.buildChapterGraph', () => {
         expect(embeddingProvider.setCloudModel).not.toHaveBeenCalled();
         expect(embeddingProvider.setApiKey).not.toHaveBeenCalled();
     });
+
+    it('batches embed: one embed() call for the whole chapter, with unique names deduped across chunks', async () => {
+        // Every chunk returns the same two entities. With chunkSize=2,overlap=1
+        // on a 3-sentence chapter we get 2 overlapping chunks, so the same
+        // names appear twice. embed() must still be called only once with
+        // unique names.
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword', type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: [{ source: 'Arthur', target: 'sword', relation: 'drew' }]
+        }));
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
+        await ctrl.buildChapterGraph(0);
+
+        expect(embeddingProvider.embed).toHaveBeenCalledTimes(1);
+        const [argTexts] = embeddingProvider.embed.mock.calls[0];
+        // Sorted to make the assertion order-independent
+        expect(argTexts.slice().sort()).toEqual(['Arthur', 'sword']);
+    });
+
+    it('emits stage="embed" with the unique-name count, plus stage="resolve" per chunk', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword', type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: []
+        }));
+        const events = [];
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
+        ctrl.onProgress = (p) => events.push(p);
+        await ctrl.buildChapterGraph(0);
+
+        const embed = events.find((e) => e.stage === 'embed');
+        expect(embed).toMatchObject({ stage: 'embed', count: 2 });
+
+        const resolveEvents = events.filter((e) => e.stage === 'resolve');
+        expect(resolveEvents.length).toBeGreaterThan(0);
+        expect(resolveEvents[0]).toMatchObject({ stage: 'resolve', current: 1 });
+        expect(resolveEvents[resolveEvents.length - 1].current).toBe(resolveEvents.length);
+    });
+
+    it('aborts the build with ERROR state when batch embedding fails', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [{ name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }],
+            relations: []
+        }));
+        embeddingProvider.embed.mockRejectedValueOnce(new Error('cloud blew up'));
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
+        await expect(ctrl.buildChapterGraph(0)).rejects.toThrow('cloud blew up');
+        expect(ctrl.state).toBe(KG_STATE.ERROR);
+        // chapter must NOT have been marked processed — user can retry
+        expect(book.chapters[0].kgProcessed).toBeUndefined();
+    });
 });

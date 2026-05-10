@@ -3398,6 +3398,12 @@ class ReadingPartnerApp {
         } else if (p.stage === 'extract') {
             text.textContent = `Extracting chunk ${p.current}/${p.total}…`;
             el.classList.remove('hidden');
+        } else if (p.stage === 'embed') {
+            text.textContent = `Embedding ${p.count} entit${p.count === 1 ? 'y' : 'ies'}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'resolve') {
+            text.textContent = `Resolving chunk ${p.current}/${p.total}…`;
+            el.classList.remove('hidden');
         } else if (p.stage === 'done') {
             text.textContent = 'Knowledge graph updated.';
             el.classList.remove('hidden');

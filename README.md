@@ -41,7 +41,7 @@ For a one-shot verification run:
 ```bash
 rm -rf node_modules dist
 npm ci
-npm test           # 78/78 expected
+npm test           # 84/84 expected
 npm run build      # cytoscape splits into its own chunk
 npm run build:app  # capacitor variant
 ```

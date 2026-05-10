@@ -106,48 +106,83 @@ export class KGController {
             // 3) Chunk the chapter
             const chunks = chunkSentences(chapter.sentences, chunkSize, chunkOverlap);
 
-            // 4) For each chunk: extract → embed → resolve nodes → resolve edges.
-            //    Fault-tolerant: per-chunk failures log and continue.
+            // 4) Phase A — extract every chunk sequentially. Per-chunk
+            //    failures still log + continue (one bad chunk should not
+            //    kill the chapter).
+            const extractions = new Array(chunks.length).fill(null);
             for (let i = 0; i < chunks.length; i++) {
                 this.onProgress?.({ stage: 'extract', current: i + 1, total: chunks.length });
-
-                let extracted;
                 try {
-                    extracted = await extractFromChunk(chunks[i].text);
+                    extractions[i] = await extractFromChunk(chunks[i].text);
                 } catch (err) {
                     console.warn(`[kg-controller] chunk ${i} extraction threw:`, err?.message);
-                    continue;
                 }
-                if (!extracted || extracted.entities.length === 0) continue;
+            }
 
-                let embeddings;
-                try {
-                    embeddings = await embeddingProvider.embed(extracted.entities.map((e) => e.name));
-                } catch (err) {
-                    console.warn(`[kg-controller] chunk ${i} embedding failed, skipping:`, err?.message);
-                    continue;
+            // 5) Phase B — collect a chapter-wide unique-name list so we
+            //    can do ONE batched embed call instead of one per chunk.
+            //    Repeated names across chunks share a single embedding.
+            const uniqueNames = [];
+            const seen = new Set();
+            for (const ex of extractions) {
+                if (!ex) continue;
+                for (const ent of ex.entities) {
+                    if (!ent?.name || seen.has(ent.name)) continue;
+                    seen.add(ent.name);
+                    uniqueNames.push(ent.name);
                 }
+            }
+
+            // 6) Phase C — batched embedding. EmbeddingProvider.embed()
+            //    auto-splits at EMBED_MAX_BATCH so callers can pass the
+            //    full set in one shot.
+            const nameToEmbedding = new Map();
+            if (uniqueNames.length > 0) {
+                this.onProgress?.({ stage: 'embed', count: uniqueNames.length });
+                try {
+                    const embeddings = await embeddingProvider.embed(uniqueNames);
+                    for (let i = 0; i < uniqueNames.length; i++) {
+                        nameToEmbedding.set(uniqueNames[i], embeddings[i]);
+                    }
+                } catch (err) {
+                    // No embeddings means nothing can be resolved — surface
+                    // the failure so the chapter stays unprocessed and the
+                    // user can retry.
+                    console.warn('[kg-controller] batch embedding failed:', err?.message);
+                    throw err;
+                }
+            }
+
+            // 7) Phase D — resolve nodes and edges per chunk, in order.
+            //    The resolver's state (existing candidates + new ones from
+            //    earlier chunks) is naturally maintained so cross-chunk
+            //    duplicates collapse exactly as before.
+            for (let i = 0; i < chunks.length; i++) {
+                this.onProgress?.({ stage: 'resolve', current: i + 1, total: chunks.length });
+                const ex = extractions[i];
+                if (!ex || ex.entities.length === 0) continue;
 
                 const nameToNodeId = new Map();
-                for (let j = 0; j < extracted.entities.length; j++) {
-                    const e = extracted.entities[j];
+                for (const ent of ex.entities) {
+                    const emb = nameToEmbedding.get(ent.name);
+                    if (!emb) continue;
                     try {
                         const { id } = await resolver.resolve({
-                            name: e.name,
-                            type: e.type,
-                            aliases: Array.isArray(e.aliases) ? e.aliases : [],
-                            bloom: e.bloom,
-                            embedding: embeddings[j],
+                            name: ent.name,
+                            type: ent.type,
+                            aliases: Array.isArray(ent.aliases) ? ent.aliases : [],
+                            bloom: ent.bloom,
+                            embedding: emb,
                             chapterIndex,
                             sentenceIndices: chunks[i].sentenceIndices
                         });
-                        nameToNodeId.set(e.name, id);
+                        nameToNodeId.set(ent.name, id);
                     } catch (err) {
-                        console.warn(`[kg-controller] resolve failed for "${e.name}":`, err?.message);
+                        console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
                     }
                 }
 
-                for (const r of extracted.relations) {
+                for (const r of ex.relations) {
                     const sId = nameToNodeId.get(r.source);
                     const tId = nameToNodeId.get(r.target);
                     if (!sId || !tId) continue;
