@@ -84,7 +84,13 @@ export class SettingsModal {
             transformersVersion: '3',
             // Diagnostics
             verboseLogging: false,
-            kokoroReinitThreshold: 25
+            kokoroReinitThreshold: 25,
+            // Knowledge Graph
+            kgExtractionBackend: 'openrouter',
+            kgChunkSize: 6,
+            kgChunkOverlap: 2,
+            kgSimilarityThreshold: 0.88,
+            kgEmbeddingModel: 'Xenova/all-MiniLM-L6-v2'
         };
 
         this._buildUI();
@@ -701,6 +707,48 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Knowledge Graph ===== -->
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Knowledge Graph</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            Extracts entities and relations from each chapter and resolves them into a knowledge graph.
+                            Entity embeddings are always generated locally on this device; only the extraction LLM call
+                            uses the backend selected below.
+                        </p>
+
+                        <div class="form-group">
+                            <label for="settings-kg-backend">Extraction Backend</label>
+                            <select id="settings-kg-backend" class="form-select">
+                                <option value="openrouter">OpenRouter (Cloud)</option>
+                                <option value="local">Local (transformers.js)</option>
+                                <option value="mediapipe">Local (MediaPipe)</option>
+                            </select>
+                            <p class="form-hint">Which LLM is asked to extract entities and relations from each chunk</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-chunk-size">Chunk Size: <span id="settings-kg-chunk-size-value">6</span> sentences</label>
+                            <input type="range" id="settings-kg-chunk-size" class="form-input" min="2" max="20" step="1" value="6">
+                            <p class="form-hint">Number of sentences sent to the LLM in a single extraction prompt</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-chunk-overlap">Chunk Overlap: <span id="settings-kg-chunk-overlap-value">2</span> sentences</label>
+                            <input type="range" id="settings-kg-chunk-overlap" class="form-input" min="0" max="10" step="1" value="2">
+                            <p class="form-hint">Sentences shared between consecutive chunks to preserve context across boundaries</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-similarity-threshold">Similarity Threshold: <span id="settings-kg-similarity-threshold-value">0.88</span></label>
+                            <input type="range" id="settings-kg-similarity-threshold" class="form-input" min="0.5" max="0.99" step="0.01" value="0.88">
+                            <p class="form-hint">Cosine similarity above which two extracted entities are merged into the same node</p>
+                        </div>
+                    </details>
+
                     <!-- ===== About ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
@@ -823,7 +871,15 @@ export class SettingsModal {
             // Log viewer
             viewLogBtn: this._container.querySelector('#settings-view-log-btn'),
             clearLogBtn: this._container.querySelector('#settings-clear-log-btn'),
-            logViewer: this._container.querySelector('#settings-log-viewer')
+            logViewer: this._container.querySelector('#settings-log-viewer'),
+            // Knowledge Graph
+            kgBackend: this._container.querySelector('#settings-kg-backend'),
+            kgChunkSize: this._container.querySelector('#settings-kg-chunk-size'),
+            kgChunkSizeValue: this._container.querySelector('#settings-kg-chunk-size-value'),
+            kgChunkOverlap: this._container.querySelector('#settings-kg-chunk-overlap'),
+            kgChunkOverlapValue: this._container.querySelector('#settings-kg-chunk-overlap-value'),
+            kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
+            kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value')
         };
     }
 
@@ -922,6 +978,17 @@ export class SettingsModal {
         this._elements.prefetchCount.addEventListener('input', () => {
             const count = parseInt(this._elements.prefetchCount.value);
             this._elements.prefetchCountValue.textContent = count;
+        });
+
+        // Knowledge Graph sliders
+        this._elements.kgChunkSize.addEventListener('input', () => {
+            this._elements.kgChunkSizeValue.textContent = parseInt(this._elements.kgChunkSize.value);
+        });
+        this._elements.kgChunkOverlap.addEventListener('input', () => {
+            this._elements.kgChunkOverlapValue.textContent = parseInt(this._elements.kgChunkOverlap.value);
+        });
+        this._elements.kgSimilarityThreshold.addEventListener('input', () => {
+            this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
         });
 
         // Max sentence length slider
@@ -1348,7 +1415,13 @@ export class SettingsModal {
             // Transformers.js version
             transformersVersion: this._elements.transformersVersion.value || '3',
             verboseLogging: this._elements.verboseLogging.checked,
-            kokoroReinitThreshold: parseInt(this._elements.reinitThreshold.value) || 25
+            kokoroReinitThreshold: parseInt(this._elements.reinitThreshold.value) || 25,
+            // Knowledge Graph settings
+            kgExtractionBackend: this._elements.kgBackend.value,
+            kgChunkSize: parseInt(this._elements.kgChunkSize.value) || 6,
+            kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
+            kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
+            kgEmbeddingModel: this._settings.kgEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
         };
 
         // Validate
@@ -1575,6 +1648,18 @@ export class SettingsModal {
         // Load diagnostics settings
         this._elements.verboseLogging.checked = this._settings.verboseLogging || false;
         this._elements.reinitThreshold.value = this._settings.kokoroReinitThreshold || 25;
+
+        // Load Knowledge Graph settings
+        this._elements.kgBackend.value = this._settings.kgExtractionBackend || 'openrouter';
+        const kgChunkSize = this._settings.kgChunkSize ?? 6;
+        this._elements.kgChunkSize.value = kgChunkSize;
+        this._elements.kgChunkSizeValue.textContent = kgChunkSize;
+        const kgChunkOverlap = this._settings.kgChunkOverlap ?? 2;
+        this._elements.kgChunkOverlap.value = kgChunkOverlap;
+        this._elements.kgChunkOverlapValue.textContent = kgChunkOverlap;
+        const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
+        this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
+        this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);
 
         this._updateBackendUI();
     }

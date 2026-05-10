@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'reading-partner-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Store names
 const STORES = {
@@ -13,7 +13,9 @@ const STORES = {
     BOOKMARKS: 'bookmarks',
     SETTINGS: 'settings',
     HIGHLIGHTS: 'highlights',
-    LOOKUPS: 'lookups'
+    LOOKUPS: 'lookups',
+    KG_NODES: 'kg_nodes',
+    KG_EDGES: 'kg_edges'
 };
 
 export class StorageService {
@@ -127,6 +129,21 @@ export class StorageService {
                     const lookupStore = db.createObjectStore(STORES.LOOKUPS, { keyPath: 'id' });
                     lookupStore.createIndex('bookId', 'bookId', { unique: false });
                     lookupStore.createIndex('timestamp', 'timestamp', { unique: false });
+                }
+
+                // Knowledge Graph nodes (extracted entities with embeddings + SRS state)
+                if (!db.objectStoreNames.contains(STORES.KG_NODES)) {
+                    const kgNodeStore = db.createObjectStore(STORES.KG_NODES, { keyPath: 'id' });
+                    kgNodeStore.createIndex('bookId', 'bookId', { unique: false });
+                    kgNodeStore.createIndex('bookChapter', ['bookId', 'firstSeenChapter'], { unique: false });
+                }
+
+                // Knowledge Graph edges (relations between resolved nodes)
+                if (!db.objectStoreNames.contains(STORES.KG_EDGES)) {
+                    const kgEdgeStore = db.createObjectStore(STORES.KG_EDGES, { keyPath: 'id' });
+                    kgEdgeStore.createIndex('bookId', 'bookId', { unique: false });
+                    kgEdgeStore.createIndex('source', 'sourceId', { unique: false });
+                    kgEdgeStore.createIndex('target', 'targetId', { unique: false });
                 }
 
                 console.log('Database schema created/upgraded to version', DB_VERSION);
@@ -576,6 +593,150 @@ export class StorageService {
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
+    }
+
+    // ========== Knowledge Graph ==========
+
+    /**
+     * Save a knowledge graph node
+     * @param {Object} node
+     * @returns {Promise<void>}
+     */
+    async saveKGNode(node) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_NODES);
+
+        return new Promise((resolve, reject) => {
+            const request = store.put(node);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get a single knowledge graph node by id
+     * @param {string} id
+     * @returns {Promise<Object|null>}
+     */
+    async getKGNode(id) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readonly');
+        const store = transaction.objectStore(STORES.KG_NODES);
+
+        return new Promise((resolve, reject) => {
+            const request = store.get(id);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all knowledge graph nodes for a book
+     * @param {string} bookId
+     * @returns {Promise<Object[]>}
+     */
+    async getKGNodesForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readonly');
+        const store = transaction.objectStore(STORES.KG_NODES);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(bookId);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete all knowledge graph nodes for a book
+     * @param {string} bookId
+     * @returns {Promise<void>}
+     */
+    async deleteKGNodesForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_NODES);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.openCursor(IDBKeyRange.only(bookId));
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Save a knowledge graph edge
+     * @param {Object} edge
+     * @returns {Promise<void>}
+     */
+    async saveKGEdge(edge) {
+        const transaction = this._db.transaction([STORES.KG_EDGES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_EDGES);
+
+        return new Promise((resolve, reject) => {
+            const request = store.put(edge);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all knowledge graph edges for a book
+     * @param {string} bookId
+     * @returns {Promise<Object[]>}
+     */
+    async getKGEdgesForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_EDGES], 'readonly');
+        const store = transaction.objectStore(STORES.KG_EDGES);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(bookId);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete all knowledge graph edges for a book
+     * @param {string} bookId
+     * @returns {Promise<void>}
+     */
+    async deleteKGEdgesForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_EDGES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_EDGES);
+        const index = store.index('bookId');
+
+        return new Promise((resolve, reject) => {
+            const request = index.openCursor(IDBKeyRange.only(bookId));
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Clear all knowledge graph data (nodes + edges) for a book
+     * @param {string} bookId
+     * @returns {Promise<void>}
+     */
+    async clearKGForBook(bookId) {
+        await this.deleteKGNodesForBook(bookId);
+        await this.deleteKGEdgesForBook(bookId);
     }
 
     /**

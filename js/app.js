@@ -2694,6 +2694,23 @@ class ReadingPartnerApp {
                 ttsEngine.setReinitThreshold(settings.kokoroReinitThreshold);
             }
 
+            // Save Knowledge Graph settings
+            if (settings.kgExtractionBackend !== undefined) {
+                await storage.saveSetting('kgExtractionBackend', settings.kgExtractionBackend);
+            }
+            if (settings.kgChunkSize !== undefined) {
+                await storage.saveSetting('kgChunkSize', settings.kgChunkSize);
+            }
+            if (settings.kgChunkOverlap !== undefined) {
+                await storage.saveSetting('kgChunkOverlap', settings.kgChunkOverlap);
+            }
+            if (settings.kgSimilarityThreshold !== undefined) {
+                await storage.saveSetting('kgSimilarityThreshold', settings.kgSimilarityThreshold);
+            }
+            if (settings.kgEmbeddingModel !== undefined) {
+                await storage.saveSetting('kgEmbeddingModel', settings.kgEmbeddingModel);
+            }
+
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
             this._applyJitLoadingSetting();
@@ -3673,6 +3690,13 @@ class ReadingPartnerApp {
             const reinitVal = kokoroReinitThreshold || 25;
             ttsEngine.setReinitThreshold(reinitVal);
 
+            // Load Knowledge Graph settings
+            const kgExtractionBackend = await storage.getSetting('kgExtractionBackend');
+            const kgChunkSize = await storage.getSetting('kgChunkSize');
+            const kgChunkOverlap = await storage.getSetting('kgChunkOverlap');
+            const kgSimilarityThreshold = await storage.getSetting('kgSimilarityThreshold');
+            const kgEmbeddingModel = await storage.getSetting('kgEmbeddingModel');
+
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
             // Apply STT backend
@@ -3721,7 +3745,13 @@ class ReadingPartnerApp {
                 verboseLogging: verboseLogging === true,
                 kokoroReinitThreshold: reinitVal,
                 prefetchCount: this._savedPrefetchCount !== undefined ? this._savedPrefetchCount : 2,
-                maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0
+                maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0,
+                // Knowledge Graph settings
+                kgExtractionBackend: kgExtractionBackend || 'openrouter',
+                kgChunkSize: kgChunkSize !== null ? kgChunkSize : 6,
+                kgChunkOverlap: kgChunkOverlap !== null ? kgChunkOverlap : 2,
+                kgSimilarityThreshold: kgSimilarityThreshold !== null ? kgSimilarityThreshold : 0.88,
+                kgEmbeddingModel: kgEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
             });
 
         } catch (error) {
