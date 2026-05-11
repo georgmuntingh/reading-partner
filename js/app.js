@@ -32,6 +32,7 @@ import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { promptForDomain } from './ui/kg-domain-modal.js';
+import { confirmAction } from './ui/confirm-modal.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -237,7 +238,8 @@ class ReadingPartnerApp {
                 onMaxSentenceLengthChange: (maxLen) => this._onMaxSentenceLengthChange(maxLen),
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
-                onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config)
+                onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
+                onClearKG: () => this._onClearKGClick()
             }
         );
 
@@ -318,6 +320,7 @@ class ReadingPartnerApp {
             container: document.getElementById('graph-explorer'),
             getBook: () => this._currentBook,
             getCurrentChapterIndex: () => this._currentChapterIndex,
+            loadChapterSentences: (chapterIndex) => this._readingState.loadChapter(chapterIndex),
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });
@@ -3384,6 +3387,51 @@ class ReadingPartnerApp {
         } else {
             btn.removeAttribute('disabled');
             btn.title = 'Build knowledge graph for this chapter';
+        }
+    }
+
+    /**
+     * Handler for the "Clear Knowledge Graph" button in settings. Prompts the
+     * user, deletes every node + edge for the current book, resets the
+     * per-chapter `kgProcessed` flags so the user can re-extract, and
+     * refreshes the build button state.
+     */
+    async _onClearKGClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        const confirmed = await confirmAction({
+            title: 'Clear Knowledge Graph?',
+            message: `This will permanently delete every node and edge of the knowledge graph for "${this._currentBook.title || 'this book'}", and re-enable extraction on each chapter. This cannot be undone.`,
+            confirmLabel: 'Clear Graph',
+            cancelLabel: 'Cancel',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+            await storage.clearKGForBook(this._currentBook.id);
+            // Re-enable extraction on every chapter and persist.
+            let touched = false;
+            for (const ch of this._currentBook.chapters || []) {
+                if (ch.kgProcessed) {
+                    ch.kgProcessed = false;
+                    touched = true;
+                }
+            }
+            if (touched) {
+                try {
+                    await storage.saveBook(this._currentBook);
+                } catch (err) {
+                    console.warn('Clear-KG: failed to persist kgProcessed reset:', err?.message);
+                }
+            }
+            this._updateKGBuildButtonState();
+            this._showToast('Knowledge graph cleared');
+        } catch (err) {
+            console.error('Clear-KG failed:', err);
+            this._showToast(`Failed to clear graph: ${err.message}`);
         }
     }
 

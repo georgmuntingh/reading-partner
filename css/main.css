@@ -133,6 +133,15 @@ body {
     background-color: var(--bg-color);
 }
 
+.btn-danger {
+    background-color: #c43c2c;
+    color: white;
+}
+
+.btn-danger:hover:not(:disabled) {
+    background-color: #a8311f;
+}
+
 .btn-icon {
     display: inline-flex;
     align-items: center;

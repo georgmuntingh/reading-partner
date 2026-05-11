@@ -3685,6 +3685,49 @@
     width: 120px;
 }
 
+/* ===== KG context preview modal ===== */
+.kg-context-preview-modal {
+    max-width: 640px;
+}
+
+.kg-context-preview-subtitle {
+    margin-top: 0;
+    color: var(--text-secondary, inherit);
+    font-size: var(--font-size-sm);
+}
+
+.kg-context-preview-body {
+    margin-top: var(--spacing-md);
+    line-height: 1.55;
+}
+
+.kg-context-preview-sentence {
+    margin: 0 0 var(--spacing-sm) 0;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--text-secondary, inherit);
+}
+
+.kg-context-preview-sentence.is-target {
+    background-color: var(--surface-color);
+    color: var(--text-color);
+    font-weight: 600;
+    border-left: 3px solid var(--primary-color);
+}
+
+.kg-context-preview-num {
+    display: inline-block;
+    width: 2em;
+    color: var(--text-tertiary, var(--text-secondary, inherit));
+    font-variant-numeric: tabular-nums;
+}
+
+.kg-context-preview-loading,
+.kg-context-preview-error {
+    color: var(--text-secondary, inherit);
+    font-style: italic;
+}
+
 .graph-body {
     flex: 1;
     display: flex;

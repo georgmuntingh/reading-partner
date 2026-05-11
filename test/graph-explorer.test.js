@@ -77,14 +77,19 @@ describe('GraphExplorer', () => {
         expect(container.querySelector('.graph-body').classList.contains('hidden')).toBe(true);
     });
 
-    it('side panel renders aliases, bloom, and clickable contexts; click invokes onJumpToSentence and closes', async () => {
+    it('side panel renders aliases, bloom, and clickable contexts; click opens the preview modal (does not jump immediately)', async () => {
         await seedBookGraph();
         const onJumpToSentence = vi.fn();
+        const loadChapterSentences = vi.fn(async () => [
+            'Sentence one.', 'Sentence two.', 'Sentence three.',
+            'Arthur drew the sword.', 'It glowed.'
+        ]);
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({
             container,
-            getBook: () => ({ id: 'b1' }),
-            onJumpToSentence
+            getBook: () => ({ id: 'b1', chapters: [{ title: 'The Stone' }] }),
+            onJumpToSentence,
+            loadChapterSentences
         });
         await ge.open();
 
@@ -100,6 +105,30 @@ describe('GraphExplorer', () => {
         expect(link).toBeTruthy();
         link.click();
 
+        // Clicking the context link must NOT jump immediately — it must open
+        // the preview modal instead. The graph explorer also stays open.
+        expect(onJumpToSentence).not.toHaveBeenCalled();
+        expect(container.classList.contains('hidden')).toBe(false);
+
+        // Drain microtasks so the modal's Promise.resolve().then(load).then(paint)
+        // chain runs to completion and the body is populated.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+
+        const previewModal = document.querySelector('.kg-context-preview-modal');
+        expect(previewModal).toBeTruthy();
+        expect(previewModal.textContent).toContain('Arthur');
+        expect(previewModal.textContent).toContain('Arthur drew the sword.');
+        // Only the target sentence is rendered with the highlight class.
+        const targets = previewModal.querySelectorAll('.kg-context-preview-sentence.is-target');
+        expect(targets).toHaveLength(1);
+        expect(targets[0].textContent).toContain('Arthur drew the sword.');
+
+        // "Open in reader" is offered as a secondary action and delegates
+        // to onJumpToSentence + closes the explorer.
+        const jumpBtn = previewModal.querySelector('[data-action="jump"]');
+        expect(jumpBtn).toBeTruthy();
+        jumpBtn.click();
         expect(onJumpToSentence).toHaveBeenCalledWith(0, 3);
         expect(container.classList.contains('hidden')).toBe(true);
     });

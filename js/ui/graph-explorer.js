@@ -7,11 +7,13 @@
  *
  * Click handlers:
  *   - tap a node     → show the side panel with type / bloom / aliases / contexts
- *   - tap a context  → close overlay and call onJumpToSentence(chapterIndex, sentenceIndex)
+ *   - tap a context  → open the neighbourhood-preview modal (with an
+ *                       "Open in reader" action that delegates to onJumpToSentence)
  *   - tap background → hide the side panel
  */
 
 import { storage } from '../services/storage.js';
+import { openContextPreview } from './kg-context-preview-modal.js';
 
 // Bloom level → color (Remember = warm green, Create = warm red).
 const BLOOM_COLOR = {
@@ -40,14 +42,21 @@ export class GraphExplorer {
      * @param {() => number} [options.getCurrentChapterIndex] - Returns the
      *   reader's current chapter index. Used as the default position for the
      *   chapter filter slider. Optional — falls back to "All chapters".
+     * @param {(chapterIndex: number) => Promise<string[]>} [options.loadChapterSentences]
+     *   Async loader used by the context preview modal to render the
+     *   neighbourhood of a clicked sentence. Optional — without it the modal
+     *   still opens but shows a fallback message.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, onJumpToSentence }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapterSentences, onJumpToSentence }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
             ? getCurrentChapterIndex
             : () => null;
+        this._loadChapterSentences = typeof loadChapterSentences === 'function'
+            ? loadChapterSentences
+            : null;
         this._onJumpToSentence = onJumpToSentence;
         this._cy = null;
         this._cytoscape = null;        // Lazy-loaded module
@@ -391,10 +400,30 @@ export class GraphExplorer {
                 e.preventDefault();
                 const ch = Number.parseInt(link.dataset.ch, 10);
                 const sent = Number.parseInt(link.dataset.sent, 10);
-                this._onJumpToSentence?.(ch, sent);
-                this.close();
+                this._openContextPreview(node, ch, sent);
             });
         }
+    }
+
+    _openContextPreview(node, chapterIndex, sentenceIndex) {
+        const book = this._getBook();
+        const chapter = book?.chapters?.[chapterIndex];
+        openContextPreview({
+            entityName: node.canonicalName,
+            chapterTitle: chapter?.title,
+            chapterIndex,
+            sentenceIndex,
+            loadSentences: this._loadChapterSentences,
+            // The reader-jump action stays available from inside the modal so
+            // the user can opt into the existing behaviour rather than losing
+            // it entirely.
+            onJumpToSentence: this._onJumpToSentence
+                ? (ch, sent) => {
+                    this._onJumpToSentence(ch, sent);
+                    this.close();
+                }
+                : null
+        });
     }
 
     _hideSide() {

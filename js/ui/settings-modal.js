@@ -803,6 +803,13 @@ export class SettingsModal {
                                 <option value="Xenova/multilingual-e5-small">Multilingual E5 small (384-d, ~118 MB)</option>
                             </select>
                         </div>
+
+                        <div class="settings-subsection-header">Maintenance</div>
+
+                        <div class="form-group">
+                            <button type="button" class="btn btn-danger" id="settings-kg-clear-btn">Clear Knowledge Graph</button>
+                            <p class="form-hint">Permanently deletes every node and edge for the currently-open book and re-enables extraction on each chapter. Cannot be undone.</p>
+                        </div>
                     </details>
 
                     <!-- ===== About ===== -->
@@ -944,7 +951,8 @@ export class SettingsModal {
             kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
             kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
-            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model')
+            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model'),
+            kgClearBtn: this._container.querySelector('#settings-kg-clear-btn')
         };
     }
 
@@ -1065,6 +1073,13 @@ export class SettingsModal {
         // KG embedding source — show only the matching sub-option group
         this._elements.kgEmbeddingSource.addEventListener('change', () => {
             this._updateKGEmbeddingSourceUI();
+        });
+
+        // Clear Knowledge Graph button — delegates to the host app via a
+        // callback so the modal stays UI-only. The host is responsible for
+        // confirming, deleting, and refreshing the reader UI.
+        this._elements.kgClearBtn?.addEventListener('click', () => {
+            this._callbacks.onClearKG?.();
         });
 
         // Max sentence length slider
