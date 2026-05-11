@@ -228,4 +228,65 @@ describe('GraphExplorer', () => {
             expect(e.data.chapterSet.has(0)).toBe(true);
         }
     });
+
+    it('min relevance slider defaults to 0.15', () => {
+        const container = document.getElementById('graph-explorer');
+        new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const slider = container.querySelector('#kg-min-relevance');
+        const label = container.querySelector('#kg-min-relevance-value');
+        expect(slider.value).toBe('0.15');
+        expect(label.textContent).toBe('0.15');
+    });
+
+    it('mouse wheel over a slider scrubs it by one step (up = increase, down = decrease)', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        const slider = container.querySelector('#kg-min-degree');
+        slider.value = '3';
+        slider.dispatchEvent(new Event('input'));   // sync the label
+
+        // Wheel up (deltaY < 0) increases by one step (= 1).
+        const evtUp = new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true });
+        slider.dispatchEvent(evtUp);
+        expect(slider.value).toBe('4');
+        expect(evtUp.defaultPrevented).toBe(true);
+
+        // Wheel down decreases.
+        slider.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }));
+        expect(slider.value).toBe('3');
+
+        // Clamped at min/max — repeated wheel at the max should NOT overflow.
+        slider.value = String(slider.max);
+        slider.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+        expect(slider.value).toBe(String(slider.max));
+    });
+
+    it('collapses adjacent sentence mentions into a single ranged link in the side panel', async () => {
+        // Seed a node whose contexts contain three consecutive sentences
+        // (0, 1, 2) — these should render as ONE "sentences 1–3" link, not
+        // three separate links.
+        await storage.saveKGNode({
+            id: 'n1', bookId: 'b1', canonicalName: 'Arthur',
+            aliases: [], type: 'PERSON', bloom: 'Remember',
+            embedding: new Float32Array(1),
+            contexts: [{ chapterIndex: 0, sentenceIndices: [0, 1, 2, 7, 8] }],
+            firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+        });
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1'))[0];
+        ge._showNodeDetails(node);
+
+        const panel = container.querySelector('#kg-side-panel');
+        const links = panel.querySelectorAll('a[data-ch]');
+        // Two groups: {0,1,2} and {7,8}.
+        expect(links).toHaveLength(2);
+        expect(links[0].textContent.trim()).toContain('sentences 1–3');
+        expect(links[1].textContent.trim()).toContain('sentences 8–9');
+        // The pivot sentence for the first group is the middle index (1).
+        expect(links[0].dataset.sent).toBe('1');
+    });
 });

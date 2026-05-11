@@ -79,8 +79,8 @@ export class GraphExplorer {
                         <input type="range" id="kg-min-degree" min="1" max="10" step="1" value="1">
                     </label>
                     <label>
-                        Min relevance: <span id="kg-min-relevance-value">0.25</span>
-                        <input type="range" id="kg-min-relevance" min="0" max="1" step="0.05" value="0.25">
+                        Min relevance: <span id="kg-min-relevance-value">0.15</span>
+                        <input type="range" id="kg-min-relevance" min="0" max="1" step="0.05" value="0.15">
                     </label>
                 </div>
                 <button class="btn-icon graph-close-btn" aria-label="Close">
@@ -118,6 +118,30 @@ export class GraphExplorer {
             chValue.textContent = this._chapterSliderLabel(chSlider.value);
             this._applyDetailFilter();
         });
+
+        // Mouse-wheel scrubbing — wheel events that originate over a slider
+        // adjust its value by `step` and synthesise an `input` event so the
+        // existing label + filter logic above runs unchanged. preventDefault
+        // is necessary (with passive:false) so the wheel does not scroll the
+        // header underneath the slider.
+        for (const slider of [degSlider, relSlider, chSlider]) {
+            slider.addEventListener('wheel', (e) => {
+                if (slider.disabled) return;
+                e.preventDefault();
+                const step = parseFloat(slider.step) || 1;
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                const cur = parseFloat(slider.value);
+                // Wheel up (deltaY < 0) → increase, matching the "scroll
+                // forward to reveal more" mental model.
+                const dir = e.deltaY < 0 ? 1 : -1;
+                const next = Math.min(max, Math.max(min, cur + dir * step));
+                if (next !== cur) {
+                    slider.value = String(next);
+                    slider.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            }, { passive: false });
+        }
     }
 
     /**
@@ -363,6 +387,37 @@ export class GraphExplorer {
         this._container.querySelector('.graph-body').classList.remove('hidden');
     }
 
+    /**
+     * Group a sorted list of sentence indices into runs of "close" mentions
+     * so the side panel can render one link per run instead of N links to
+     * overlapping previews. Two indices are in the same run when their gap
+     * is ≤ `maxGap`. The default of 2 matches the preview modal's
+     * neighbourhood radius — within that distance, the ±2 windows overlap
+     * and the second link is just visual noise.
+     *
+     * @param {number[]} indices
+     * @param {number} [maxGap=2]
+     * @returns {{ start: number, end: number, pivot: number }[]}
+     *   `pivot` is the sentence we link to (the middle of the run so the
+     *   preview window covers as much of the run as possible).
+     */
+    _groupAdjacentSentences(indices, maxGap = 2) {
+        const sorted = Array.from(new Set(indices)).sort((a, b) => a - b);
+        const groups = [];
+        let cur = null;
+        for (const si of sorted) {
+            if (cur && si - cur.end <= maxGap) {
+                cur.end = si;
+            } else {
+                if (cur) cur.pivot = Math.floor((cur.start + cur.end) / 2);
+                cur = { start: si, end: si };
+                groups.push(cur);
+            }
+        }
+        if (cur) cur.pivot = Math.floor((cur.start + cur.end) / 2);
+        return groups;
+    }
+
     _showNodeDetails(node) {
         const panel = this._container.querySelector('#kg-side-panel');
         const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -371,12 +426,25 @@ export class GraphExplorer {
         const aliasLine = node.aliases?.length
             ? node.aliases.map(escape).join(', ')
             : '—';
-        const contextItems = (node.contexts || []).flatMap((c) =>
-            (c.sentenceIndices || []).slice(0, 3).map((si) => ({
+        // Build a flat list of items, but first collapse runs of nearby
+        // sentence mentions within each chapter to a single representative
+        // link. Three consecutive sentences that all mention the concept
+        // would otherwise produce three identical-looking previews.
+        const contextItems = (node.contexts || []).flatMap((c) => {
+            const groups = this._groupAdjacentSentences(c.sentenceIndices || []);
+            return groups.slice(0, 5).map((g) => ({
                 chapterIndex: c.chapterIndex,
-                sentenceIndex: si
-            }))
-        );
+                sentenceIndex: g.pivot,
+                start: g.start,
+                end: g.end
+            }));
+        });
+        const formatItem = (c) => {
+            if (c.start === c.end) {
+                return `Chapter ${c.chapterIndex + 1}, sentence ${c.start + 1}`;
+            }
+            return `Chapter ${c.chapterIndex + 1}, sentences ${c.start + 1}–${c.end + 1}`;
+        };
         panel.innerHTML = `
             <h3>${escape(node.canonicalName)}</h3>
             <p><strong>Type:</strong> ${escape(node.type)}</p>
@@ -388,7 +456,7 @@ export class GraphExplorer {
                     ? '<li>No context recorded.</li>'
                     : contextItems.map((c) => `
                         <li><a href="#" data-ch="${c.chapterIndex}" data-sent="${c.sentenceIndex}">
-                            Chapter ${c.chapterIndex + 1}, sentence ${c.sentenceIndex + 1}
+                            ${escape(formatItem(c))}
                         </a></li>
                     `).join('')}
             </ul>
