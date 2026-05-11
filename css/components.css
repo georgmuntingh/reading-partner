@@ -1379,6 +1379,14 @@
     visibility: visible;
 }
 
+/* Modals dynamically injected on top of the graph-explorer overlay
+   (z-index: 1000) need to render above it, not behind it. */
+.kg-context-preview-overlay,
+.kg-domain-modal-overlay,
+.confirm-modal-overlay {
+    z-index: 1100;
+}
+
 .modal {
     width: 100%;
     max-width: 480px;
