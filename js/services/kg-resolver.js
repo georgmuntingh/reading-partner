@@ -32,15 +32,40 @@ export function cosine(a, b) {
 }
 
 export class KGResolver {
-    constructor({ bookId, similarityThreshold }) {
+    /**
+     * @param {Object} opts
+     * @param {string} opts.bookId
+     * @param {number} opts.similarityThreshold
+     * @param {Float32Array} [opts.anchor] - L2-normalised "domain anchor"
+     *   embedding. When present, each new entity's cosine to it is computed
+     *   and stored as `relevanceScore`; entities below `relevanceThreshold`
+     *   are dropped entirely (signalled by resolve() returning null).
+     * @param {number} [opts.relevanceThreshold=0]
+     */
+    constructor({ bookId, similarityThreshold, anchor = null, relevanceThreshold = 0 }) {
         this.bookId = bookId;
         this.threshold = similarityThreshold;
+        this._anchor = anchor instanceof Float32Array ? anchor : null;
+        this._relevanceThreshold = Number.isFinite(relevanceThreshold) ? relevanceThreshold : 0;
         this._nodes = [];
         this._nodesByName = new Map();        // name.toLowerCase() -> node
         this._loaded = false;
         // Edge cache, lazy-initialised on first resolveEdge() call
         this._edges = null;
         this._edgesByKey = null;
+        // Names dropped by the Tier-2 anchor gate. The controller consults
+        // this set when filtering relations so an edge to a dropped entity
+        // never reaches storage.
+        this._droppedEntityNames = new Set();
+    }
+
+    /**
+     * @param {string} name
+     * @returns {boolean} true if Tier-2 gating dropped this name earlier
+     *   in the current session.
+     */
+    wasDropped(name) {
+        return this._droppedEntityNames.has(String(name || '').toLowerCase());
     }
 
     /**
@@ -73,7 +98,9 @@ export class KGResolver {
      * Existing-node path appends the new alias + chapter context.
      * New-node path initialises SM-2 SRS stub fields.
      *
-     * @returns {Promise<{ id: string, created: boolean }>}
+     * @returns {Promise<{ id: string, created: boolean } | null>} null when the
+     *   Tier-2 anchor gate dropped this entity. Callers should treat the
+     *   entity as never extracted and skip relations referencing it.
      */
     async resolve({ name, type, aliases = [], bloom, embedding, chapterIndex, sentenceIndices }) {
         if (!this._loaded) await this.load();
@@ -81,9 +108,21 @@ export class KGResolver {
             throw new Error('resolve: embedding must be a Float32Array');
         }
         const now = Date.now();
+        const lc = name.toLowerCase();
+
+        // Tier-2 semantic gate. Skip when no anchor (blank domain or
+        // anchor embedding failed). Done BEFORE the similarity search so
+        // we never spend dedupe cycles on entities we're about to drop.
+        let relevanceScore = null;
+        if (this._anchor) {
+            relevanceScore = cosine(this._anchor, embedding);
+            if (relevanceScore < this._relevanceThreshold) {
+                this._droppedEntityNames.add(lc);
+                return null;
+            }
+        }
 
         // 1) Exact-name fast path
-        const lc = name.toLowerCase();
         let hit = this._nodesByName.get(lc);
 
         // 2) Cosine search
@@ -136,6 +175,7 @@ export class KGResolver {
             type: type || 'OTHER',
             bloom: bloom || 'Remember',
             embedding,
+            relevanceScore,                  // null when no anchor; preserved on disk
             contexts: [{ chapterIndex, sentenceIndices: sentenceIndices.slice() }],
             firstSeenChapter: chapterIndex,
             srs: {

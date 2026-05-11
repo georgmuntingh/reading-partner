@@ -12,7 +12,7 @@
 import { storage } from '../services/storage.js';
 import { llmClient } from '../services/llm-client.js';
 import { embeddingProvider } from '../services/embedding-provider.js';
-import { chunkSentences, extractFromChunkBatch } from '../services/kg-extractor.js';
+import { chunkSentences, extractFromChunkBatch, RELATION_BLACKLIST } from '../services/kg-extractor.js';
 import { KGResolver } from '../services/kg-resolver.js';
 
 export const KG_STATE = Object.freeze({
@@ -23,11 +23,22 @@ export const KG_STATE = Object.freeze({
 });
 
 export class KGController {
-    constructor({ getSettings, getBook }) {
+    /**
+     * @param {Object} deps
+     * @param {() => Object} deps.getSettings
+     * @param {() => Object} deps.getBook
+     * @param {(book: Object) => Promise<string|null>} [deps.promptForDomain]
+     *   Optional async UI callback invoked when the current book has no
+     *   kgDomain set. Resolves to the domain string the user typed, or
+     *   null to cancel. If omitted, the build proceeds without Tier-1/2
+     *   filtering — Tier-3 regex still applies.
+     */
+    constructor({ getSettings, getBook, promptForDomain }) {
         if (typeof getSettings !== 'function') throw new Error('KGController: getSettings is required');
         if (typeof getBook !== 'function') throw new Error('KGController: getBook is required');
         this.getSettings = getSettings;
         this.getBook = getBook;
+        this.promptForDomain = typeof promptForDomain === 'function' ? promptForDomain : null;
         this.state = KG_STATE.IDLE;
         // Progress callback. Stages: 'embed-load' | 'extract' | 'done' | 'error'
         this.onProgress = null;
@@ -69,8 +80,30 @@ export class KGController {
         const chunkSize = settings.kgChunkSize ?? 6;
         const chunkOverlap = settings.kgChunkOverlap ?? 2;
         const similarityThreshold = settings.kgSimilarityThreshold ?? 0.88;
+        const relevanceThreshold = Number.isFinite(settings.kgRelevanceThreshold)
+            ? settings.kgRelevanceThreshold
+            : 0.15;
         const chunksPerRequest = Math.max(1, settings.kgChunksPerRequest ?? 4);
         const targetBackend = settings.kgExtractionBackend;
+
+        // Resolve the per-book domain. Persist on the book so we only prompt
+        // once. A user-cancelled prompt aborts the build.
+        let kgDomain = String(book.kgDomain || '').trim();
+        if (!kgDomain && this.promptForDomain) {
+            const entered = await this.promptForDomain(book);
+            const trimmed = String(entered || '').trim();
+            if (!trimmed) {
+                this.state = KG_STATE.IDLE;
+                return;
+            }
+            kgDomain = trimmed;
+            book.kgDomain = kgDomain;
+            try {
+                await storage.saveBook(book);
+            } catch (err) {
+                console.warn('[kg-controller] failed to persist kgDomain:', err?.message);
+            }
+        }
 
         const prevBackend = llmClient.getBackend();
         if (targetBackend && targetBackend !== prevBackend) {
@@ -100,8 +133,31 @@ export class KGController {
             });
             await embeddingProvider.load();
 
-            // 2) Resolver (per-book candidate set)
-            const resolver = new KGResolver({ bookId: book.id, similarityThreshold });
+            // 2) Compute the Tier-2 domain anchor once per session. We wrap
+            //    the raw kgDomain in a framing sentence because feature-
+            //    extraction embedders produce noisy vectors for bare nouns
+            //    ("Biology") compared to natural sentences.
+            let anchor = null;
+            if (kgDomain) {
+                try {
+                    const anchorText = `The core academic topic of this text is ${kgDomain}.`;
+                    const [vec] = await embeddingProvider.embed([anchorText]);
+                    if (vec instanceof Float32Array) anchor = vec;
+                } catch (err) {
+                    console.warn(
+                        '[kg-controller] anchor embedding failed — Tier-2 relevance disabled this session:',
+                        err?.message ?? String(err)
+                    );
+                }
+            }
+
+            // 3) Resolver (per-book candidate set + anchor gate)
+            const resolver = new KGResolver({
+                bookId: book.id,
+                similarityThreshold,
+                anchor,
+                relevanceThreshold
+            });
             await resolver.load();
 
             // 3) Chunk the chapter
@@ -124,7 +180,7 @@ export class KGController {
                 });
                 let batchResults;
                 try {
-                    batchResults = await extractFromChunkBatch(batchTexts);
+                    batchResults = await extractFromChunkBatch(batchTexts, { kgDomain });
                 } catch (err) {
                     console.warn(
                         `[kg-controller] batch ${start}-${end - 1} extraction threw:`,
@@ -185,7 +241,7 @@ export class KGController {
                     const emb = nameToEmbedding.get(ent.name);
                     if (!emb) continue;
                     try {
-                        const { id } = await resolver.resolve({
+                        const result = await resolver.resolve({
                             name: ent.name,
                             type: ent.type,
                             aliases: Array.isArray(ent.aliases) ? ent.aliases : [],
@@ -194,13 +250,21 @@ export class KGController {
                             chapterIndex,
                             sentenceIndices: chunks[i].sentenceIndices
                         });
-                        nameToNodeId.set(ent.name, id);
+                        // result === null when the Tier-2 anchor gate dropped
+                        // the entity. Skip silently so relations referencing
+                        // it are also dropped below.
+                        if (result) nameToNodeId.set(ent.name, result.id);
                     } catch (err) {
                         console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
                     }
                 }
 
                 for (const r of ex.relations) {
+                    // Belt-and-braces: kg-extractor.sanitizeExtraction()
+                    // already filters the blacklist, but if a future caller
+                    // bypasses it we still won't write structural relations.
+                    const relStr = String(r.relation || '').toLowerCase().trim();
+                    if (RELATION_BLACKLIST.has(relStr)) continue;
                     const sId = nameToNodeId.get(r.source);
                     const tId = nameToNodeId.get(r.target);
                     if (!sId || !tId) continue;

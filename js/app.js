@@ -31,6 +31,7 @@ import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
+import { promptForDomain } from './ui/kg-domain-modal.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -308,7 +309,8 @@ class ReadingPartnerApp {
         // Initialize Knowledge Graph (controller + explorer overlay)
         this._kgController = new KGController({
             getSettings: () => this._settingsModal?.getSettings() ?? {},
-            getBook: () => this._currentBook
+            getBook: () => this._currentBook,
+            promptForDomain: (book) => promptForDomain(book)
         });
         this._kgController.onProgress = (p) => this._showKGProgress(p);
 

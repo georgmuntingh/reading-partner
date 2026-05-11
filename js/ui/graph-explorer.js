@@ -52,6 +52,16 @@ export class GraphExplorer {
         this._container.innerHTML = `
             <div class="graph-explorer-header">
                 <h2>Knowledge Graph</h2>
+                <div class="graph-filter-toolbar">
+                    <label>
+                        Min connections: <span id="kg-min-degree-value">1</span>
+                        <input type="range" id="kg-min-degree" min="1" max="10" step="1" value="1">
+                    </label>
+                    <label>
+                        Min relevance: <span id="kg-min-relevance-value">0.25</span>
+                        <input type="range" id="kg-min-relevance" min="0" max="1" step="0.05" value="0.25">
+                    </label>
+                </div>
                 <button class="btn-icon graph-close-btn" aria-label="Close">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -68,6 +78,19 @@ export class GraphExplorer {
             </div>
         `;
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
+
+        const degSlider = this._container.querySelector('#kg-min-degree');
+        const relSlider = this._container.querySelector('#kg-min-relevance');
+        const degValue = this._container.querySelector('#kg-min-degree-value');
+        const relValue = this._container.querySelector('#kg-min-relevance-value');
+        degSlider.addEventListener('input', () => {
+            degValue.textContent = degSlider.value;
+            this._applyDetailFilter();
+        });
+        relSlider.addEventListener('input', () => {
+            relValue.textContent = parseFloat(relSlider.value).toFixed(2);
+            this._applyDetailFilter();
+        });
     }
 
     /**
@@ -106,6 +129,9 @@ export class GraphExplorer {
                     label: n.canonicalName,
                     type: n.type,
                     bloom: n.bloom,
+                    // Legacy nodes lack a relevanceScore — coerce to null
+                    // so the filter can recognise them and exempt them.
+                    relevanceScore: typeof n.relevanceScore === 'number' ? n.relevanceScore : null,
                     raw: n
                 }
             })),
@@ -167,6 +193,10 @@ export class GraphExplorer {
                         'line-color': '#fa3',
                         'target-arrow-color': '#fa3'
                     }
+                },
+                {
+                    selector: '.kg-hidden',
+                    style: { display: 'none' }
                 }
             ],
             layout: { name: 'cose', animate: false, padding: 30 },
@@ -178,6 +208,41 @@ export class GraphExplorer {
         this._cy.on('tap', 'node', (evt) => this._showNodeDetails(evt.target.data('raw')));
         this._cy.on('tap', (evt) => {
             if (evt.target === this._cy) this._hideSide();
+        });
+
+        // Apply the initial detail filter so the default UI state (min
+        // relevance 0.25, min degree 1) takes effect on first render.
+        this._applyDetailFilter();
+    }
+
+    /**
+     * Hide nodes whose degree or relevance score falls below the toolbar
+     * thresholds, then hide every edge incident to a hidden node. Uses
+     * Cytoscape's native selectors (no per-edge iteration) so this stays
+     * snappy on dense graphs.
+     */
+    _applyDetailFilter() {
+        if (!this._cy || typeof this._cy.batch !== 'function') return;
+        const degEl = this._container.querySelector('#kg-min-degree');
+        const relEl = this._container.querySelector('#kg-min-relevance');
+        const minDeg = Number.parseInt(degEl?.value ?? '1', 10) || 1;
+        const minRel = Number.parseFloat(relEl?.value ?? '0') || 0;
+
+        this._cy.batch(() => {
+            this._cy.nodes().forEach((n) => {
+                const deg = n.degree();
+                const score = n.data('relevanceScore');
+                const passesDeg = deg >= minDeg;
+                // Legacy nodes (score === null) are exempt from the relevance
+                // gate — they had no anchor when extracted and can't be scored.
+                const passesRel = score == null || score >= minRel;
+                n.toggleClass('kg-hidden', !(passesDeg && passesRel));
+            });
+            // Edge pass via native selector. Cytoscape resolves
+            // `connectedEdges()` against its internal adjacency map, so this
+            // is O(hidden_nodes * avg_degree) rather than O(|E|).
+            this._cy.edges().removeClass('kg-hidden');
+            this._cy.nodes('.kg-hidden').connectedEdges().addClass('kg-hidden');
         });
     }
 

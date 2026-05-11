@@ -3664,6 +3664,27 @@
     font-size: var(--font-size-lg);
 }
 
+.graph-filter-toolbar {
+    display: flex;
+    gap: var(--spacing-lg);
+    align-items: center;
+    margin-left: auto;
+    margin-right: var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary, inherit);
+}
+
+.graph-filter-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    white-space: nowrap;
+}
+
+.graph-filter-toolbar input[type="range"] {
+    width: 120px;
+}
+
 .graph-body {
     flex: 1;
     display: flex;

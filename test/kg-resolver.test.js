@@ -208,3 +208,58 @@ describe('KGResolver.resolveEdge — dedup', () => {
         expect(stored.contexts.map((c) => c.chapterIndex).sort()).toEqual([0, 5]);
     });
 });
+
+describe('KGResolver — Tier-2 anchor gate', () => {
+    it('drops an entity whose cosine to the anchor is below relevanceThreshold', async () => {
+        const anchor = unit([1, 0, 0, 0]);
+        const r = new KGResolver({
+            bookId: 'b1', similarityThreshold: 0.88,
+            anchor, relevanceThreshold: 0.5
+        });
+        const out = await r.resolve({
+            name: 'irrelevant',
+            type: 'OTHER',
+            aliases: [],
+            bloom: 'Remember',
+            embedding: unit([0, 1, 0, 0]),     // orthogonal → cosine = 0
+            chapterIndex: 0,
+            sentenceIndices: [1]
+        });
+        expect(out).toBeNull();
+        expect(r.wasDropped('irrelevant')).toBe(true);
+        // Nothing should have been saved.
+        const stored = await storage.getKGNodesForBook('b1');
+        expect(stored).toEqual([]);
+    });
+
+    it('keeps an entity above threshold and persists its relevanceScore', async () => {
+        const anchor = unit([1, 0, 0, 0]);
+        const r = new KGResolver({
+            bookId: 'b1', similarityThreshold: 0.88,
+            anchor, relevanceThreshold: 0.5
+        });
+        const out = await r.resolve({
+            name: 'on-topic',
+            type: 'CONCEPT',
+            aliases: [],
+            bloom: 'Understand',
+            embedding: unit([0.9, 0.1, 0, 0]),
+            chapterIndex: 0,
+            sentenceIndices: [1]
+        });
+        expect(out).not.toBeNull();
+        const stored = (await storage.getKGNodesForBook('b1'))[0];
+        expect(stored.relevanceScore).toBeGreaterThan(0.5);
+    });
+
+    it('stores relevanceScore=null when no anchor is supplied', async () => {
+        const r = new KGResolver({ bookId: 'b1', similarityThreshold: 0.88 });
+        await r.resolve({
+            name: 'X', type: 'OTHER', aliases: [], bloom: 'Remember',
+            embedding: unit([1, 0, 0]),
+            chapterIndex: 0, sentenceIndices: [0]
+        });
+        const stored = (await storage.getKGNodesForBook('b1'))[0];
+        expect(stored.relevanceScore).toBeNull();
+    });
+});

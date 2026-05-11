@@ -16,7 +16,16 @@ vi.mock('../js/services/llm-client.js', () => {
     };
 });
 
-import { chunkSentences, extractFromChunk, extractFromChunkBatch, KG_EXTRACTION_SYSTEM_PROMPT, KG_BATCH_EXTRACTION_SYSTEM_PROMPT } from '../js/services/kg-extractor.js';
+import {
+    chunkSentences,
+    extractFromChunk,
+    extractFromChunkBatch,
+    KG_EXTRACTION_SYSTEM_PROMPT,
+    KG_BATCH_EXTRACTION_SYSTEM_PROMPT,
+    isStructuralNoise,
+    sanitizeExtraction,
+    buildExtractionSystemPrompt
+} from '../js/services/kg-extractor.js';
 import { llmClient } from '../js/services/llm-client.js';
 
 const sentencesOfLength = (n) => Array.from({ length: n }, (_, i) => `S${i}.`);
@@ -200,5 +209,111 @@ describe('extractFromChunkBatch', () => {
         llmClient.complete.mockResolvedValueOnce(JSON.stringify({ passages: [{ entities: [], relations: [] }] }));
         await extractFromChunkBatch(['A.', 'B.', 'C.', 'D.', 'E.', 'F.', 'G.', 'H.', 'I.', 'J.', 'K.', 'L.'], { maxTokensPerChunk: 1000, maxTokensCap: 4000 });
         expect(llmClient.complete.mock.calls[0][0].maxTokens).toBe(4000);
+    });
+});
+
+describe('isStructuralNoise (Tier-3 regex blacklist)', () => {
+    it('flags figure / table / section / chapter / page meta-text', () => {
+        for (const s of ['Figure 27', 'Fig. 3', 'Table 4', 'Section 2.4', 'Chapter 12', 'page 17', 'Appendix A']) {
+            expect(isStructuralNoise(s)).toBe(true);
+        }
+    });
+
+    it('flags bare citation numbers and 4-digit years', () => {
+        expect(isStructuralNoise('[12]')).toBe(true);
+        expect(isStructuralNoise('42')).toBe(true);
+        expect(isStructuralNoise('1999')).toBe(true);
+    });
+
+    it('flags abbreviations and section titles', () => {
+        for (const s of ['et al.', 'ibid.', 'i.e.', 'Introduction', 'References', 'Bibliography']) {
+            expect(isStructuralNoise(s)).toBe(true);
+        }
+    });
+
+    it('lets real concepts through', () => {
+        for (const s of ['mitochondrion', 'natural selection', 'Y']) {
+            expect(isStructuralNoise(s)).toBe(false);
+        }
+    });
+
+    it('treats empty / missing names as noise', () => {
+        expect(isStructuralNoise('')).toBe(true);
+        expect(isStructuralNoise(null)).toBe(true);
+        expect(isStructuralNoise(undefined)).toBe(true);
+    });
+});
+
+describe('sanitizeExtraction', () => {
+    it('coerces null/missing/non-array entities and relations to []', () => {
+        expect(sanitizeExtraction({ entities: null, relations: undefined })).toEqual({ entities: [], relations: [] });
+        expect(sanitizeExtraction({})).toEqual({ entities: [], relations: [] });
+        // Object where array is expected — should become [].
+        expect(sanitizeExtraction({ entities: { name: 'X' }, relations: {} })).toEqual({ entities: [], relations: [] });
+    });
+
+    it('drops structural entities and cascades to relations that reference them', () => {
+        const out = sanitizeExtraction({
+            entities: [
+                { name: 'Figure 3', type: 'OTHER', aliases: [], bloom: 'Remember' },
+                { name: 'mitochondrion', type: 'CONCEPT', aliases: [], bloom: 'Understand' }
+            ],
+            relations: [
+                { source: 'mitochondrion', target: 'Figure 3', relation: 'shown in' },
+                { source: 'mitochondrion', target: 'cell', relation: 'part of' }
+            ]
+        });
+        expect(out.entities.map((e) => e.name)).toEqual(['mitochondrion']);
+        // The "shown in" relation is in the relation blacklist AND points
+        // to a dropped entity — gone either way. "part of" survives.
+        expect(out.relations).toEqual([{ source: 'mitochondrion', target: 'cell', relation: 'part of' }]);
+    });
+
+    it('drops blacklisted relation strings even when both endpoints are kept', () => {
+        const out = sanitizeExtraction({
+            entities: [
+                { name: 'mitochondrion', type: 'CONCEPT', aliases: [], bloom: 'Understand' },
+                { name: 'paper', type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: [
+                { source: 'mitochondrion', target: 'paper', relation: 'mentioned in' },
+                { source: 'mitochondrion', target: 'paper', relation: 'described in' }
+            ]
+        });
+        expect(out.relations.map((r) => r.relation)).toEqual(['described in']);
+    });
+});
+
+describe('buildExtractionSystemPrompt', () => {
+    it('inlines the domain when provided', () => {
+        const prompt = buildExtractionSystemPrompt({ kgDomain: 'Molecular Biology' });
+        expect(prompt).toContain('Molecular Biology');
+        expect(prompt).toContain('STRICT RULES');
+    });
+
+    it('falls back to a generic non-fiction prompt when domain is blank', () => {
+        const prompt = buildExtractionSystemPrompt();
+        expect(prompt).toBe(KG_EXTRACTION_SYSTEM_PROMPT);
+        expect(prompt).toContain("the book's subject");
+    });
+});
+
+describe('extractFromChunk — kgDomain plumbing', () => {
+    beforeEach(() => {
+        llmClient.complete.mockReset();
+    });
+
+    it('uses the no-domain prompt when kgDomain is empty', async () => {
+        llmClient.complete.mockResolvedValueOnce('{"entities":[],"relations":[]}');
+        await extractFromChunk('text');
+        expect(llmClient.complete.mock.calls[0][0].system).toBe(KG_EXTRACTION_SYSTEM_PROMPT);
+    });
+
+    it('inlines kgDomain into the system prompt when provided', async () => {
+        llmClient.complete.mockResolvedValueOnce('{"entities":[],"relations":[]}');
+        await extractFromChunk('text', { kgDomain: 'Roman History' });
+        const sys = llmClient.complete.mock.calls[0][0].system;
+        expect(sys).toContain('Roman History');
+        expect(sys).not.toBe(KG_EXTRACTION_SYSTEM_PROMPT);
     });
 });

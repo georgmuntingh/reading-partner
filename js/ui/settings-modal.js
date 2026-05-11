@@ -91,6 +91,11 @@ export class SettingsModal {
             kgChunkOverlap: 2,
             kgChunksPerRequest: 4,
             kgSimilarityThreshold: 0.88,
+            // Permissive extraction-time floor. Tier-2 anchor relevance below
+            // this is dropped at write time; the UI slider in graph explorer
+            // defaults to a stricter 0.25 but can drag down to reveal the
+            // 0.15–0.24 band that is preserved on disk.
+            kgRelevanceThreshold: 0.15,
             // Embedding backend — defaults to cloud (uses the OpenRouter API key
             // configured for Q&A) so first-time users don't have to wait on a
             // local model download.
@@ -763,6 +768,12 @@ export class SettingsModal {
                             <p class="form-hint">Cosine similarity above which two extracted entities are merged into the same node</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-relevance-threshold">Domain Relevance Floor: <span id="settings-kg-relevance-threshold-value">0.15</span></label>
+                            <input type="range" id="settings-kg-relevance-threshold" class="form-input" min="0" max="1" step="0.01" value="0.15">
+                            <p class="form-hint">Hard floor applied at extraction time — entities scoring below this against the book's domain anchor are discarded permanently. Keep this low (≈0.15) and tune visualisation strictness in the Graph Explorer.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Embedding Model</div>
 
                         <div class="form-group">
@@ -927,6 +938,8 @@ export class SettingsModal {
             kgChunksPerRequestValue: this._container.querySelector('#settings-kg-chunks-per-request-value'),
             kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
             kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
+            kgRelevanceThreshold: this._container.querySelector('#settings-kg-relevance-threshold'),
+            kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
             kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
             kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
@@ -1044,6 +1057,9 @@ export class SettingsModal {
         });
         this._elements.kgSimilarityThreshold.addEventListener('input', () => {
             this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
+        });
+        this._elements.kgRelevanceThreshold.addEventListener('input', () => {
+            this._elements.kgRelevanceThresholdValue.textContent = parseFloat(this._elements.kgRelevanceThreshold.value).toFixed(2);
         });
 
         // KG embedding source — show only the matching sub-option group
@@ -1488,6 +1504,10 @@ export class SettingsModal {
             kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
             kgChunksPerRequest: parseInt(this._elements.kgChunksPerRequest.value) || 4,
             kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
+            kgRelevanceThreshold: (() => {
+                const v = parseFloat(this._elements.kgRelevanceThreshold.value);
+                return Number.isFinite(v) ? v : 0.15;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
             kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
@@ -1732,6 +1752,9 @@ export class SettingsModal {
         const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
         this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
         this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);
+        const kgRelevanceThreshold = this._settings.kgRelevanceThreshold ?? 0.15;
+        this._elements.kgRelevanceThreshold.value = kgRelevanceThreshold;
+        this._elements.kgRelevanceThresholdValue.textContent = parseFloat(kgRelevanceThreshold).toFixed(2);
         this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
