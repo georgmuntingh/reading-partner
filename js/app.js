@@ -317,6 +317,7 @@ class ReadingPartnerApp {
         this._graphExplorer = new GraphExplorer({
             container: document.getElementById('graph-explorer'),
             getBook: () => this._currentBook,
+            getCurrentChapterIndex: () => this._currentChapterIndex,
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });

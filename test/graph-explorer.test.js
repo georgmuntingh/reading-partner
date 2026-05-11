@@ -140,4 +140,63 @@ describe('GraphExplorer', () => {
         await ge.open();
         expect(cytoscapeFactory).toHaveBeenCalledTimes(2);
     });
+
+    it('chapter slider defaults to the reader\'s current chapter and exposes an "All" sentinel', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{}, {}, {}] }),  // 3 chapters
+            getCurrentChapterIndex: () => 1                          // reader on Ch 2
+        });
+        await ge.open();
+        const slider = container.querySelector('#kg-chapter');
+        const label = container.querySelector('#kg-chapter-value');
+        expect(slider.disabled).toBe(false);
+        expect(slider.min).toBe('0');
+        expect(slider.max).toBe('3');         // 3 chapters + 1 "All" slot
+        expect(slider.value).toBe('1');       // current chapter
+        expect(label.textContent).toBe('Ch 2');
+
+        // Last position is the "All chapters" sentinel.
+        slider.value = '3';
+        slider.dispatchEvent(new Event('input'));
+        expect(label.textContent).toBe('All');
+    });
+
+    it('falls back to "All" when no current-chapter callback is provided', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{}, {}] })
+        });
+        await ge.open();
+        const slider = container.querySelector('#kg-chapter');
+        const label = container.querySelector('#kg-chapter-value');
+        expect(slider.value).toBe('2');       // out-of-range = sentinel
+        expect(label.textContent).toBe('All');
+    });
+
+    it('attaches each node\'s and edge\'s chapter set to its cy data for filtering', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{}] }),
+            getCurrentChapterIndex: () => 0
+        });
+        await ge.open();
+        const args = cytoscapeFactory.mock.calls[0][0];
+        const nodeElems = args.elements.filter((e) => !e.data.source);
+        const edgeElems = args.elements.filter((e) => e.data.source);
+        for (const n of nodeElems) {
+            expect(n.data.chapterSet).toBeInstanceOf(Set);
+            expect(n.data.chapterSet.has(0)).toBe(true);
+        }
+        for (const e of edgeElems) {
+            expect(e.data.chapterSet).toBeInstanceOf(Set);
+            expect(e.data.chapterSet.has(0)).toBe(true);
+        }
+    });
 });
