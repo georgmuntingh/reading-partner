@@ -32,13 +32,20 @@ export class KGController {
      *   kgDomain set. Resolves to the domain string the user typed, or
      *   null to cancel. If omitted, the build proceeds without Tier-1/2
      *   filtering — Tier-3 regex still applies.
+     * @param {(phrase: string) => Promise<{ definition?: string, translation?: string } | null>} [deps.lookupDefinition]
+     *   Optional callback to fetch a short definition for each newly-
+     *   created node. When supplied, definitions are persisted on the
+     *   node at creation time so the graph-explorer side panel can show
+     *   them without a fresh LLM call. Fetches run in parallel after
+     *   each chapter's resolution phase; failures are logged and skipped.
      */
-    constructor({ getSettings, getBook, promptForDomain }) {
+    constructor({ getSettings, getBook, promptForDomain, lookupDefinition }) {
         if (typeof getSettings !== 'function') throw new Error('KGController: getSettings is required');
         if (typeof getBook !== 'function') throw new Error('KGController: getBook is required');
         this.getSettings = getSettings;
         this.getBook = getBook;
         this.promptForDomain = typeof promptForDomain === 'function' ? promptForDomain : null;
+        this.lookupDefinition = typeof lookupDefinition === 'function' ? lookupDefinition : null;
         this.state = KG_STATE.IDLE;
         // Progress callback. Stages: 'embed-load' | 'extract' | 'done' | 'error'
         this.onProgress = null;
@@ -263,6 +270,12 @@ export class KGController {
                 return hits.length > 0 ? hits : chunk.sentenceIndices.slice();
             };
 
+            // Track newly-created nodes across the chapter so we can
+            // batch-fetch their definitions in a single fire-and-forget
+            // pass after resolution finishes (avoids stalling each chunk
+            // on an LLM call).
+            const newlyCreated = new Map();   // nodeId -> canonicalName
+
             for (let i = 0; i < chunks.length; i++) {
                 this.onProgress?.({ stage: 'resolve', current: i + 1, total: chunks.length });
                 const ex = extractions[i];
@@ -291,6 +304,7 @@ export class KGController {
                         if (result) {
                             nameToNodeId.set(ent.name, result.id);
                             nameToSentenceIndices.set(ent.name, entSentences);
+                            if (result.created) newlyCreated.set(result.id, ent.name);
                         }
                     } catch (err) {
                         console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
@@ -327,6 +341,45 @@ export class KGController {
                         console.warn('[kg-controller] edge save failed:', err?.message);
                     }
                 }
+            }
+
+            // Phase E — pre-populate definitions on newly-created nodes.
+            // Runs after the chapter's resolution pass so it does not stall
+            // the LLM-extract phase; failures are logged and ignored so a
+            // flaky lookup never blocks the build from completing.
+            if (this.lookupDefinition && newlyCreated.size > 0) {
+                this.onProgress?.({
+                    stage: 'definitions',
+                    total: newlyCreated.size
+                });
+                let done = 0;
+                await Promise.all(
+                    Array.from(newlyCreated.entries()).map(async ([nodeId, name]) => {
+                        try {
+                            const def = await this.lookupDefinition(name);
+                            if (def) {
+                                const node = await storage.getKGNode(nodeId);
+                                if (node) {
+                                    node.definition = def;
+                                    node.updatedAt = Date.now();
+                                    await storage.saveKGNode(node);
+                                }
+                            }
+                        } catch (err) {
+                            console.warn(
+                                `[kg-controller] definition lookup failed for "${name}":`,
+                                err?.message ?? String(err)
+                            );
+                        } finally {
+                            done += 1;
+                            this.onProgress?.({
+                                stage: 'definitions',
+                                current: done,
+                                total: newlyCreated.size
+                            });
+                        }
+                    })
+                );
             }
 
             chapter.kgProcessed = true;

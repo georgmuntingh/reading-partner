@@ -395,6 +395,14 @@ export class GraphExplorer {
         // `&lt;` back to `<` in attribute values when reading innerHTML).
         const target = panel.querySelector('.kg-side-definition .kg-side-definition-body');
         if (!target) return;
+
+        // Fast path: new nodes carry their definition on the record itself
+        // (prefetched at extraction time by KGController). Render and stop.
+        if (node.definition) {
+            this._renderDefinition(target, node.definition);
+            return;
+        }
+
         // Tag this fetch with the node being shown so a stale resolver that
         // lands after the user clicked a different node never overwrites
         // the active panel.

@@ -3693,6 +3693,37 @@
     width: 120px;
 }
 
+/* On narrow screens the title + close button stay on the top line and the
+   three sliders drop into their own full-width row beneath them. Within
+   that row the labels wrap, so each (label + slider) pair stays whole. */
+@media (max-width: 768px) {
+    .graph-explorer-header {
+        flex-wrap: wrap;
+    }
+    .graph-filter-toolbar {
+        order: 3;
+        width: 100%;
+        margin-left: 0;
+        margin-right: 0;
+        padding-top: var(--spacing-sm);
+        gap: var(--spacing-sm) var(--spacing-md);
+        flex-wrap: wrap;
+        justify-content: space-between;
+    }
+    .graph-filter-toolbar input[type="range"] {
+        width: 100px;
+    }
+}
+
+@media (max-width: 480px) {
+    .graph-filter-toolbar {
+        gap: var(--spacing-xs) var(--spacing-sm);
+    }
+    .graph-filter-toolbar input[type="range"] {
+        width: 80px;
+    }
+}
+
 /* ===== KG context preview modal ===== */
 .kg-context-preview-modal {
     max-width: 640px;

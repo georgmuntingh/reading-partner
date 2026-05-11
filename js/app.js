@@ -309,10 +309,31 @@ class ReadingPartnerApp {
         );
 
         // Initialize Knowledge Graph (controller + explorer overlay)
+        // Shared "fetch a concise definition" helper used both by the KG
+        // controller (to prefetch and persist definitions at node-creation
+        // time) and by the graph-explorer side panel (to look up legacy
+        // nodes on demand). Returns null if no API key is configured.
+        const lookupDefinition = async (phrase) => {
+            if (!llmClient.hasApiKey() || !this._currentBook) return null;
+            const entry = await lookupService.lookup({
+                phrase,
+                sentenceContext: phrase,
+                bookId: this._currentBook.id,
+                chapterIndex: this._currentChapterIndex,
+                sentenceIndex: -1,
+                bookMeta: {
+                    title: this._currentBook.title,
+                    author: this._currentBook.author
+                }
+            });
+            return entry?.result ?? null;
+        };
+
         this._kgController = new KGController({
             getSettings: () => this._settingsModal?.getSettings() ?? {},
             getBook: () => this._currentBook,
-            promptForDomain: (book) => promptForDomain(book)
+            promptForDomain: (book) => promptForDomain(book),
+            lookupDefinition
         });
         this._kgController.onProgress = (p) => this._showKGProgress(p);
 
@@ -330,23 +351,10 @@ class ReadingPartnerApp {
             // same _performLookup pipeline the reader uses.
             onLookup: (text, context, chapterIndex, sentenceIndex) =>
                 this._performLookup(text, sentenceIndex, context),
-            // Sidebar "Definition" row fetches a definition for the node's
-            // canonical name via lookupService without popping the drawer.
-            lookupDefinition: async (phrase) => {
-                if (!llmClient.hasApiKey() || !this._currentBook) return null;
-                const entry = await lookupService.lookup({
-                    phrase,
-                    sentenceContext: phrase,
-                    bookId: this._currentBook.id,
-                    chapterIndex: this._currentChapterIndex,
-                    sentenceIndex: -1,
-                    bookMeta: {
-                        title: this._currentBook.title,
-                        author: this._currentBook.author
-                    }
-                });
-                return entry?.result ?? null;
-            },
+            // Sidebar fallback for legacy nodes that pre-date the
+            // controller-side prefetch. New nodes carry `node.definition`
+            // directly and skip this path entirely.
+            lookupDefinition,
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });

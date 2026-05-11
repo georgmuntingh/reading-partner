@@ -481,6 +481,99 @@ describe('KGController.buildChapterGraph', () => {
         expect(edges[0].contexts[0].sentenceIndices).toEqual([0]);
     });
 
+    it('prefetches a definition for each newly-created node via lookupDefinition and persists it', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword', type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: []
+        }));
+        const lookupDefinition = vi.fn(async (phrase) => ({
+            definition: `Definition of ${phrase}.`
+        }));
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({
+            getSettings: () => baseSettings,
+            getBook: () => book,
+            lookupDefinition
+        });
+        await ctrl.buildChapterGraph(0);
+
+        expect(lookupDefinition).toHaveBeenCalledTimes(2);
+        const names = new Set(lookupDefinition.mock.calls.map((c) => c[0]));
+        expect(names).toEqual(new Set(['Arthur', 'sword']));
+
+        const nodes = await storage.getKGNodesForBook('b1');
+        const arthur = nodes.find((n) => n.canonicalName === 'Arthur');
+        const sword = nodes.find((n) => n.canonicalName === 'sword');
+        expect(arthur.definition?.definition).toBe('Definition of Arthur.');
+        expect(sword.definition?.definition).toBe('Definition of sword.');
+    });
+
+    it('failing definition lookups are logged + skipped without aborting the build', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }
+            ],
+            relations: []
+        }));
+        const lookupDefinition = vi.fn().mockRejectedValue(new Error('rate limit'));
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({
+            getSettings: () => baseSettings,
+            getBook: () => book,
+            lookupDefinition
+        });
+        await ctrl.buildChapterGraph(0);
+        expect(ctrl.state).toBe(KG_STATE.DONE);
+        const nodes = await storage.getKGNodesForBook('b1');
+        expect(nodes).toHaveLength(1);
+        expect(nodes[0].definition).toBeUndefined();
+        expect(warn).toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    it('only newly-created nodes get a definition fetch (merges with existing nodes do not)', async () => {
+        // Seed an existing node so the second observation merges instead
+        // of creating.
+        const existing = {
+            id: 'kgnode_pre', bookId: 'b1', canonicalName: 'Arthur', aliases: [],
+            type: 'PERSON', bloom: 'Remember',
+            embedding: new Float32Array([1, 0, 0, 0]),
+            mergeCount: 1, relevanceScore: null,
+            contexts: [{ chapterIndex: 0, sentenceIndices: [0] }],
+            firstSeenChapter: 0,
+            srs: { ease: 2.5, interval: 0, repetitions: 0, dueAt: 0, lastReviewedAt: null },
+            createdAt: 0, updatedAt: 0
+        };
+        await storage.saveKGNode(existing);
+
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword',  type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: []
+        }));
+        const lookupDefinition = vi.fn(async (p) => ({ definition: `def(${p})` }));
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({
+            getSettings: () => baseSettings,
+            getBook: () => book,
+            lookupDefinition
+        });
+        await ctrl.buildChapterGraph(0);
+
+        // sword is new → looked up; Arthur merged → not looked up.
+        const calls = lookupDefinition.mock.calls.map((c) => c[0]);
+        expect(calls).toEqual(['sword']);
+    });
+
     it('aborts the build with ERROR state when batch embedding fails', async () => {
         llmClient.complete.mockResolvedValue(JSON.stringify({
             entities: [{ name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }],

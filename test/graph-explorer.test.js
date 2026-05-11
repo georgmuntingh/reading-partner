@@ -301,6 +301,33 @@ describe('GraphExplorer', () => {
         expect(links[0].dataset.sent).toBe('1');
     });
 
+    it('side panel uses node.definition (prefetched) without calling lookupDefinition', async () => {
+        await storage.saveKGNode({
+            id: 'n1', bookId: 'b1', canonicalName: 'Arthur',
+            aliases: [], type: 'PERSON', bloom: 'Remember',
+            embedding: new Float32Array(1),
+            contexts: [{ chapterIndex: 0, sentenceIndices: [3] }],
+            firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0,
+            // Definition prefetched at creation time:
+            definition: { definition: 'King of the Britons.' }
+        });
+        const lookupDefinition = vi.fn();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            lookupDefinition
+        });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1'))[0];
+        ge._showNodeDetails(node);
+
+        const body = container.querySelector('.kg-side-definition-body');
+        expect(body.textContent).toContain('King of the Britons.');
+        // No fallback fetch since the definition was already on the node.
+        expect(lookupDefinition).not.toHaveBeenCalled();
+    });
+
     it('renders an inline definition row via the lookupDefinition callback', async () => {
         await seedBookGraph();
         const lookupDefinition = vi.fn(async (phrase) => ({
