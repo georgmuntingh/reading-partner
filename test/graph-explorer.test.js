@@ -1,0 +1,143 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Spy factory for cytoscape's default export so we can assert lazy loading
+// and the elements payload without actually rendering anything.
+const cytoscapeFactory = vi.fn(() => ({
+    on: vi.fn(),
+    destroy: vi.fn()
+}));
+
+vi.mock('cytoscape', () => ({ default: cytoscapeFactory }));
+
+import { GraphExplorer } from '../js/ui/graph-explorer.js';
+import { storage } from '../js/services/storage.js';
+
+beforeEach(async () => {
+    cytoscapeFactory.mockClear();
+    cytoscapeFactory.mockImplementation(() => ({ on: vi.fn(), destroy: vi.fn() }));
+    document.body.innerHTML =
+        '<div id="graph-explorer" class="graph-explorer hidden"></div>';
+    await storage.init();
+});
+
+const seedBookGraph = async () => {
+    await storage.saveKGNode({
+        id: 'n1', bookId: 'b1', canonicalName: 'Arthur',
+        aliases: ['the king'],
+        type: 'PERSON', bloom: 'Remember', embedding: new Float32Array(1),
+        contexts: [{ chapterIndex: 0, sentenceIndices: [3] }],
+        firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+    });
+    await storage.saveKGNode({
+        id: 'n2', bookId: 'b1', canonicalName: 'sword',
+        aliases: [],
+        type: 'OBJECT', bloom: 'Remember', embedding: new Float32Array(1),
+        contexts: [{ chapterIndex: 0, sentenceIndices: [3] }],
+        firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+    });
+    await storage.saveKGEdge({
+        id: 'e1', bookId: 'b1', sourceId: 'n1', targetId: 'n2', relation: 'drew',
+        contexts: [{ chapterIndex: 0, sentenceIndices: [3] }], createdAt: 0
+    });
+};
+
+describe('GraphExplorer', () => {
+    it('does NOT load cytoscape on construction (lazy import)', () => {
+        new GraphExplorer({
+            container: document.getElementById('graph-explorer'),
+            getBook: () => ({ id: 'b1' })
+        });
+        expect(cytoscapeFactory).not.toHaveBeenCalled();
+    });
+
+    it('open() loads cytoscape, removes hidden, and passes nodes+edges as elements', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        expect(cytoscapeFactory).toHaveBeenCalledTimes(1);
+        expect(container.classList.contains('hidden')).toBe(false);
+
+        const args = cytoscapeFactory.mock.calls[0][0];
+        const nodeElems = args.elements.filter((e) => !e.data.source);
+        const edgeElems = args.elements.filter((e) => e.data.source);
+        expect(nodeElems).toHaveLength(2);
+        expect(nodeElems.map((n) => n.data.label).sort()).toEqual(['Arthur', 'sword']);
+        expect(edgeElems).toHaveLength(1);
+        expect(edgeElems[0].data.label).toBe('drew');
+    });
+
+    it('shows the empty state and skips cytoscape init when the book has no graph', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        expect(cytoscapeFactory).not.toHaveBeenCalled();
+        const empty = container.querySelector('#graph-empty-state');
+        expect(empty.classList.contains('hidden')).toBe(false);
+        expect(container.querySelector('.graph-body').classList.contains('hidden')).toBe(true);
+    });
+
+    it('side panel renders aliases, bloom, and clickable contexts; click invokes onJumpToSentence and closes', async () => {
+        await seedBookGraph();
+        const onJumpToSentence = vi.fn();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            onJumpToSentence
+        });
+        await ge.open();
+
+        const node = (await storage.getKGNodesForBook('b1')).find((n) => n.canonicalName === 'Arthur');
+        ge._showNodeDetails(node);
+
+        const panel = container.querySelector('#kg-side-panel');
+        expect(panel.classList.contains('hidden')).toBe(false);
+        expect(panel.innerHTML).toContain('the king');
+        expect(panel.innerHTML).toContain('Bloom');
+
+        const link = panel.querySelector('a[data-ch="0"][data-sent="3"]');
+        expect(link).toBeTruthy();
+        link.click();
+
+        expect(onJumpToSentence).toHaveBeenCalledWith(0, 3);
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('escapes HTML in the side panel to prevent XSS via canonicalName / aliases', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        ge._showNodeDetails({
+            canonicalName: '<img src=x onerror=alert(1)>',
+            aliases: ['<script>bad()</script>'],
+            type: 'OTHER',
+            bloom: 'Remember',
+            contexts: []
+        });
+        const panel = container.querySelector('#kg-side-panel');
+        expect(panel.innerHTML).not.toContain('<img src=x onerror');
+        expect(panel.innerHTML).not.toContain('<script>bad()');
+        expect(panel.innerHTML).toContain('&lt;img src=x onerror');
+    });
+
+    it('close() destroys the cytoscape instance and re-hides the overlay', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        ge.close();
+        const cyInst = cytoscapeFactory.mock.results[0].value;
+        expect(cyInst.destroy).toHaveBeenCalled();
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('reopening after close() destroys the previous cytoscape instance and creates a new one', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        ge.close();
+        await ge.open();
+        expect(cytoscapeFactory).toHaveBeenCalledTimes(2);
+    });
+});

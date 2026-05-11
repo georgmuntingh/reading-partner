@@ -84,7 +84,19 @@ export class SettingsModal {
             transformersVersion: '3',
             // Diagnostics
             verboseLogging: false,
-            kokoroReinitThreshold: 25
+            kokoroReinitThreshold: 25,
+            // Knowledge Graph
+            kgExtractionBackend: 'openrouter',
+            kgChunkSize: 6,
+            kgChunkOverlap: 2,
+            kgChunksPerRequest: 4,
+            kgSimilarityThreshold: 0.88,
+            // Embedding backend — defaults to cloud (uses the OpenRouter API key
+            // configured for Q&A) so first-time users don't have to wait on a
+            // local model download.
+            kgEmbeddingSource: 'openrouter',
+            kgCloudEmbeddingModel: 'openai/text-embedding-3-small',
+            kgLocalEmbeddingModel: 'Xenova/all-MiniLM-L6-v2'
         };
 
         this._buildUI();
@@ -701,6 +713,87 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Knowledge Graph ===== -->
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Knowledge Graph</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            Extracts entities and relations from each chapter and resolves them into a knowledge graph.
+                            The extraction LLM and the embedding model can each be configured independently.
+                        </p>
+
+                        <div class="settings-subsection-header">Extraction</div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-backend">Extraction Backend</label>
+                            <select id="settings-kg-backend" class="form-select">
+                                <option value="openrouter">OpenRouter (Cloud)</option>
+                                <option value="local">Local (transformers.js)</option>
+                                <option value="mediapipe">Local (MediaPipe)</option>
+                            </select>
+                            <p class="form-hint">Which LLM is asked to extract entities and relations from each chunk</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-chunk-size">Chunk Size: <span id="settings-kg-chunk-size-value">6</span> sentences</label>
+                            <input type="range" id="settings-kg-chunk-size" class="form-input" min="2" max="20" step="1" value="6">
+                            <p class="form-hint">Number of sentences sent to the LLM in a single extraction prompt</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-chunk-overlap">Chunk Overlap: <span id="settings-kg-chunk-overlap-value">2</span> sentences</label>
+                            <input type="range" id="settings-kg-chunk-overlap" class="form-input" min="0" max="10" step="1" value="2">
+                            <p class="form-hint">Sentences shared between consecutive chunks to preserve context across boundaries</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-chunks-per-request">Chunks per Request: <span id="settings-kg-chunks-per-request-value">4</span></label>
+                            <input type="range" id="settings-kg-chunks-per-request" class="form-input" min="1" max="16" step="1" value="4">
+                            <p class="form-hint">How many chunks share a single extraction LLM call. Higher = fewer round-trips and faster, but the model has to attend to more text at once, so very high values may produce noisier graphs. Set to 1 to send each chunk individually.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Entity Resolution</div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-similarity-threshold">Similarity Threshold: <span id="settings-kg-similarity-threshold-value">0.88</span></label>
+                            <input type="range" id="settings-kg-similarity-threshold" class="form-input" min="0.5" max="0.99" step="0.01" value="0.88">
+                            <p class="form-hint">Cosine similarity above which two extracted entities are merged into the same node</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Embedding Model</div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-embedding-source">Embedding Source</label>
+                            <select id="settings-kg-embedding-source" class="form-select">
+                                <option value="openrouter">OpenRouter (Cloud)</option>
+                                <option value="local">Local (transformers.js)</option>
+                            </select>
+                            <p class="form-hint">Cloud embeddings reuse the OpenRouter API key from the LLM section. Local embeddings run a small transformers.js model on this device (~25 MB download on first use).</p>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-cloud-embedding-options">
+                            <label for="settings-kg-cloud-embedding-model">Cloud Embedding Model</label>
+                            <select id="settings-kg-cloud-embedding-model" class="form-select">
+                                <option value="openai/text-embedding-3-small">OpenAI text-embedding-3-small</option>
+                                <option value="openai/text-embedding-3-large">OpenAI text-embedding-3-large</option>
+                                <option value="qwen/qwen3-embedding-4b">Qwen3-Embedding-4B</option>
+                                <option value="qwen/qwen3-embedding-8b">Qwen3-Embedding-8B</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-local-embedding-options">
+                            <label for="settings-kg-local-embedding-model">Local Embedding Model</label>
+                            <select id="settings-kg-local-embedding-model" class="form-select">
+                                <option value="Xenova/all-MiniLM-L6-v2">all-MiniLM-L6-v2 (384-d, ~25 MB)</option>
+                                <option value="Xenova/bge-small-en-v1.5">BGE-small EN v1.5 (384-d, ~33 MB)</option>
+                                <option value="Xenova/multilingual-e5-small">Multilingual E5 small (384-d, ~118 MB)</option>
+                            </select>
+                        </div>
+                    </details>
+
                     <!-- ===== About ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
@@ -823,7 +916,22 @@ export class SettingsModal {
             // Log viewer
             viewLogBtn: this._container.querySelector('#settings-view-log-btn'),
             clearLogBtn: this._container.querySelector('#settings-clear-log-btn'),
-            logViewer: this._container.querySelector('#settings-log-viewer')
+            logViewer: this._container.querySelector('#settings-log-viewer'),
+            // Knowledge Graph
+            kgBackend: this._container.querySelector('#settings-kg-backend'),
+            kgChunkSize: this._container.querySelector('#settings-kg-chunk-size'),
+            kgChunkSizeValue: this._container.querySelector('#settings-kg-chunk-size-value'),
+            kgChunkOverlap: this._container.querySelector('#settings-kg-chunk-overlap'),
+            kgChunkOverlapValue: this._container.querySelector('#settings-kg-chunk-overlap-value'),
+            kgChunksPerRequest: this._container.querySelector('#settings-kg-chunks-per-request'),
+            kgChunksPerRequestValue: this._container.querySelector('#settings-kg-chunks-per-request-value'),
+            kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
+            kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
+            kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
+            kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
+            kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
+            kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
+            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model')
         };
     }
 
@@ -922,6 +1030,25 @@ export class SettingsModal {
         this._elements.prefetchCount.addEventListener('input', () => {
             const count = parseInt(this._elements.prefetchCount.value);
             this._elements.prefetchCountValue.textContent = count;
+        });
+
+        // Knowledge Graph sliders
+        this._elements.kgChunkSize.addEventListener('input', () => {
+            this._elements.kgChunkSizeValue.textContent = parseInt(this._elements.kgChunkSize.value);
+        });
+        this._elements.kgChunkOverlap.addEventListener('input', () => {
+            this._elements.kgChunkOverlapValue.textContent = parseInt(this._elements.kgChunkOverlap.value);
+        });
+        this._elements.kgChunksPerRequest.addEventListener('input', () => {
+            this._elements.kgChunksPerRequestValue.textContent = parseInt(this._elements.kgChunksPerRequest.value);
+        });
+        this._elements.kgSimilarityThreshold.addEventListener('input', () => {
+            this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
+        });
+
+        // KG embedding source — show only the matching sub-option group
+        this._elements.kgEmbeddingSource.addEventListener('change', () => {
+            this._updateKGEmbeddingSourceUI();
         });
 
         // Max sentence length slider
@@ -1086,6 +1213,12 @@ export class SettingsModal {
             'mediapipe': 'Runs Gemma3-1B-IT on-device using MediaPipe + WebGPU. Requires a Chromium browser with WebGPU. ~600 MB download on first use.'
         };
         this._elements.llmBackendHint.textContent = hints[backend] || '';
+    }
+
+    _updateKGEmbeddingSourceUI() {
+        const source = this._elements.kgEmbeddingSource.value;
+        this._elements.kgCloudEmbeddingOptions.style.display = source === 'openrouter' ? '' : 'none';
+        this._elements.kgLocalEmbeddingOptions.style.display = source === 'local' ? '' : 'none';
     }
 
     /**
@@ -1348,7 +1481,16 @@ export class SettingsModal {
             // Transformers.js version
             transformersVersion: this._elements.transformersVersion.value || '3',
             verboseLogging: this._elements.verboseLogging.checked,
-            kokoroReinitThreshold: parseInt(this._elements.reinitThreshold.value) || 25
+            kokoroReinitThreshold: parseInt(this._elements.reinitThreshold.value) || 25,
+            // Knowledge Graph settings
+            kgExtractionBackend: this._elements.kgBackend.value,
+            kgChunkSize: parseInt(this._elements.kgChunkSize.value) || 6,
+            kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
+            kgChunksPerRequest: parseInt(this._elements.kgChunksPerRequest.value) || 4,
+            kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
+            kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
+            kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
+            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
         };
 
         // Validate
@@ -1575,6 +1717,25 @@ export class SettingsModal {
         // Load diagnostics settings
         this._elements.verboseLogging.checked = this._settings.verboseLogging || false;
         this._elements.reinitThreshold.value = this._settings.kokoroReinitThreshold || 25;
+
+        // Load Knowledge Graph settings
+        this._elements.kgBackend.value = this._settings.kgExtractionBackend || 'openrouter';
+        const kgChunkSize = this._settings.kgChunkSize ?? 6;
+        this._elements.kgChunkSize.value = kgChunkSize;
+        this._elements.kgChunkSizeValue.textContent = kgChunkSize;
+        const kgChunkOverlap = this._settings.kgChunkOverlap ?? 2;
+        this._elements.kgChunkOverlap.value = kgChunkOverlap;
+        this._elements.kgChunkOverlapValue.textContent = kgChunkOverlap;
+        const kgChunksPerRequest = this._settings.kgChunksPerRequest ?? 4;
+        this._elements.kgChunksPerRequest.value = kgChunksPerRequest;
+        this._elements.kgChunksPerRequestValue.textContent = kgChunksPerRequest;
+        const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
+        this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
+        this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);
+        this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
+        this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
+        this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
+        this._updateKGEmbeddingSourceUI();
 
         this._updateBackendUI();
     }

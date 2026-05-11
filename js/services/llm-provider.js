@@ -68,6 +68,20 @@ export class LLMProvider {
     }
 
     /**
+     * Low-level raw completion. Bypasses task-specific prompts and returns
+     * the model's raw textual response.
+     * @param {Object} options
+     * @param {string} options.prompt - The user prompt
+     * @param {string} [options.system] - Optional system message
+     * @param {number} [options.maxTokens=512]
+     * @param {number} [options.temperature=0.2]
+     * @returns {Promise<string>}
+     */
+    async complete(options) {
+        throw new Error('Not implemented');
+    }
+
+    /**
      * Validate that this provider is ready to use
      * @returns {Promise<boolean>}
      */
@@ -114,7 +128,7 @@ export class LLMProvider {
      * @param {string} text
      * @returns {Object}
      */
-    _parseJSON(text) {
+    parseJSON(text) {
         let cleaned = text.trim();
         cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
         cleaned = cleaned.trim();
@@ -129,5 +143,12 @@ export class LLMProvider {
             }
             throw new Error(`Failed to parse JSON from response`);
         }
+    }
+
+    /**
+     * @deprecated Use parseJSON. Kept for backward compatibility.
+     */
+    _parseJSON(text) {
+        return this.parseJSON(text);
     }
 }

@@ -30,6 +30,7 @@ import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
+import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -41,6 +42,7 @@ import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
 import { ChapterOverview } from './ui/chapter-overview.js';
 import { SearchPanel } from './ui/search-panel.js';
+import { GraphExplorer } from './ui/graph-explorer.js';
 import { LookupDrawer } from './ui/lookup-drawer.js';
 import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
 import { lookupService } from './services/lookup-service.js';
@@ -303,6 +305,24 @@ class ReadingPartnerApp {
             }
         );
 
+        // Initialize Knowledge Graph (controller + explorer overlay)
+        this._kgController = new KGController({
+            getSettings: () => this._settingsModal?.getSettings() ?? {},
+            getBook: () => this._currentBook
+        });
+        this._kgController.onProgress = (p) => this._showKGProgress(p);
+
+        this._graphExplorer = new GraphExplorer({
+            container: document.getElementById('graph-explorer'),
+            getBook: () => this._currentBook,
+            onJumpToSentence: (chapterIndex, sentenceIndex) =>
+                this._jumpToKGContext(chapterIndex, sentenceIndex)
+        });
+
+        // Setup KG buttons in the reader controls
+        this._elements.kgBuildBtn?.addEventListener('click', () => this._onBuildKGClick());
+        this._elements.kgOpenBtn?.addEventListener('click', () => this._graphExplorer.open());
+
         // Setup search button
         this._elements.searchBtn?.addEventListener('click', () => {
             this._toggleSearchPanel();
@@ -537,6 +557,8 @@ class ReadingPartnerApp {
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
             quizBtn: document.getElementById('quiz-btn'),
+            kgBuildBtn: document.getElementById('kg-build-btn'),
+            kgOpenBtn: document.getElementById('kg-open-btn'),
             fullscreenBtn: document.getElementById('fullscreen-btn'),
             fullscreenExpandIcon: document.getElementById('fullscreen-expand-icon'),
             fullscreenCollapseIcon: document.getElementById('fullscreen-collapse-icon'),
@@ -551,7 +573,9 @@ class ReadingPartnerApp {
             navHomeBtn: document.getElementById('nav-home-btn'),
 
             // Status
-            ttsStatus: document.getElementById('tts-status')
+            ttsStatus: document.getElementById('tts-status'),
+            kgStatus: document.getElementById('kg-status'),
+            kgStatusText: document.getElementById('kg-status-text')
         };
     }
 
@@ -1630,6 +1654,9 @@ class ReadingPartnerApp {
 
         // Update Media Session metadata for headset controls
         this._updateMediaSessionMetadata();
+
+        // Reflect KG-processed state on the build button for the new chapter
+        this._updateKGBuildButtonState();
     }
 
     /**
@@ -2694,6 +2721,32 @@ class ReadingPartnerApp {
                 ttsEngine.setReinitThreshold(settings.kokoroReinitThreshold);
             }
 
+            // Save Knowledge Graph settings
+            if (settings.kgExtractionBackend !== undefined) {
+                await storage.saveSetting('kgExtractionBackend', settings.kgExtractionBackend);
+            }
+            if (settings.kgChunkSize !== undefined) {
+                await storage.saveSetting('kgChunkSize', settings.kgChunkSize);
+            }
+            if (settings.kgChunkOverlap !== undefined) {
+                await storage.saveSetting('kgChunkOverlap', settings.kgChunkOverlap);
+            }
+            if (settings.kgChunksPerRequest !== undefined) {
+                await storage.saveSetting('kgChunksPerRequest', settings.kgChunksPerRequest);
+            }
+            if (settings.kgSimilarityThreshold !== undefined) {
+                await storage.saveSetting('kgSimilarityThreshold', settings.kgSimilarityThreshold);
+            }
+            if (settings.kgEmbeddingSource !== undefined) {
+                await storage.saveSetting('kgEmbeddingSource', settings.kgEmbeddingSource);
+            }
+            if (settings.kgCloudEmbeddingModel !== undefined) {
+                await storage.saveSetting('kgCloudEmbeddingModel', settings.kgCloudEmbeddingModel);
+            }
+            if (settings.kgLocalEmbeddingModel !== undefined) {
+                await storage.saveSetting('kgLocalEmbeddingModel', settings.kgLocalEmbeddingModel);
+            }
+
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
             this._applyJitLoadingSetting();
@@ -3281,6 +3334,120 @@ class ReadingPartnerApp {
         this._playbackSentenceIndex = highlight.startSentenceIndex;
     }
 
+    // ========== Knowledge Graph ==========
+
+    async _onBuildKGClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        if (this._kgController.state === KG_STATE.RUNNING) {
+            this._showToast('Knowledge graph build already in progress');
+            return;
+        }
+        // Idempotent: if this chapter has already been processed, do not
+        // recompute. The button would normally be disabled, but guard here
+        // too in case state drifts.
+        const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
+        if (chapter?.kgProcessed === true) {
+            this._showToast('Knowledge graph already built for this chapter — open it instead.');
+            return;
+        }
+        try {
+            this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
+            await this._kgController.buildChapterGraph(this._currentChapterIndex);
+        } catch (error) {
+            console.error('KG build failed:', error);
+            this._showToast(`KG build failed: ${error.message}`);
+        } finally {
+            // Re-evaluate the button: stays disabled if processed succeeded,
+            // re-enabled if the build failed (so the user can retry).
+            this._updateKGBuildButtonState();
+            setTimeout(() => this._hideKGStatus(), 3000);
+        }
+    }
+
+    /**
+     * Reflect the current chapter's kgProcessed flag on the build button:
+     * disabled (with hint title) when already processed, enabled otherwise.
+     */
+    _updateKGBuildButtonState() {
+        const btn = this._elements.kgBuildBtn;
+        if (!btn) return;
+        const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
+        if (chapter?.kgProcessed === true) {
+            btn.setAttribute('disabled', 'true');
+            btn.title = 'Knowledge graph already built for this chapter';
+        } else {
+            btn.removeAttribute('disabled');
+            btn.title = 'Build knowledge graph for this chapter';
+        }
+    }
+
+    /**
+     * Render the controller's progress events into the #kg-status toast.
+     * Stages: 'embed-load' | 'extract' | 'done' | 'error'
+     */
+    _showKGProgress(p) {
+        const el = this._elements.kgStatus;
+        const text = this._elements.kgStatusText;
+        if (!el || !text) return;
+
+        if (p.stage === 'embed-load') {
+            const pct = typeof p.progress === 'number' ? ` (${Math.round(p.progress)}%)` : '';
+            const file = p.file ? ` ${p.file}` : '';
+            text.textContent = `Downloading embedding model${file}${pct}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'extract') {
+            const span = p.batchSize && p.batchSize > 1
+                ? `${p.current}-${Math.min(p.current + p.batchSize - 1, p.total)}`
+                : `${p.current}`;
+            const label = p.batchSize && p.batchSize > 1 ? 'chunks' : 'chunk';
+            text.textContent = `Extracting ${label} ${span}/${p.total}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'embed') {
+            text.textContent = `Embedding ${p.count} entit${p.count === 1 ? 'y' : 'ies'}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'resolve') {
+            text.textContent = `Resolving chunk ${p.current}/${p.total}…`;
+            el.classList.remove('hidden');
+        } else if (p.stage === 'done') {
+            text.textContent = 'Knowledge graph updated.';
+            el.classList.remove('hidden');
+        } else if (p.stage === 'error') {
+            text.textContent = `Error: ${p.error || 'unknown'}`;
+            el.classList.remove('hidden');
+        }
+    }
+
+    _hideKGStatus() {
+        this._elements.kgStatus?.classList.add('hidden');
+    }
+
+    /**
+     * Jump from a graph node's context link back into the reader.
+     */
+    async _jumpToKGContext(chapterIndex, sentenceIndex) {
+        if (this._navigationHistory) {
+            this._navigationHistory.pushCurrentPosition(
+                this._currentChapterIndex,
+                this._audioController?.getCurrentIndex() ?? 0,
+                this._readerView?.getCurrentPage() ?? 0
+            );
+        }
+        this._viewDecoupled = false;
+        this._updateNavHistoryButtons();
+        this._pause();
+
+        if (chapterIndex !== this._currentChapterIndex) {
+            this._readingState.goToChapter(chapterIndex, sentenceIndex);
+            await this._loadChapter(chapterIndex, false);
+            this._navigation.setCurrentChapter(chapterIndex);
+        }
+        this._audioController.goToSentence(sentenceIndex);
+        this._readerView.highlightSentence(sentenceIndex);
+    }
+
     // ========== Search ==========
 
     /**
@@ -3673,6 +3840,16 @@ class ReadingPartnerApp {
             const reinitVal = kokoroReinitThreshold || 25;
             ttsEngine.setReinitThreshold(reinitVal);
 
+            // Load Knowledge Graph settings
+            const kgExtractionBackend = await storage.getSetting('kgExtractionBackend');
+            const kgChunkSize = await storage.getSetting('kgChunkSize');
+            const kgChunkOverlap = await storage.getSetting('kgChunkOverlap');
+            const kgChunksPerRequest = await storage.getSetting('kgChunksPerRequest');
+            const kgSimilarityThreshold = await storage.getSetting('kgSimilarityThreshold');
+            const kgEmbeddingSource = await storage.getSetting('kgEmbeddingSource');
+            const kgCloudEmbeddingModel = await storage.getSetting('kgCloudEmbeddingModel');
+            const kgLocalEmbeddingModel = await storage.getSetting('kgLocalEmbeddingModel');
+
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
             // Apply STT backend
@@ -3721,7 +3898,16 @@ class ReadingPartnerApp {
                 verboseLogging: verboseLogging === true,
                 kokoroReinitThreshold: reinitVal,
                 prefetchCount: this._savedPrefetchCount !== undefined ? this._savedPrefetchCount : 2,
-                maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0
+                maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0,
+                // Knowledge Graph settings
+                kgExtractionBackend: kgExtractionBackend || 'openrouter',
+                kgChunkSize: kgChunkSize !== null ? kgChunkSize : 6,
+                kgChunkOverlap: kgChunkOverlap !== null ? kgChunkOverlap : 2,
+                kgChunksPerRequest: kgChunksPerRequest !== null ? kgChunksPerRequest : 4,
+                kgSimilarityThreshold: kgSimilarityThreshold !== null ? kgSimilarityThreshold : 0.88,
+                kgEmbeddingSource: kgEmbeddingSource || 'openrouter',
+                kgCloudEmbeddingModel: kgCloudEmbeddingModel || 'openai/text-embedding-3-small',
+                kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
             });
 
         } catch (error) {

@@ -420,6 +420,16 @@ Requirements:
         return { title: parsed.title, content: parsed.content };
     }
 
+    async complete({ prompt, system, maxTokens = 512, temperature = 0.2 } = {}) {
+        if (!prompt) throw new Error('complete: prompt is required');
+        const messages = [];
+        if (system) messages.push({ role: 'system', content: system });
+        messages.push({ role: 'user', content: prompt });
+        const response = await this._apiCall(messages, { maxTokens, temperature });
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || '';
+    }
+
     async validateApiKey(apiKey) {
         try {
             const response = await fetch(this._endpoint, {

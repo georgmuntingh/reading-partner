@@ -221,6 +221,17 @@ export class LLMClient {
         return this._getProvider().generateText(options);
     }
 
+    async complete(options) {
+        return this._getProvider().complete(options);
+    }
+
+    /**
+     * Public accessor for the active provider (used by KG extractor for parseJSON)
+     */
+    getProvider() {
+        return this._getProvider();
+    }
+
     abort() {
         this._getProvider().abort();
     }

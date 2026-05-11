@@ -4,7 +4,8 @@
   "description": "On Linux, a separate Chrome instance with webgpu can be started with: ```bash google-chrome --enable-unsafe-webgpu --ozone-platform=x11 --use-angle=vulkan --enable-features=Vulkan,VulkanFromANGLE --user-data-dir=/tmp/chrome-webgpu ```",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "dev": "vite",
     "build": "node scripts/generate-build-info.js && vite build",
     "build:app": "cross-env VITE_BASE_PATH=./ VITE_TARGET=app npm run build",
@@ -26,11 +27,15 @@
   "devDependencies": {
     "@capacitor/cli": "^7.0.0",
     "cross-env": "^7.0.3",
-    "vite": "^6.4.1"
+    "fake-indexeddb": "^6.2.5",
+    "happy-dom": "^15.11.7",
+    "vite": "^6.4.1",
+    "vitest": "^2.1.9"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",
     "@capacitor/core": "^7.0.0",
+    "cytoscape": "^3.33.3",
     "epubjs": "^0.3.93",
     "marked": "^17.0.1",
     "pdfjs-dist": "4.9.155"

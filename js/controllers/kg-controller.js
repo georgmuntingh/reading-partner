@@ -1,0 +1,240 @@
+/**
+ * KG Controller
+ * Orchestrates per-chapter knowledge-graph extraction:
+ *   chunk → LLM extract → embed → resolve nodes → resolve edges → persist.
+ *
+ * Trigger model: manual button per chapter (matches QuizController UX).
+ * Fault-tolerant: any per-chunk extract/embed/resolve failure is logged and
+ * skipped — one bad chunk never crashes the chapter pipeline. The previous
+ * llmClient backend is restored even on error.
+ */
+
+import { storage } from '../services/storage.js';
+import { llmClient } from '../services/llm-client.js';
+import { embeddingProvider } from '../services/embedding-provider.js';
+import { chunkSentences, extractFromChunkBatch } from '../services/kg-extractor.js';
+import { KGResolver } from '../services/kg-resolver.js';
+
+export const KG_STATE = Object.freeze({
+    IDLE: 'IDLE',
+    RUNNING: 'RUNNING',
+    DONE: 'DONE',
+    ERROR: 'ERROR'
+});
+
+export class KGController {
+    constructor({ getSettings, getBook }) {
+        if (typeof getSettings !== 'function') throw new Error('KGController: getSettings is required');
+        if (typeof getBook !== 'function') throw new Error('KGController: getBook is required');
+        this.getSettings = getSettings;
+        this.getBook = getBook;
+        this.state = KG_STATE.IDLE;
+        // Progress callback. Stages: 'embed-load' | 'extract' | 'done' | 'error'
+        this.onProgress = null;
+    }
+
+    /**
+     * Build the knowledge graph for a single chapter.
+     *
+     * If the chapter has already been processed (chapter.kgProcessed === true),
+     * this is a no-op unless { force: true } is passed. The button in the
+     * reader is grayed out for processed chapters, but the controller also
+     * short-circuits as defense in depth.
+     *
+     * @param {number} chapterIndex
+     * @param {{ force?: boolean }} [opts]
+     */
+    async buildChapterGraph(chapterIndex, opts = {}) {
+        const { force = false } = opts;
+        if (this.state === KG_STATE.RUNNING) {
+            throw new Error('KG build already in progress');
+        }
+        this.state = KG_STATE.RUNNING;
+
+        const book = this.getBook();
+        if (!book) throw new Error('KGController: no current book');
+        const chapter = book.chapters?.[chapterIndex];
+        if (!chapter) throw new Error(`KGController: chapter ${chapterIndex} not found`);
+        if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
+            this.state = KG_STATE.IDLE;
+            return;
+        }
+        if (!force && chapter.kgProcessed === true) {
+            this.state = KG_STATE.DONE;
+            this.onProgress?.({ stage: 'done', chapterIndex, skipped: true });
+            return;
+        }
+
+        const settings = this.getSettings() || {};
+        const chunkSize = settings.kgChunkSize ?? 6;
+        const chunkOverlap = settings.kgChunkOverlap ?? 2;
+        const similarityThreshold = settings.kgSimilarityThreshold ?? 0.88;
+        const chunksPerRequest = Math.max(1, settings.kgChunksPerRequest ?? 4);
+        const targetBackend = settings.kgExtractionBackend;
+
+        const prevBackend = llmClient.getBackend();
+        if (targetBackend && targetBackend !== prevBackend) {
+            llmClient.setBackend(targetBackend);
+        }
+
+        try {
+            // 1) Configure the embedding backend before each build so settings
+            //    changes (cloud ↔ local, model swap, key rotation) take effect.
+            const embeddingSource = settings.kgEmbeddingSource || 'openrouter';
+            embeddingProvider.setSource(embeddingSource);
+            if (embeddingSource === 'openrouter') {
+                if (settings.kgCloudEmbeddingModel) embeddingProvider.setCloudModel(settings.kgCloudEmbeddingModel);
+                if (settings.apiKey) embeddingProvider.setApiKey(settings.apiKey);
+            } else {
+                if (settings.kgLocalEmbeddingModel) embeddingProvider.setLocalModel(settings.kgLocalEmbeddingModel);
+            }
+
+            // Forward download progress (only fires for the local source).
+            embeddingProvider.onProgress = (p) => this.onProgress?.({
+                stage: 'embed-load',
+                status: p?.status,
+                file: p?.file,
+                loaded: p?.loaded,
+                total: p?.total,
+                progress: p?.progress
+            });
+            await embeddingProvider.load();
+
+            // 2) Resolver (per-book candidate set)
+            const resolver = new KGResolver({ bookId: book.id, similarityThreshold });
+            await resolver.load();
+
+            // 3) Chunk the chapter
+            const chunks = chunkSentences(chapter.sentences, chunkSize, chunkOverlap);
+
+            // 4) Phase A — extract chunks in groups of K (kgChunksPerRequest).
+            //    Each group is a single LLM call returning per-chunk entities/
+            //    relations, so a 20-chunk chapter with K=4 makes 5 LLM calls
+            //    instead of 20. Per-batch failures log + skip (one bad batch
+            //    loses K chunks but the rest of the chapter still completes).
+            const extractions = new Array(chunks.length).fill(null);
+            for (let start = 0; start < chunks.length; start += chunksPerRequest) {
+                const end = Math.min(start + chunksPerRequest, chunks.length);
+                const batchTexts = chunks.slice(start, end).map((c) => c.text);
+                this.onProgress?.({
+                    stage: 'extract',
+                    current: start + 1,
+                    total: chunks.length,
+                    batchSize: batchTexts.length
+                });
+                let batchResults;
+                try {
+                    batchResults = await extractFromChunkBatch(batchTexts);
+                } catch (err) {
+                    console.warn(
+                        `[kg-controller] batch ${start}-${end - 1} extraction threw:`,
+                        err?.message
+                    );
+                    continue;
+                }
+                for (let j = 0; j < batchResults.length; j++) {
+                    extractions[start + j] = batchResults[j];
+                }
+            }
+
+            // 5) Phase B — collect a chapter-wide unique-name list so we
+            //    can do ONE batched embed call instead of one per chunk.
+            //    Repeated names across chunks share a single embedding.
+            const uniqueNames = [];
+            const seen = new Set();
+            for (const ex of extractions) {
+                if (!ex) continue;
+                for (const ent of ex.entities) {
+                    if (!ent?.name || seen.has(ent.name)) continue;
+                    seen.add(ent.name);
+                    uniqueNames.push(ent.name);
+                }
+            }
+
+            // 6) Phase C — batched embedding. EmbeddingProvider.embed()
+            //    auto-splits at EMBED_MAX_BATCH so callers can pass the
+            //    full set in one shot.
+            const nameToEmbedding = new Map();
+            if (uniqueNames.length > 0) {
+                this.onProgress?.({ stage: 'embed', count: uniqueNames.length });
+                try {
+                    const embeddings = await embeddingProvider.embed(uniqueNames);
+                    for (let i = 0; i < uniqueNames.length; i++) {
+                        nameToEmbedding.set(uniqueNames[i], embeddings[i]);
+                    }
+                } catch (err) {
+                    // No embeddings means nothing can be resolved — surface
+                    // the failure so the chapter stays unprocessed and the
+                    // user can retry.
+                    console.warn('[kg-controller] batch embedding failed:', err?.message);
+                    throw err;
+                }
+            }
+
+            // 7) Phase D — resolve nodes and edges per chunk, in order.
+            //    The resolver's state (existing candidates + new ones from
+            //    earlier chunks) is naturally maintained so cross-chunk
+            //    duplicates collapse exactly as before.
+            for (let i = 0; i < chunks.length; i++) {
+                this.onProgress?.({ stage: 'resolve', current: i + 1, total: chunks.length });
+                const ex = extractions[i];
+                if (!ex || ex.entities.length === 0) continue;
+
+                const nameToNodeId = new Map();
+                for (const ent of ex.entities) {
+                    const emb = nameToEmbedding.get(ent.name);
+                    if (!emb) continue;
+                    try {
+                        const { id } = await resolver.resolve({
+                            name: ent.name,
+                            type: ent.type,
+                            aliases: Array.isArray(ent.aliases) ? ent.aliases : [],
+                            bloom: ent.bloom,
+                            embedding: emb,
+                            chapterIndex,
+                            sentenceIndices: chunks[i].sentenceIndices
+                        });
+                        nameToNodeId.set(ent.name, id);
+                    } catch (err) {
+                        console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
+                    }
+                }
+
+                for (const r of ex.relations) {
+                    const sId = nameToNodeId.get(r.source);
+                    const tId = nameToNodeId.get(r.target);
+                    if (!sId || !tId) continue;
+                    try {
+                        await resolver.resolveEdge({
+                            sourceId: sId,
+                            targetId: tId,
+                            relation: r.relation,
+                            chapterIndex,
+                            sentenceIndices: chunks[i].sentenceIndices
+                        });
+                    } catch (err) {
+                        console.warn('[kg-controller] edge save failed:', err?.message);
+                    }
+                }
+            }
+
+            chapter.kgProcessed = true;
+            try {
+                await storage.saveBook(book);
+            } catch (err) {
+                console.warn('[kg-controller] failed to persist kgProcessed flag:', err?.message);
+            }
+
+            this.state = KG_STATE.DONE;
+            this.onProgress?.({ stage: 'done', chapterIndex });
+        } catch (err) {
+            this.state = KG_STATE.ERROR;
+            this.onProgress?.({ stage: 'error', error: err?.message ?? String(err) });
+            throw err;
+        } finally {
+            if (targetBackend && targetBackend !== prevBackend) {
+                llmClient.setBackend(prevBackend);
+            }
+        }
+    }
+}

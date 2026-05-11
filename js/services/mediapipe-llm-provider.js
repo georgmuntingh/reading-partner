@@ -393,4 +393,12 @@ Requirements: exactly 4 options, correctIndex 0-3.`;
         }
         return { title: parsed.title, content: parsed.content };
     }
+
+    async complete({ prompt, system, maxTokens = 512, temperature = 0.2 } = {}) {
+        if (!prompt) throw new Error('complete: prompt is required');
+        const messages = [];
+        if (system) messages.push({ role: 'system', content: system });
+        messages.push({ role: 'user', content: prompt });
+        return this._generate(messages, { maxTokens, temperature });
+    }
 }
