@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { KGResolver, cosine } from '../js/services/kg-resolver.js';
+import { KGResolver, cosine, updateRunningMean } from '../js/services/kg-resolver.js';
 import { storage } from '../js/services/storage.js';
 
 // Build a unit-norm Float32Array embedding from a small vector
@@ -261,5 +261,99 @@ describe('KGResolver — Tier-2 anchor gate', () => {
         });
         const stored = (await storage.getKGNodesForBook('b1'))[0];
         expect(stored.relevanceScore).toBeNull();
+    });
+});
+
+describe('updateRunningMean', () => {
+    it('returns the L2-normalised mean of two vectors when mergeCount=1', () => {
+        const stored = unit([1, 0]);
+        const incoming = unit([0, 1]);
+        const mean = updateRunningMean(stored, 1, incoming);
+        // Mean of [1,0] and [0,1] is [0.5, 0.5]; L2-normalised is [√½, √½].
+        expect(mean[0]).toBeCloseTo(Math.SQRT1_2, 5);
+        expect(mean[1]).toBeCloseTo(Math.SQRT1_2, 5);
+    });
+
+    it('weights existing observations correctly (running mean, not simple avg)', () => {
+        // After 9 prior observations of [1,0] and 1 new of [0,1]:
+        // mean = (9*[1,0] + 1*[0,1]) / 10 = [0.9, 0.1], normalised.
+        const stored = unit([1, 0]);
+        const incoming = unit([0, 1]);
+        const mean = updateRunningMean(stored, 9, incoming);
+        const expected = unit([0.9, 0.1]);
+        expect(mean[0]).toBeCloseTo(expected[0], 5);
+        expect(mean[1]).toBeCloseTo(expected[1], 5);
+    });
+
+    it('produces a unit-norm vector', () => {
+        const mean = updateRunningMean(unit([1, 0, 0]), 1, unit([0, 1, 0]));
+        const norm = Math.hypot(...mean);
+        expect(norm).toBeCloseTo(1, 5);
+    });
+});
+
+describe('KGResolver — running-mean embedding on merge', () => {
+    it('sets mergeCount=1 on creation', async () => {
+        const r = new KGResolver({ bookId: 'b1', similarityThreshold: 0.5 });
+        await r.resolve({
+            name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember',
+            embedding: unit([1, 0, 0]),
+            chapterIndex: 0, sentenceIndices: [1]
+        });
+        const stored = (await storage.getKGNodesForBook('b1'))[0];
+        expect(stored.mergeCount).toBe(1);
+    });
+
+    it('updates the embedding to the L2-normalised mean and increments mergeCount on merge', async () => {
+        const r = new KGResolver({ bookId: 'b1', similarityThreshold: 0.5 });
+        // First observation: pure [1,0,0]
+        await r.resolve({
+            name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember',
+            embedding: unit([1, 0, 0]),
+            chapterIndex: 0, sentenceIndices: [1]
+        });
+        // Second observation: same exact name (exact-name fast path), but
+        // a slightly different embedding. Merge should fold it in.
+        await r.resolve({
+            name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember',
+            embedding: unit([0, 1, 0]),
+            chapterIndex: 1, sentenceIndices: [5]
+        });
+
+        const stored = (await storage.getKGNodesForBook('b1'))[0];
+        expect(stored.mergeCount).toBe(2);
+        // Mean of [1,0,0] and [0,1,0] is [0.5,0.5,0] → normalised [√½,√½,0].
+        expect(stored.embedding[0]).toBeCloseTo(Math.SQRT1_2, 5);
+        expect(stored.embedding[1]).toBeCloseTo(Math.SQRT1_2, 5);
+        expect(stored.embedding[2]).toBeCloseTo(0, 5);
+        // Unit-norm preserved so cosine remains a dot product.
+        expect(Math.hypot(...stored.embedding)).toBeCloseTo(1, 5);
+    });
+
+    it('treats legacy nodes (missing mergeCount) as mergeCount=1', async () => {
+        // Seed a legacy node directly via storage to skip the resolver path.
+        const legacy = {
+            id: 'kgnode_legacy', bookId: 'b1', canonicalName: 'Arthur', aliases: [],
+            type: 'PERSON', bloom: 'Remember',
+            embedding: unit([1, 0, 0]),
+            // No mergeCount field — emulates a pre-running-mean node.
+            contexts: [{ chapterIndex: 0, sentenceIndices: [1] }],
+            firstSeenChapter: 0,
+            srs: { ease: 2.5, interval: 0, repetitions: 0, dueAt: 0, lastReviewedAt: null },
+            createdAt: 0, updatedAt: 0
+        };
+        await storage.saveKGNode(legacy);
+
+        const r = new KGResolver({ bookId: 'b1', similarityThreshold: 0.5 });
+        await r.resolve({
+            name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember',
+            embedding: unit([0, 1, 0]),
+            chapterIndex: 1, sentenceIndices: [5]
+        });
+
+        const stored = (await storage.getKGNodesForBook('b1'))[0];
+        expect(stored.mergeCount).toBe(2);
+        expect(stored.embedding[0]).toBeCloseTo(Math.SQRT1_2, 5);
+        expect(stored.embedding[1]).toBeCloseTo(Math.SQRT1_2, 5);
     });
 });

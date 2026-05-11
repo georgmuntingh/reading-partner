@@ -231,29 +231,67 @@ export class KGController {
             //    The resolver's state (existing candidates + new ones from
             //    earlier chunks) is naturally maintained so cross-chunk
             //    duplicates collapse exactly as before.
+            //
+            //    Important: the resolver also stores `sentenceIndices` for
+            //    each context. Naively passing chunks[i].sentenceIndices
+            //    (the whole chunk window — typically 6 sentences) means the
+            //    side panel's links lead to neighbours that don't actually
+            //    mention the concept. Filter down to sentences whose text
+            //    contains the canonical name or one of the aliases.
+            const chapterSentences = Array.isArray(chapter.sentences) ? chapter.sentences : [];
+            const lowerCache = new Array(chapterSentences.length);
+            const sentenceLower = (idx) => {
+                if (lowerCache[idx] === undefined) {
+                    lowerCache[idx] = String(chapterSentences[idx] ?? '').toLowerCase();
+                }
+                return lowerCache[idx];
+            };
+            const matchSentencesFor = (chunk, needles) => {
+                const ns = needles
+                    .map((s) => String(s || '').toLowerCase().trim())
+                    .filter((s) => s.length > 0);
+                if (ns.length === 0) return chunk.sentenceIndices.slice();
+                const hits = [];
+                for (const si of chunk.sentenceIndices) {
+                    const text = sentenceLower(si);
+                    if (ns.some((n) => text.includes(n))) hits.push(si);
+                }
+                // Fallback: if surface-form matching missed every sentence
+                // (e.g. the LLM canonicalised "mitochondria" to
+                // "mitochondrion" and only the plural appears) keep the
+                // whole chunk so we don't lose the context entirely.
+                return hits.length > 0 ? hits : chunk.sentenceIndices.slice();
+            };
+
             for (let i = 0; i < chunks.length; i++) {
                 this.onProgress?.({ stage: 'resolve', current: i + 1, total: chunks.length });
                 const ex = extractions[i];
                 if (!ex || ex.entities.length === 0) continue;
 
                 const nameToNodeId = new Map();
+                const nameToSentenceIndices = new Map();
                 for (const ent of ex.entities) {
                     const emb = nameToEmbedding.get(ent.name);
                     if (!emb) continue;
+                    const aliases = Array.isArray(ent.aliases) ? ent.aliases : [];
+                    const entSentences = matchSentencesFor(chunks[i], [ent.name, ...aliases]);
                     try {
                         const result = await resolver.resolve({
                             name: ent.name,
                             type: ent.type,
-                            aliases: Array.isArray(ent.aliases) ? ent.aliases : [],
+                            aliases,
                             bloom: ent.bloom,
                             embedding: emb,
                             chapterIndex,
-                            sentenceIndices: chunks[i].sentenceIndices
+                            sentenceIndices: entSentences
                         });
                         // result === null when the Tier-2 anchor gate dropped
                         // the entity. Skip silently so relations referencing
                         // it are also dropped below.
-                        if (result) nameToNodeId.set(ent.name, result.id);
+                        if (result) {
+                            nameToNodeId.set(ent.name, result.id);
+                            nameToSentenceIndices.set(ent.name, entSentences);
+                        }
                     } catch (err) {
                         console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
                     }
@@ -268,13 +306,22 @@ export class KGController {
                     const sId = nameToNodeId.get(r.source);
                     const tId = nameToNodeId.get(r.target);
                     if (!sId || !tId) continue;
+                    // Sentences that mention BOTH endpoints are the strongest
+                    // evidence for the relation. Fall back to the union if
+                    // there's no overlap.
+                    const srcS = new Set(nameToSentenceIndices.get(r.source) || []);
+                    const tgtS = nameToSentenceIndices.get(r.target) || [];
+                    const both = tgtS.filter((si) => srcS.has(si));
+                    const edgeSentences = both.length > 0
+                        ? both
+                        : Array.from(new Set([...srcS, ...tgtS]));
                     try {
                         await resolver.resolveEdge({
                             sourceId: sId,
                             targetId: tId,
                             relation: r.relation,
                             chapterIndex,
-                            sentenceIndices: chunks[i].sentenceIndices
+                            sentenceIndices: edgeSentences
                         });
                     } catch (err) {
                         console.warn('[kg-controller] edge save failed:', err?.message);

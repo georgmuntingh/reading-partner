@@ -438,6 +438,49 @@ describe('KGController.buildChapterGraph', () => {
         warn.mockRestore();
     });
 
+    it('stores only sentence indices whose text actually mentions the entity (not the whole chunk)', async () => {
+        // 6 sentences; only some mention "Arthur" / "sword". With a 6-sentence
+        // chunk, the naive implementation saved [0..5] for both entities; the
+        // fix should narrow each entity's context to the matching sentences.
+        const book = {
+            id: 'b1',
+            chapters: [{
+                sentences: [
+                    'Arthur drew the sword.',          // 0 — Arthur + sword
+                    'A bird flew overhead.',            // 1 — neither
+                    'The crowd gasped in surprise.',    // 2 — neither
+                    'Arthur smiled at his companions.', // 3 — Arthur
+                    'The sword glowed bright.',         // 4 — sword
+                    'Night fell over the field.'        // 5 — neither
+                ]
+            }]
+        };
+        await storage.saveBook(book);
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
+                { name: 'sword',  type: 'OBJECT', aliases: [], bloom: 'Remember' }
+            ],
+            relations: [{ source: 'Arthur', target: 'sword', relation: 'drew' }]
+        }));
+        const settings = { ...baseSettings, kgChunkSize: 6, kgChunkOverlap: 0 };
+        const ctrl = new KGController({ getSettings: () => settings, getBook: () => book });
+        await ctrl.buildChapterGraph(0);
+
+        const nodes = await storage.getKGNodesForBook('b1');
+        const arthur = nodes.find((n) => n.canonicalName === 'Arthur');
+        const sword = nodes.find((n) => n.canonicalName === 'sword');
+        // Arthur appears in sentences 0 and 3; sword in 0 and 4. The
+        // sentence indices stored must match the actual mentions only.
+        expect(arthur.contexts[0].sentenceIndices.sort()).toEqual([0, 3]);
+        expect(sword.contexts[0].sentenceIndices.sort()).toEqual([0, 4]);
+
+        // The edge "drew" prefers sentences mentioning BOTH endpoints.
+        const edges = await storage.getKGEdgesForBook('b1');
+        expect(edges).toHaveLength(1);
+        expect(edges[0].contexts[0].sentenceIndices).toEqual([0]);
+    });
+
     it('aborts the build with ERROR state when batch embedding fails', async () => {
         llmClient.complete.mockResolvedValue(JSON.stringify({
             entities: [{ name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' }],

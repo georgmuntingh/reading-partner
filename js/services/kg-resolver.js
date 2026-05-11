@@ -31,6 +31,33 @@ export function cosine(a, b) {
     return s;
 }
 
+/**
+ * Update a node's stored embedding to the L2-normalised running mean of
+ * every observation it has merged so far. Reusing the cosine helper
+ * downstream relies on unit-norm vectors, so we re-normalise after the
+ * weighted update.
+ *
+ * @param {Float32Array | number[]} stored - The node's current embedding
+ * @param {number} mergeCount - Observations already folded into `stored`
+ * @param {Float32Array} incoming - The new observation to fold in
+ * @returns {Float32Array} L2-normalised running mean
+ */
+export function updateRunningMean(stored, mergeCount, incoming) {
+    const n = Math.max(1, mergeCount | 0);
+    const a = stored instanceof Float32Array ? stored : Float32Array.from(stored);
+    const len = Math.min(a.length, incoming.length);
+    const out = new Float32Array(len);
+    // mean_{n+1} = (mean_n * n + x_{n+1}) / (n + 1)
+    for (let i = 0; i < len; i++) {
+        out[i] = (a[i] * n + incoming[i]) / (n + 1);
+    }
+    let norm = 0;
+    for (let i = 0; i < len; i++) norm += out[i] * out[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < len; i++) out[i] /= norm;
+    return out;
+}
+
 export class KGResolver {
     /**
      * @param {Object} opts
@@ -161,6 +188,14 @@ export class KGResolver {
             for (const si of sentenceIndices) {
                 if (!ctx.sentenceIndices.includes(si)) ctx.sentenceIndices.push(si);
             }
+            // Update the stored embedding to the L2-normalised running mean
+            // of every observation that has merged into this node. Defaults
+            // mergeCount=1 for legacy nodes created before this field existed.
+            const prevCount = Number.isInteger(hit.mergeCount) && hit.mergeCount > 0
+                ? hit.mergeCount
+                : 1;
+            hit.embedding = updateRunningMean(hit.embedding, prevCount, embedding);
+            hit.mergeCount = prevCount + 1;
             hit.updatedAt = now;
             await storage.saveKGNode(hit);
             return { id: hit.id, created: false };
@@ -175,6 +210,7 @@ export class KGResolver {
             type: type || 'OTHER',
             bloom: bloom || 'Remember',
             embedding,
+            mergeCount: 1,                    // observations folded into `embedding`
             relevanceScore,                  // null when no anchor; preserved on disk
             contexts: [{ chapterIndex, sentenceIndices: sentenceIndices.slice() }],
             firstSeenChapter: chapterIndex,
