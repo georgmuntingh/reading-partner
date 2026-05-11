@@ -678,13 +678,41 @@
         padding: var(--spacing-sm) var(--spacing-md);
     }
 
+    /* The footer hosts 10 control buttons in portrait. At 360–390 px wide
+       the 48 px coarse-pointer tap targets + spacing overflow and clip the
+       outermost buttons. Shrink the row to fit without wrapping. */
+    .reader-controls {
+        padding: var(--spacing-sm) var(--spacing-xs);
+    }
+
     .controls-row {
-        gap: var(--spacing-xs);
+        gap: 0;
+    }
+
+    /* Overrides the bare-`.btn-icon` size (main.css) AND the
+       `@media (pointer: coarse) { .btn-icon { min-width: 48px } }`
+       override — both have specificity 0,1,0 so 0,1,1 here wins. */
+    .controls-row .btn-icon {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+    }
+
+    .controls-row .btn-icon svg {
+        width: 20px;
+        height: 20px;
     }
 
     .btn-play {
-        width: 56px;
-        height: 56px;
+        width: 52px;
+        height: 52px;
+        margin: 0 var(--spacing-xs);
+    }
+
+    .btn-play svg {
+        width: 26px;
+        height: 26px;
     }
 
     #speed-slider {
@@ -702,6 +730,33 @@
 
     .page-nav-next {
         right: -4px;
+    }
+}
+
+/* Very narrow phones (e.g. iPhone SE 1st gen at 320 px) — squeeze a touch
+   further so the row still fits without horizontal scroll. */
+@media (max-width: 360px) {
+    .controls-row .btn-icon {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+    }
+
+    .controls-row .btn-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .btn-play {
+        width: 46px;
+        height: 46px;
+        margin: 0;
+    }
+
+    .btn-play svg {
+        width: 24px;
+        height: 24px;
     }
 }
 
