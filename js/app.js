@@ -320,7 +320,33 @@ class ReadingPartnerApp {
             container: document.getElementById('graph-explorer'),
             getBook: () => this._currentBook,
             getCurrentChapterIndex: () => this._currentChapterIndex,
-            loadChapterSentences: (chapterIndex) => this._readingState.loadChapter(chapterIndex),
+            // Load the chapter (sentences + full HTML) so the preview modal
+            // can render images and inline formatting just like the reader.
+            loadChapter: async (chapterIndex) => {
+                await this._readingState.loadChapter(chapterIndex);
+                return this._currentBook?.chapters?.[chapterIndex] ?? null;
+            },
+            // Right-click / "look up" inside the preview modal feeds the
+            // same _performLookup pipeline the reader uses.
+            onLookup: (text, context, chapterIndex, sentenceIndex) =>
+                this._performLookup(text, sentenceIndex, context),
+            // Sidebar "Definition" row fetches a definition for the node's
+            // canonical name via lookupService without popping the drawer.
+            lookupDefinition: async (phrase) => {
+                if (!llmClient.hasApiKey() || !this._currentBook) return null;
+                const entry = await lookupService.lookup({
+                    phrase,
+                    sentenceContext: phrase,
+                    bookId: this._currentBook.id,
+                    chapterIndex: this._currentChapterIndex,
+                    sentenceIndex: -1,
+                    bookMeta: {
+                        title: this._currentBook.title,
+                        author: this._currentBook.author
+                    }
+                });
+                return entry?.result ?? null;
+            },
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });

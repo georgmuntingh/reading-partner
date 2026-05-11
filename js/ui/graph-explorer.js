@@ -42,21 +42,32 @@ export class GraphExplorer {
      * @param {() => number} [options.getCurrentChapterIndex] - Returns the
      *   reader's current chapter index. Used as the default position for the
      *   chapter filter slider. Optional — falls back to "All chapters".
-     * @param {(chapterIndex: number) => Promise<string[]>} [options.loadChapterSentences]
+     * @param {(chapterIndex: number) => Promise<{ html?: string, sentences?: string[] }>} [options.loadChapter]
      *   Async loader used by the context preview modal to render the
-     *   neighbourhood of a clicked sentence. Optional — without it the modal
-     *   still opens but shows a fallback message.
+     *   neighbourhood of a clicked sentence with the chapter's full HTML
+     *   formatting (images, italics, etc.). Optional — the modal still
+     *   opens without it but shows a fallback message.
+     * @param {(text: string, context: string, chapterIndex: number, sentenceIndex: number) => void} [options.onLookup]
+     *   Invoked when the user selects text inside the preview modal and
+     *   taps the "look up" toolbar button. Optional — without it, the
+     *   selection toolbar is suppressed.
+     * @param {(phrase: string) => Promise<{ definition?: string, translation?: string } | null>} [options.lookupDefinition]
+     *   Returns a short definition for a phrase (used to populate the
+     *   "Definition" row in the node-details sidebar). Optional.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapterSentences, onJumpToSentence }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, onJumpToSentence }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
             ? getCurrentChapterIndex
             : () => null;
-        this._loadChapterSentences = typeof loadChapterSentences === 'function'
-            ? loadChapterSentences
-            : null;
+        this._loadChapter = typeof loadChapter === 'function' ? loadChapter : null;
+        this._onLookup = typeof onLookup === 'function' ? onLookup : null;
+        this._lookupDefinition = typeof lookupDefinition === 'function' ? lookupDefinition : null;
+        // Cache `phrase → definition` so repeatedly clicking the same node
+        // doesn't re-hit the LLM. Scoped to the explorer instance.
+        this._definitionCache = new Map();
         this._onJumpToSentence = onJumpToSentence;
         this._cy = null;
         this._cytoscape = null;        // Lazy-loaded module
@@ -315,14 +326,117 @@ export class GraphExplorer {
             wheelSensitivity: 0.3
         });
 
-        this._cy.on('tap', 'node', (evt) => this._showNodeDetails(evt.target.data('raw')));
+        // Single tap → side panel; double tap or long press → open the
+        // preview modal at the node's first-seen sentence so the user gets
+        // immediate context without having to drill into the sidebar.
+        const LONG_PRESS_MS = 500;
+        let lastTapAt = 0;
+        let lastTapId = null;
+        let longPressTimer = null;
+        const cancelLongPress = () => {
+            if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        };
+        this._cy.on('tap', 'node', (evt) => {
+            const now = Date.now();
+            const node = evt.target.data('raw');
+            const id = evt.target.id();
+            // Double-tap detection: same node, second tap within 350 ms.
+            if (lastTapId === id && now - lastTapAt < 350) {
+                cancelLongPress();
+                lastTapAt = 0; lastTapId = null;
+                this._openFirstSeenPreview(node);
+                return;
+            }
+            lastTapAt = now;
+            lastTapId = id;
+            this._showNodeDetails(node);
+        });
+        // Long-press (mouse hold or touch hold) on a node opens the preview.
+        this._cy.on('tapstart', 'node', (evt) => {
+            cancelLongPress();
+            const node = evt.target.data('raw');
+            longPressTimer = setTimeout(() => {
+                longPressTimer = null;
+                this._openFirstSeenPreview(node);
+            }, LONG_PRESS_MS);
+        });
+        this._cy.on('tapend tapdrag', 'node', cancelLongPress);
+
         this._cy.on('tap', (evt) => {
             if (evt.target === this._cy) this._hideSide();
         });
 
         // Apply the initial detail filter so the default UI state (min
-        // relevance 0.25, min degree 1) takes effect on first render.
+        // relevance 0.15, min degree 1) takes effect on first render.
         this._applyDetailFilter();
+    }
+
+    _openFirstSeenPreview(node) {
+        const loc = this._firstSeenLocation(node);
+        if (!loc) return;
+        this._openContextPreview(node, loc.chapterIndex, loc.sentenceIndex);
+    }
+
+    /**
+     * Fetch a short definition for the node's canonical name via the
+     * supplied lookup callback and render it inline in the side panel.
+     * Cached per-explorer-instance so the LLM isn't hit twice for the same
+     * concept. The DOM lookup uses `data-token` so a stale fetch landing
+     * after the user clicked a different node never overwrites the active
+     * panel.
+     */
+    async _populateDefinition(node, panel) {
+        // Held by-reference rather than re-resolved through a data-attribute
+        // because the canonicalName may contain markup-sensitive characters
+        // that survive `innerHTML` round-tripping (browsers normalise
+        // `&lt;` back to `<` in attribute values when reading innerHTML).
+        const target = panel.querySelector('.kg-side-definition .kg-side-definition-body');
+        if (!target) return;
+        // Tag this fetch with the node being shown so a stale resolver that
+        // lands after the user clicked a different node never overwrites
+        // the active panel.
+        this._activeDefinitionToken = node.canonicalName;
+        const token = node.canonicalName;
+        const isStillActive = () =>
+            this._activeDefinitionToken === token && panel.contains(target);
+
+        if (!this._lookupDefinition) {
+            target.textContent = 'Lookup unavailable.';
+            return;
+        }
+
+        const cached = this._definitionCache.get(token);
+        if (cached !== undefined) {
+            this._renderDefinition(target, cached);
+            return;
+        }
+        try {
+            const result = await this._lookupDefinition(token);
+            this._definitionCache.set(token, result);
+            if (!isStillActive()) return;
+            this._renderDefinition(target, result);
+        } catch (err) {
+            if (isStillActive()) {
+                target.textContent = `Lookup failed: ${err?.message ?? String(err)}`;
+            }
+        }
+    }
+
+    _renderDefinition(targetEl, result) {
+        if (!result) {
+            targetEl.textContent = 'No definition available.';
+            return;
+        }
+        const def = String(result.definition || '').trim();
+        const trans = String(result.translation || '').trim();
+        if (!def && !trans) {
+            targetEl.textContent = 'No definition available.';
+            return;
+        }
+        targetEl.textContent = def || trans;
     }
 
     /**
@@ -450,6 +564,10 @@ export class GraphExplorer {
             <p><strong>Type:</strong> ${escape(node.type)}</p>
             <p><strong>Bloom level:</strong> ${escape(node.bloom)}</p>
             <p><strong>Aliases:</strong> ${aliasLine}</p>
+            <p class="kg-side-definition">
+                <strong>Definition:</strong>
+                <span class="kg-side-definition-body">Loading…</span>
+            </p>
             <h4>Context</h4>
             <ul class="kg-context-list">
                 ${contextItems.length === 0
@@ -471,6 +589,8 @@ export class GraphExplorer {
                 this._openContextPreview(node, ch, sent);
             });
         }
+
+        this._populateDefinition(node, panel);
     }
 
     _openContextPreview(node, chapterIndex, sentenceIndex) {
@@ -481,7 +601,8 @@ export class GraphExplorer {
             chapterTitle: chapter?.title,
             chapterIndex,
             sentenceIndex,
-            loadSentences: this._loadChapterSentences,
+            loadChapter: this._loadChapter,
+            onLookup: this._onLookup,
             // The reader-jump action stays available from inside the modal so
             // the user can opt into the existing behaviour rather than losing
             // it entirely.
@@ -492,6 +613,34 @@ export class GraphExplorer {
                 }
                 : null
         });
+    }
+
+    /**
+     * Resolve the (chapterIndex, sentenceIndex) that first introduced this
+     * concept into the graph. Used by the double-tap / long-press handlers
+     * to open the preview at the canonical first mention.
+     *
+     * `firstSeenChapter` is set at creation. Inside that chapter's context
+     * the smallest sentenceIndex is the canonical first mention. If
+     * firstSeenChapter is missing (legacy node) we fall back to the
+     * lexicographically-first (chapterIndex, sentenceIndex) pair.
+     *
+     * @returns {{ chapterIndex: number, sentenceIndex: number } | null}
+     */
+    _firstSeenLocation(node) {
+        if (!node) return null;
+        const contexts = Array.isArray(node.contexts) ? node.contexts : [];
+        if (contexts.length === 0) return null;
+
+        const fc = Number.isInteger(node.firstSeenChapter) ? node.firstSeenChapter : null;
+        const ctx = (fc !== null && contexts.find((c) => c.chapterIndex === fc))
+            || contexts.slice().sort((a, b) => a.chapterIndex - b.chapterIndex)[0];
+        if (!ctx) return null;
+
+        const sentences = Array.isArray(ctx.sentenceIndices) ? ctx.sentenceIndices : [];
+        if (sentences.length === 0) return null;
+        const minSentence = Math.min(...sentences);
+        return { chapterIndex: ctx.chapterIndex, sentenceIndex: minSentence };
     }
 
     _hideSide() {

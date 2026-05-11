@@ -80,16 +80,28 @@ describe('GraphExplorer', () => {
     it('side panel renders aliases, bloom, and clickable contexts; click opens the preview modal (does not jump immediately)', async () => {
         await seedBookGraph();
         const onJumpToSentence = vi.fn();
-        const loadChapterSentences = vi.fn(async () => [
-            'Sentence one.', 'Sentence two.', 'Sentence three.',
-            'Arthur drew the sword.', 'It glowed.'
-        ]);
+        // The loader now returns a chapter shape ({ html, sentences }) so
+        // the preview can use the chapter's full HTML to keep main-view
+        // formatting (images, italics, etc.).
+        const loadChapter = vi.fn(async () => ({
+            sentences: [
+                'Sentence one.', 'Sentence two.', 'Sentence three.',
+                'Arthur drew the sword.', 'It glowed.'
+            ],
+            html: '<p class="paragraph">'
+                + '<span class="sentence" data-index="0">Sentence one. </span>'
+                + '<span class="sentence" data-index="1">Sentence two. </span>'
+                + '<span class="sentence" data-index="2">Sentence three. </span>'
+                + '<span class="sentence" data-index="3">Arthur drew the sword. </span>'
+                + '<span class="sentence" data-index="4">It glowed. </span>'
+                + '</p>'
+        }));
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({
             container,
             getBook: () => ({ id: 'b1', chapters: [{ title: 'The Stone' }] }),
             onJumpToSentence,
-            loadChapterSentences
+            loadChapter
         });
         await ge.open();
 
@@ -117,10 +129,9 @@ describe('GraphExplorer', () => {
 
         const previewModal = document.querySelector('.kg-context-preview-modal');
         expect(previewModal).toBeTruthy();
-        expect(previewModal.textContent).toContain('Arthur');
         expect(previewModal.textContent).toContain('Arthur drew the sword.');
-        // Only the target sentence is rendered with the highlight class.
-        const targets = previewModal.querySelectorAll('.kg-context-preview-sentence.is-target');
+        // Target sentence is rendered with the highlight class.
+        const targets = previewModal.querySelectorAll('.kg-context-preview-target');
         expect(targets).toHaveLength(1);
         expect(targets[0].textContent).toContain('Arthur drew the sword.');
 
@@ -288,5 +299,74 @@ describe('GraphExplorer', () => {
         expect(links[1].textContent.trim()).toContain('sentences 8–9');
         // The pivot sentence for the first group is the middle index (1).
         expect(links[0].dataset.sent).toBe('1');
+    });
+
+    it('renders an inline definition row via the lookupDefinition callback', async () => {
+        await seedBookGraph();
+        const lookupDefinition = vi.fn(async (phrase) => ({
+            definition: `${phrase} is a legendary king of the Britons.`
+        }));
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            lookupDefinition
+        });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1')).find((n) => n.canonicalName === 'Arthur');
+        ge._showNodeDetails(node);
+
+        const defRow = container.querySelector('.kg-side-definition');
+        expect(defRow).toBeTruthy();
+        expect(defRow.textContent).toContain('Loading…');
+
+        // Drain microtasks so the async lookup resolves and paints.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(lookupDefinition).toHaveBeenCalledWith('Arthur');
+        expect(defRow.querySelector('.kg-side-definition-body').textContent)
+            .toContain('legendary king');
+
+        // Re-opening the same node uses the in-memory cache (no second
+        // invocation).
+        ge._showNodeDetails(node);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(lookupDefinition).toHaveBeenCalledTimes(1);
+    });
+
+    it('double-tap on a node opens the preview at the first-seen sentence', async () => {
+        // Seed a node whose first-seen chapter is 2 and whose earliest
+        // sentence index there is 7.
+        await storage.saveKGNode({
+            id: 'n1', bookId: 'b1', canonicalName: 'Arthur',
+            aliases: [], type: 'PERSON', bloom: 'Remember',
+            embedding: new Float32Array(1),
+            firstSeenChapter: 2,
+            contexts: [
+                { chapterIndex: 5, sentenceIndices: [3, 12] },
+                { chapterIndex: 2, sentenceIndices: [7, 9] }
+            ],
+            srs: {}, createdAt: 0, updatedAt: 0
+        });
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{}, {}, {}, {}, {}, {}] }),
+            loadChapter: async () => ({
+                sentences: ['s0', 's1', 's2', 's3', 's4', 's5', 's6', 'first mention', 's8'],
+                html: ''
+            })
+        });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1'))[0];
+        const loc = ge._firstSeenLocation(node);
+        expect(loc).toEqual({ chapterIndex: 2, sentenceIndex: 7 });
+
+        ge._openFirstSeenPreview(node);
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const modal = document.querySelector('.kg-context-preview-modal');
+        expect(modal).toBeTruthy();
+        expect(modal.textContent).toContain('first mention');
     });
 });

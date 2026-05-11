@@ -3716,24 +3716,27 @@
     color: var(--text-secondary, inherit);
 }
 
-.kg-context-preview-sentence.is-target {
-    background-color: var(--surface-color);
+.kg-context-preview-sentence.is-target,
+.kg-context-preview-target {
+    font-weight: 700;
     color: var(--text-color);
-    font-weight: 600;
-    border-left: 3px solid var(--primary-color);
 }
 
-.kg-context-preview-num {
-    display: inline-block;
-    width: 2em;
-    color: var(--text-tertiary, var(--text-secondary, inherit));
-    font-variant-numeric: tabular-nums;
+.kg-context-preview-body img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: var(--spacing-sm) auto;
 }
 
 .kg-context-preview-loading,
 .kg-context-preview-error {
     color: var(--text-secondary, inherit);
     font-style: italic;
+}
+
+.kg-side-definition .kg-side-definition-body {
+    color: var(--text-secondary, inherit);
 }
 
 .graph-body {
