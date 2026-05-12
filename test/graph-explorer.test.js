@@ -196,12 +196,15 @@ describe('GraphExplorer', () => {
         expect(slider.min).toBe('0');
         expect(slider.max).toBe('3');         // 3 chapters + 1 "All" slot
         expect(slider.value).toBe('1');       // current chapter
-        expect(label.textContent).toBe('Ch 2');
+        // The value display is now an editable text input; show 1-based
+        // chapter numbers ("2" for slider value 1) so the user can type
+        // a number to jump to a chapter.
+        expect(label.value).toBe('2');
 
         // Last position is the "All chapters" sentinel.
         slider.value = '3';
         slider.dispatchEvent(new Event('input'));
-        expect(label.textContent).toBe('All');
+        expect(label.value).toBe('All');
     });
 
     it('falls back to "All" when no current-chapter callback is provided', async () => {
@@ -215,7 +218,7 @@ describe('GraphExplorer', () => {
         const slider = container.querySelector('#kg-chapter');
         const label = container.querySelector('#kg-chapter-value');
         expect(slider.value).toBe('2');       // out-of-range = sentinel
-        expect(label.textContent).toBe('All');
+        expect(label.value).toBe('All');
     });
 
     it('attaches each node\'s and edge\'s chapter set to its cy data for filtering', async () => {
@@ -246,7 +249,7 @@ describe('GraphExplorer', () => {
         const slider = container.querySelector('#kg-min-relevance');
         const label = container.querySelector('#kg-min-relevance-value');
         expect(slider.value).toBe('0.15');
-        expect(label.textContent).toBe('0.15');
+        expect(label.value).toBe('0.15');
     });
 
     it('mouse wheel over a slider scrubs it by one step (up = increase, down = decrease)', async () => {
@@ -447,5 +450,151 @@ describe('GraphExplorer', () => {
         // The modal must intercept the navigation that would otherwise
         // 404 outside the EPUB reader iframe.
         expect(evt.defaultPrevented).toBe(true);
+    });
+
+    it('hands chapter-relative anchor clicks in the preview to onInternalLink (instead of dropping them)', async () => {
+        await seedBookGraph();
+        const onInternalLink = vi.fn();
+        const loadChapter = vi.fn(async () => ({
+            sentences: ['s0', 's1', 's2', 's3', 's4'],
+            html: '<p class="paragraph">'
+                + '<span class="sentence" data-index="0">s0</span>'
+                + '<span class="sentence" data-index="1">s1</span>'
+                + '<span class="sentence" data-index="2">'
+                +   'X <a href="ch12.xhtml#frag">link</a>'
+                + '</span>'
+                + '<span class="sentence" data-index="3">s3</span>'
+                + '<span class="sentence" data-index="4">s4</span>'
+                + '</p>'
+        }));
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{ title: 'C' }] }),
+            loadChapter,
+            onInternalLink
+        });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1')).find((n) => n.canonicalName === 'Arthur');
+        ge._openContextPreview(node, 0, 2);
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+
+        const anchor = document.querySelector('.kg-context-preview-modal a[href]');
+        anchor.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+        expect(onInternalLink).toHaveBeenCalledWith('ch12.xhtml#frag');
+        // The modal also closes itself + the explorer so the user lands
+        // on the reader at the resolved location.
+        expect(document.querySelector('.kg-context-preview-modal')).toBeNull();
+        expect(container.classList.contains('hidden')).toBe(true);
+    });
+
+    it('min-connections threshold keeps anchors AND their neighbours (not only the anchors)', async () => {
+        // Build a tiny graph: A is connected to B, C, D, E (degree 4);
+        // F is connected to G only (degree 1, F not an anchor under
+        // minDeg=4); B/C/D/E each have degree 1.
+        const seed = async () => {
+            const nodes = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+            for (const name of nodes) {
+                await storage.saveKGNode({
+                    id: `n_${name}`, bookId: 'b1', canonicalName: name, aliases: [],
+                    type: 'OTHER', bloom: 'Remember', embedding: new Float32Array(1),
+                    contexts: [{ chapterIndex: 0, sentenceIndices: [0] }],
+                    firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+                });
+            }
+            const edges = [
+                ['A', 'B'], ['A', 'C'], ['A', 'D'], ['A', 'E'], ['F', 'G']
+            ];
+            for (const [s, t] of edges) {
+                await storage.saveKGEdge({
+                    id: `e_${s}_${t}`, bookId: 'b1', sourceId: `n_${s}`, targetId: `n_${t}`,
+                    relation: 'r', contexts: [{ chapterIndex: 0, sentenceIndices: [0] }], createdAt: 0
+                });
+            }
+        };
+        await seed();
+
+        // Use a real cytoscape mock with degree + neighborhood + hidden
+        // class semantics. The default factory mock only stubs `on/destroy`,
+        // so spin one up locally with the methods we need.
+        const hidden = new Map();   // id -> bool
+        const nodes = new Map();    // id -> {edges...}
+        const edges = [];
+        const makeNodeApi = (id) => {
+            const n = {
+                id: () => id,
+                data: (k) => k === 'relevanceScore' ? null
+                    : k === 'chapterSet' ? new Set([0]) : undefined,
+                degree: () => edges.filter(
+                    (e) => e.source === id || e.target === id
+                ).length,
+                hasClass: (c) => c === 'kg-hidden' && hidden.get(id) === true,
+                toggleClass: (c, on) => { if (c === 'kg-hidden') hidden.set(id, !!on); },
+                addClass: (c) => { if (c === 'kg-hidden') hidden.set(id, true); },
+                removeClass: (c) => { if (c === 'kg-hidden') hidden.set(id, false); },
+                neighborhood: () => makeCollection(neighbourIds(id)),
+                openNeighborhood: () => makeCollection(neighbourIds(id))
+            };
+            nodes.set(id, n);
+            return n;
+        };
+        const neighbourIds = (id) => edges
+            .filter((e) => e.source === id || e.target === id)
+            .map((e) => e.source === id ? e.target : e.source);
+        const makeCollection = (ids) => {
+            const arr = Array.from(new Set(ids)).map((id) => nodes.get(id));
+            const coll = {
+                length: arr.length,
+                forEach: (f) => arr.forEach(f),
+                filter: (pred) => makeCollection(arr.filter(pred).map((n) => n.id())),
+                map: (f) => arr.map(f),
+                union: (other) => makeCollection([...arr.map((n) => n.id()), ...other.map((n) => n.id())]),
+                difference: (other) => {
+                    const drop = new Set(other.map((n) => n.id()));
+                    return makeCollection(arr.filter((n) => !drop.has(n.id())).map((n) => n.id()));
+                },
+                addClass: (c) => arr.forEach((n) => n.addClass(c)),
+                removeClass: (c) => arr.forEach((n) => n.removeClass(c)),
+                connectedEdges: () => ({ removeClass: () => {}, addClass: () => {}, forEach: () => {} }),
+                openNeighborhood: () => {
+                    const ids = [].concat(...arr.map((n) => neighbourIds(n.id())));
+                    return makeCollection(ids);
+                }
+            };
+            return coll;
+        };
+        ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach((id) => makeNodeApi(`n_${id}`));
+        edges.push(
+            { source: 'n_A', target: 'n_B' }, { source: 'n_A', target: 'n_C' },
+            { source: 'n_A', target: 'n_D' }, { source: 'n_A', target: 'n_E' },
+            { source: 'n_F', target: 'n_G' }
+        );
+        const cyMock = {
+            batch: (fn) => fn(),
+            nodes: () => makeCollection(Array.from(nodes.keys())),
+            edges: () => ({ removeClass: () => {}, addClass: () => {}, forEach: () => {} }),
+            on: vi.fn(), destroy: vi.fn()
+        };
+
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        ge._cy = cyMock;
+        ge._chapterCount = 0;            // disable chapter gate
+        // Manually set slider values for the filter pass.
+        container.innerHTML = `<input id="kg-min-degree" value="4">
+                               <input id="kg-min-relevance" value="0">
+                               <input id="kg-chapter" value="0">`;
+        ge._applyDetailFilter();
+
+        // A passes (degree=4); B/C/D/E pulled in as neighbours of A even
+        // though their own degree is 1.
+        for (const id of ['n_A', 'n_B', 'n_C', 'n_D', 'n_E']) {
+            expect(hidden.get(id)).toBe(false);
+        }
+        // F has degree 1 and no anchor neighbour — hidden. G likewise.
+        expect(hidden.get('n_F')).toBe(true);
+        expect(hidden.get('n_G')).toBe(true);
     });
 });

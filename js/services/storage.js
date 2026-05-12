@@ -18,6 +18,28 @@ const STORES = {
     KG_EDGES: 'kg_edges'
 };
 
+/**
+ * Strip per-chapter runtime caches that must not survive a page reload.
+ * Specifically `chapter.html` may carry `blob:` URLs created by
+ * `URL.createObjectURL`; those URLs are scoped to the current session and
+ * resolve to ERR_FILE_NOT_FOUND on the next load. `sentences` and `loaded`
+ * are deterministically derivable from `html` and re-extracted on demand.
+ *
+ * Returns a shallow clone so callers can keep mutating the in-memory book
+ * without affecting the persisted copy.
+ */
+function stripTransientChapterState(book) {
+    if (!book || !Array.isArray(book.chapters)) return book;
+    return {
+        ...book,
+        chapters: book.chapters.map((ch) => {
+            if (!ch || typeof ch !== 'object') return ch;
+            const { html: _h, sentences: _s, loaded: _l, ...rest } = ch;
+            return rest;
+        })
+    };
+}
+
 export class StorageService {
     constructor() {
         this._db = null;
@@ -164,8 +186,16 @@ export class StorageService {
 
         book.lastOpened = Date.now();
 
+        // Strip per-chapter runtime caches before persisting. `chapter.html`
+        // contains `blob:` URLs created by `URL.createObjectURL` in the
+        // current session; those URLs are gone on the next page load and
+        // would render as ERR_FILE_NOT_FOUND if reused. `sentences` and the
+        // `loaded` flag are derived from `html` and can be re-extracted
+        // lazily, so they're stripped too.
+        const persistable = stripTransientChapterState(book);
+
         return new Promise((resolve, reject) => {
-            const request = store.put(book);
+            const request = store.put(persistable);
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
@@ -182,7 +212,12 @@ export class StorageService {
 
         return new Promise((resolve, reject) => {
             const request = store.get(id);
-            request.onsuccess = () => resolve(request.result || null);
+            request.onsuccess = () => resolve(
+                // Even if a stale persisted record still carries a cached
+                // `chapter.html` from before this fix (with dead blob URLs),
+                // strip it on read so we never paint with stale blobs.
+                request.result ? stripTransientChapterState(request.result) : null
+            );
             request.onerror = () => reject(request.error);
         });
     }

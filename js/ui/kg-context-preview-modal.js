@@ -102,6 +102,10 @@ function buildNeighbourhoodFragment(chapter, targetIndex) {
  * @param {(chapterIndex: number) => Promise<{ html?: string, sentences?: string[] }>} [opts.loadChapter]
  * @param {(chapterIndex: number, sentenceIndex: number) => void} [opts.onJumpToSentence]
  * @param {(text: string, context: string, chapterIndex: number, sentenceIndex: number) => void} [opts.onLookup]
+ * @param {(href: string) => void} [opts.onInternalLink] - Invoked when the
+ *   user clicks an `<a>` inside the rendered chapter snippet. The href is
+ *   usually a chapter-relative EPUB link (`ch12.xhtml#frag`) that the
+ *   reader's `_handleInternalLink` knows how to resolve.
  * @returns {Promise<void>}
  */
 export function openContextPreview(opts) {
@@ -112,7 +116,8 @@ export function openContextPreview(opts) {
         sentenceIndex,
         loadChapter,
         onJumpToSentence,
-        onLookup
+        onLookup,
+        onInternalLink
     } = opts;
 
     return new Promise((resolve) => {
@@ -149,14 +154,23 @@ export function openContextPreview(opts) {
         const body = overlay.querySelector('#kg-context-preview-body');
 
         // The chapter HTML we render below can contain `<a href="…">` links
-        // that resolve only inside the EPUB reader's iframe context. Outside
-        // it they navigate the page to a non-existent URL (404). Intercept
-        // anchor clicks so the modal stays a read-only preview.
+        // that resolve only inside the EPUB reader's chapter context. The
+        // host page's URL gives a 404. Hand the href to the reader's
+        // internal-link router instead — that resolves the chapter file +
+        // fragment to a (chapterIndex, sentenceIndex) inside the reader.
         body.addEventListener('click', (e) => {
             const a = e.target.closest('a[href]');
-            if (a && body.contains(a)) {
-                e.preventDefault();
-                e.stopPropagation();
+            if (!a || !body.contains(a)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const href = a.getAttribute('href');
+            if (!href) return;
+            if (typeof onInternalLink === 'function') {
+                // The handler is expected to navigate the reader and close
+                // this modal (we close here defensively too so callers don't
+                // have to remember).
+                finish();
+                onInternalLink(href);
             }
         });
 

@@ -57,9 +57,14 @@ export class GraphExplorer {
      * @param {() => number} [options.getWheelSensitivity] - Returns the
      *   user-configured cytoscape wheelSensitivity (mouse-wheel zoom
      *   speed). Read once per `open()`. Defaults to 1.0.
+     * @param {(href: string) => void} [options.onInternalLink] - Invoked
+     *   when the user clicks an EPUB-internal `<a>` link inside the
+     *   context preview modal. The app wires this to its existing
+     *   `_handleInternalLink` so chapter-relative hrefs land at the
+     *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onJumpToSentence }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -72,6 +77,7 @@ export class GraphExplorer {
             ? getWheelSensitivity
             : () => 1.0;
         this._wheelSensitivity = 1.0;
+        this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
         // Cache `phrase → definition` so repeatedly clicking the same node
         // doesn't re-hit the LLM. Scoped to the explorer instance.
         this._definitionCache = new Map();
@@ -89,16 +95,19 @@ export class GraphExplorer {
                 <h2>Knowledge Graph</h2>
                 <div class="graph-filter-toolbar">
                     <label>
-                        Chapter: <span id="kg-chapter-value">All</span>
+                        <span class="kg-toolbar-name">Chapter</span>
                         <input type="range" id="kg-chapter" min="0" max="0" step="1" value="0" disabled>
+                        <input type="text" class="kg-toolbar-value" id="kg-chapter-value" value="All" aria-label="Chapter (type a chapter number or 'All')" autocomplete="off" inputmode="numeric">
                     </label>
                     <label>
-                        Min connections: <span id="kg-min-degree-value">1</span>
+                        <span class="kg-toolbar-name">Min connections</span>
                         <input type="range" id="kg-min-degree" min="1" max="10" step="1" value="1">
+                        <input type="text" class="kg-toolbar-value" id="kg-min-degree-value" value="1" aria-label="Minimum connections" autocomplete="off" inputmode="numeric">
                     </label>
                     <label>
-                        Min relevance: <span id="kg-min-relevance-value">0.15</span>
+                        <span class="kg-toolbar-name">Min relevance</span>
                         <input type="range" id="kg-min-relevance" min="0" max="1" step="0.05" value="0.15">
+                        <input type="text" class="kg-toolbar-value" id="kg-min-relevance-value" value="0.15" aria-label="Minimum relevance" autocomplete="off" inputmode="decimal">
                     </label>
                 </div>
                 <button class="btn-icon graph-close-btn" aria-label="Close">
@@ -124,16 +133,71 @@ export class GraphExplorer {
         const degValue = this._container.querySelector('#kg-min-degree-value');
         const relValue = this._container.querySelector('#kg-min-relevance-value');
         const chValue = this._container.querySelector('#kg-chapter-value');
+
+        // Slider → text input. Each text input mirrors its slider as the
+        // slider moves so the user always sees the current value.
         degSlider.addEventListener('input', () => {
-            degValue.textContent = degSlider.value;
+            degValue.value = degSlider.value;
             this._applyDetailFilter();
         });
         relSlider.addEventListener('input', () => {
-            relValue.textContent = parseFloat(relSlider.value).toFixed(2);
+            relValue.value = parseFloat(relSlider.value).toFixed(2);
             this._applyDetailFilter();
         });
         chSlider.addEventListener('input', () => {
-            chValue.textContent = this._chapterSliderLabel(chSlider.value);
+            chValue.value = this._chapterSliderLabel(chSlider.value);
+            this._applyDetailFilter();
+        });
+
+        // Text input → slider. Users can click a value and type directly.
+        // Committed on Enter or blur; out-of-range values are clamped to
+        // the slider's [min, max].
+        const commitNumeric = (input, slider, formatter) => {
+            const raw = parseFloat(input.value);
+            const min = parseFloat(slider.min);
+            const max = parseFloat(slider.max);
+            const clamped = Number.isFinite(raw)
+                ? Math.min(max, Math.max(min, raw))
+                : parseFloat(slider.value);
+            slider.value = String(clamped);
+            input.value = formatter(clamped);
+            this._applyDetailFilter();
+        };
+        const commitInteger = (input, slider) => commitNumeric(input, slider,
+            (v) => String(Math.round(v)));
+        const commitDecimal = (input, slider) => commitNumeric(input, slider,
+            (v) => v.toFixed(2));
+
+        // Wire commit-on-Enter and commit-on-blur for the numeric inputs.
+        const wireTextInput = (input, commit) => {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commit(); input.blur(); }
+            });
+            input.addEventListener('blur', commit);
+            // Select on focus so the user can replace easily.
+            input.addEventListener('focus', () => input.select());
+        };
+        wireTextInput(degValue, () => commitInteger(degValue, degSlider));
+        wireTextInput(relValue, () => commitDecimal(relValue, relSlider));
+
+        // Chapter input: accepts "All" (or empty) → max, or a 1-based
+        // chapter number that maps to slider value (chapterNumber - 1).
+        wireTextInput(chValue, () => {
+            const max = parseInt(chSlider.max, 10);
+            const txt = String(chValue.value).trim().toLowerCase();
+            let next;
+            if (!txt || txt === 'all') {
+                next = max;
+            } else {
+                const n = parseInt(txt, 10);
+                if (!Number.isFinite(n)) {
+                    next = parseInt(chSlider.value, 10);
+                } else {
+                    next = Math.min(max, Math.max(0, n - 1));
+                }
+            }
+            chSlider.value = String(next);
+            chValue.value = this._chapterSliderLabel(next);
             this._applyDetailFilter();
         });
 
@@ -170,7 +234,10 @@ export class GraphExplorer {
     _chapterSliderLabel(rawValue) {
         const v = Number.parseInt(rawValue, 10);
         if (!Number.isFinite(v) || v >= this._chapterCount) return 'All';
-        return `Ch ${v + 1}`;
+        // The label doubles as the value displayed in the editable text
+        // input, so we keep it minimal — a bare 1-based chapter number —
+        // and let the input also accept that form when the user types.
+        return String(v + 1);
     }
 
     /**
@@ -189,11 +256,13 @@ export class GraphExplorer {
             chSlider.max = '0';
             chSlider.value = '0';
             chSlider.disabled = true;
-            chValue.textContent = 'All';
+            chValue.value = 'All';
+            chValue.disabled = true;
             return;
         }
 
         chSlider.disabled = false;
+        chValue.disabled = false;
         chSlider.min = '0';
         chSlider.max = String(count);    // last slot = "All"
         const current = this._getCurrentChapterIndex();
@@ -201,7 +270,7 @@ export class GraphExplorer {
             ? current
             : count;                     // fall back to "All"
         chSlider.value = String(defaultPos);
-        chValue.textContent = this._chapterSliderLabel(defaultPos);
+        chValue.value = this._chapterSliderLabel(defaultPos);
     }
 
     /**
@@ -488,19 +557,41 @@ export class GraphExplorer {
         const chapterAll = !chEl || !this._chapterCount || chRaw >= this._chapterCount;
         const chapterIndex = chRaw;
 
+        // Relevance + chapter are "universal" gates that apply to every
+        // visible node. The min-degree gate is different: it identifies
+        // ANCHOR nodes (well-connected enough to be of interest), and
+        // anchors pull in their direct neighbours so the user can see the
+        // full neighbourhood of each well-connected node — even neighbours
+        // that don't individually meet the degree threshold.
+        const passesUniversal = (n) => {
+            const score = n.data('relevanceScore');
+            const passesRel = score == null || score >= minRel;
+            const chSet = n.data('chapterSet');
+            const passesCh = chapterAll || !chSet || chSet.has(chapterIndex);
+            return passesRel && passesCh;
+        };
+
         this._cy.batch(() => {
-            this._cy.nodes().forEach((n) => {
-                const score = n.data('relevanceScore');
-                const passesRel = score == null || score >= minRel;
-                const chSet = n.data('chapterSet');
-                // Legacy nodes without a chapterSet (shouldn't happen for
-                // freshly-extracted graphs) bypass the chapter gate.
-                const passesCh = chapterAll || !chSet || chSet.has(chapterIndex);
-                // Degree is structural (full-graph) — the slider stays
-                // stable as the chapter filter changes.
-                const passesDeg = n.degree() >= minDeg;
-                n.toggleClass('kg-hidden', !(passesDeg && passesRel && passesCh));
-            });
+            const allNodes = this._cy.nodes();
+            // Anchors must pass universal gates AND have ≥ minDeg edges.
+            // Degree is structural (computed on the full graph), so the
+            // anchor set stays stable as chapter/relevance change.
+            const anchors = allNodes.filter((n) =>
+                passesUniversal(n) && n.degree() >= minDeg
+            );
+            // Visible = anchors ∪ (anchors' neighbours that also pass
+            // the universal gates). Neighbours below the degree threshold
+            // are intentionally kept so anchors are shown together with
+            // ALL their connections — the user's expectation.
+            let visible = anchors;
+            if (anchors.length > 0) {
+                visible = anchors.union(
+                    anchors.openNeighborhood('node').filter(passesUniversal)
+                );
+            }
+            allNodes.removeClass('kg-hidden');
+            allNodes.difference(visible).addClass('kg-hidden');
+
             // Edge pass: hide edges whose endpoints are hidden. Use the
             // native selector to avoid per-edge iteration on dense graphs.
             this._cy.edges().removeClass('kg-hidden');
@@ -638,6 +729,12 @@ export class GraphExplorer {
             onJumpToSentence: this._onJumpToSentence
                 ? (ch, sent) => {
                     this._onJumpToSentence(ch, sent);
+                    this.close();
+                }
+                : null,
+            onInternalLink: this._onInternalLink
+                ? (href) => {
+                    this._onInternalLink(href);
                     this.close();
                 }
                 : null

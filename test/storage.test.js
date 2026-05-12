@@ -153,4 +153,33 @@ describe('storage v4 migration + KG CRUD', () => {
         expect(await storage.getSetting('kgChunkOverlap')).toBe(2);
         expect(await storage.getSetting('kgSimilarityThreshold')).toBe(0.88);
     });
+
+    it('saveBook strips transient chapter caches (html / sentences / loaded) so blob URLs do not survive a reload', async () => {
+        const book = {
+            id: 'b-blob',
+            title: 'T',
+            chapters: [
+                {
+                    title: 'Ch 1',
+                    href: 'ch1.xhtml',
+                    kgProcessed: true,    // ← persisted field (not transient)
+                    html: '<img src="blob:https://example.com/abcd">',
+                    sentences: ['s0', 's1'],
+                    loaded: true
+                }
+            ]
+        };
+        await storage.saveBook(book);
+        const reloaded = await storage.getBook('b-blob');
+        expect(reloaded.chapters[0].kgProcessed).toBe(true);
+        // Transient fields must be absent — they would otherwise carry
+        // dead blob URLs into the next session.
+        expect(reloaded.chapters[0].html).toBeUndefined();
+        expect(reloaded.chapters[0].sentences).toBeUndefined();
+        expect(reloaded.chapters[0].loaded).toBeUndefined();
+        // The in-memory book object the caller passed is NOT mutated by
+        // the strip — only the persisted copy is.
+        expect(book.chapters[0].html).toBeDefined();
+        expect(book.chapters[0].sentences).toBeDefined();
+    });
 });

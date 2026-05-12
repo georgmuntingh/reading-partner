@@ -357,6 +357,10 @@ class ReadingPartnerApp {
             lookupDefinition,
             getWheelSensitivity: () =>
                 this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
+            // Anchors inside the preview modal carry EPUB chapter-relative
+            // hrefs. The reader already knows how to resolve those via
+            // _handleInternalLink (file → chapter index + fragment scroll).
+            onInternalLink: (href) => this._handleInternalLink(href),
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });
