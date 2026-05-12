@@ -481,6 +481,68 @@ describe('KGController.buildChapterGraph', () => {
         expect(edges[0].contexts[0].sentenceIndices).toEqual([0]);
     });
 
+    it('persists the extractor-supplied definition on new nodes (no separate lookup needed)', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                {
+                    name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember',
+                    definition: 'Legendary king of the Britons.'
+                },
+                {
+                    name: 'sword', type: 'OBJECT', aliases: [], bloom: 'Remember',
+                    definition: 'A long-bladed weapon.'
+                }
+            ],
+            relations: []
+        }));
+        const lookupDefinition = vi.fn();
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({
+            getSettings: () => baseSettings,
+            getBook: () => book,
+            lookupDefinition
+        });
+        await ctrl.buildChapterGraph(0);
+
+        const nodes = await storage.getKGNodesForBook('b1');
+        const arthur = nodes.find((n) => n.canonicalName === 'Arthur');
+        const sword = nodes.find((n) => n.canonicalName === 'sword');
+        expect(arthur.definition).toBe('Legendary king of the Britons.');
+        expect(sword.definition).toBe('A long-bladed weapon.');
+        // The post-pass fallback must NOT fire when definitions are
+        // already provided in-band.
+        expect(lookupDefinition).not.toHaveBeenCalled();
+    });
+
+    it('falls back to lookupDefinition only for nodes whose extractor returned no definition', async () => {
+        llmClient.complete.mockResolvedValue(JSON.stringify({
+            entities: [
+                { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember', definition: 'King of the Britons.' },
+                { name: 'sword',  type: 'OBJECT', aliases: [], bloom: 'Remember' }   // ← no definition
+            ],
+            relations: []
+        }));
+        const lookupDefinition = vi.fn(async () => ({ definition: 'A long-bladed weapon.' }));
+        const book = makeBook();
+        await storage.saveBook(book);
+        const ctrl = new KGController({
+            getSettings: () => baseSettings,
+            getBook: () => book,
+            lookupDefinition
+        });
+        await ctrl.buildChapterGraph(0);
+
+        expect(lookupDefinition).toHaveBeenCalledTimes(1);
+        expect(lookupDefinition).toHaveBeenCalledWith('sword');
+
+        const nodes = await storage.getKGNodesForBook('b1');
+        expect(nodes.find((n) => n.canonicalName === 'Arthur').definition)
+            .toBe('King of the Britons.');
+        expect(nodes.find((n) => n.canonicalName === 'sword').definition)
+            .toBe('A long-bladed weapon.');
+    });
+
     it('prefetches a definition for each newly-created node via lookupDefinition and persists it', async () => {
         llmClient.complete.mockResolvedValue(JSON.stringify({
             entities: [
@@ -508,8 +570,10 @@ describe('KGController.buildChapterGraph', () => {
         const nodes = await storage.getKGNodesForBook('b1');
         const arthur = nodes.find((n) => n.canonicalName === 'Arthur');
         const sword = nodes.find((n) => n.canonicalName === 'sword');
-        expect(arthur.definition?.definition).toBe('Definition of Arthur.');
-        expect(sword.definition?.definition).toBe('Definition of sword.');
+        // Definitions are stored as plain strings (the post-pass flattens
+        // the lookupService `{definition,...}` shape into a string).
+        expect(arthur.definition).toBe('Definition of Arthur.');
+        expect(sword.definition).toBe('Definition of sword.');
     });
 
     it('failing definition lookups are logged + skipped without aborting the build', async () => {
@@ -532,7 +596,9 @@ describe('KGController.buildChapterGraph', () => {
         expect(ctrl.state).toBe(KG_STATE.DONE);
         const nodes = await storage.getKGNodesForBook('b1');
         expect(nodes).toHaveLength(1);
-        expect(nodes[0].definition).toBeUndefined();
+        // Resolver initialises definition to '' on creation. The post-pass
+        // failed, so it stays empty rather than being overwritten.
+        expect(nodes[0].definition || '').toBe('');
         expect(warn).toHaveBeenCalled();
         warn.mockRestore();
     });

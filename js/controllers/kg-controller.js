@@ -294,6 +294,9 @@ export class KGController {
                             type: ent.type,
                             aliases,
                             bloom: ent.bloom,
+                            definition: typeof ent.definition === 'string'
+                                ? ent.definition.trim()
+                                : '',
                             embedding: emb,
                             chapterIndex,
                             sentenceIndices: entSentences
@@ -343,24 +346,40 @@ export class KGController {
                 }
             }
 
-            // Phase E — pre-populate definitions on newly-created nodes.
-            // Runs after the chapter's resolution pass so it does not stall
-            // the LLM-extract phase; failures are logged and ignored so a
-            // flaky lookup never blocks the build from completing.
-            if (this.lookupDefinition && newlyCreated.size > 0) {
+            // Phase E — fallback definition lookup for nodes the
+            // extraction LLM declined to define (e.g. it returned an empty
+            // string for "definition"). The primary path is in-band: the
+            // extractor schema asks for a definition per entity and the
+            // resolver persists it at creation. This pass only fires for
+            // nodes that still have an empty definition AND we were given
+            // a `lookupDefinition` callback to ask externally.
+            const undefined_nodes = [];
+            for (const [nodeId, name] of newlyCreated) {
+                const node = await storage.getKGNode(nodeId);
+                if (node && (!node.definition || !String(node.definition).trim())) {
+                    undefined_nodes.push([nodeId, name]);
+                }
+            }
+            if (this.lookupDefinition && undefined_nodes.length > 0) {
                 this.onProgress?.({
                     stage: 'definitions',
-                    total: newlyCreated.size
+                    total: undefined_nodes.length
                 });
                 let done = 0;
                 await Promise.all(
-                    Array.from(newlyCreated.entries()).map(async ([nodeId, name]) => {
+                    undefined_nodes.map(async ([nodeId, name]) => {
                         try {
-                            const def = await this.lookupDefinition(name);
+                            const res = await this.lookupDefinition(name);
+                            // lookupService returns `{ definition, translation, ... }`
+                            // — flatten to a plain string for consistency with
+                            // the extractor-supplied path.
+                            const def = typeof res === 'string'
+                                ? res
+                                : (res?.definition || '');
                             if (def) {
                                 const node = await storage.getKGNode(nodeId);
                                 if (node) {
-                                    node.definition = def;
+                                    node.definition = String(def);
                                     node.updatedAt = Date.now();
                                     await storage.saveKGNode(node);
                                 }
@@ -375,7 +394,7 @@ export class KGController {
                             this.onProgress?.({
                                 stage: 'definitions',
                                 current: done,
-                                total: newlyCreated.size
+                                total: undefined_nodes.length
                             });
                         }
                     })

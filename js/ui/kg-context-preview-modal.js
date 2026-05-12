@@ -148,6 +148,18 @@ export function openContextPreview(opts) {
 
         const body = overlay.querySelector('#kg-context-preview-body');
 
+        // The chapter HTML we render below can contain `<a href="…">` links
+        // that resolve only inside the EPUB reader's iframe context. Outside
+        // it they navigate the page to a non-existent URL (404). Intercept
+        // anchor clicks so the modal stays a read-only preview.
+        body.addEventListener('click', (e) => {
+            const a = e.target.closest('a[href]');
+            if (a && body.contains(a)) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+        });
+
         // Attach the shared selection-lookup helper to the modal body so
         // users can highlight a word and tap "look up" exactly like in the
         // reader / quiz views.

@@ -96,6 +96,11 @@ export class SettingsModal {
             // defaults to a stricter 0.25 but can drag down to reveal the
             // 0.15–0.24 band that is preserved on disk.
             kgRelevanceThreshold: 0.15,
+            // Mouse-wheel zoom speed in the graph explorer. Cytoscape's
+            // documented default is 1.0; we expose this so users with
+            // high-resolution wheels can dial it down and trackpad users
+            // can dial it up.
+            kgWheelSensitivity: 1.0,
             // Embedding backend — defaults to cloud (uses the OpenRouter API key
             // configured for Q&A) so first-time users don't have to wait on a
             // local model download.
@@ -774,6 +779,12 @@ export class SettingsModal {
                             <p class="form-hint">Hard floor applied at extraction time — entities scoring below this against the book's domain anchor are discarded permanently. Keep this low (≈0.15) and tune visualisation strictness in the Graph Explorer.</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-wheel-sensitivity">Mouse-wheel zoom speed: <span id="settings-kg-wheel-sensitivity-value">1.00</span></label>
+                            <input type="range" id="settings-kg-wheel-sensitivity" class="form-input" min="0.1" max="3" step="0.1" value="1.0">
+                            <p class="form-hint">Controls how aggressively the mouse wheel zooms the knowledge graph. 1.0 is the cytoscape default; lower is gentler, higher is snappier.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Embedding Model</div>
 
                         <div class="form-group">
@@ -947,6 +958,8 @@ export class SettingsModal {
             kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
             kgRelevanceThreshold: this._container.querySelector('#settings-kg-relevance-threshold'),
             kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
+            kgWheelSensitivity: this._container.querySelector('#settings-kg-wheel-sensitivity'),
+            kgWheelSensitivityValue: this._container.querySelector('#settings-kg-wheel-sensitivity-value'),
             kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
             kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
@@ -1068,6 +1081,9 @@ export class SettingsModal {
         });
         this._elements.kgRelevanceThreshold.addEventListener('input', () => {
             this._elements.kgRelevanceThresholdValue.textContent = parseFloat(this._elements.kgRelevanceThreshold.value).toFixed(2);
+        });
+        this._elements.kgWheelSensitivity.addEventListener('input', () => {
+            this._elements.kgWheelSensitivityValue.textContent = parseFloat(this._elements.kgWheelSensitivity.value).toFixed(2);
         });
 
         // KG embedding source — show only the matching sub-option group
@@ -1523,6 +1539,10 @@ export class SettingsModal {
                 const v = parseFloat(this._elements.kgRelevanceThreshold.value);
                 return Number.isFinite(v) ? v : 0.15;
             })(),
+            kgWheelSensitivity: (() => {
+                const v = parseFloat(this._elements.kgWheelSensitivity.value);
+                return Number.isFinite(v) && v > 0 ? v : 1.0;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
             kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
@@ -1770,6 +1790,9 @@ export class SettingsModal {
         const kgRelevanceThreshold = this._settings.kgRelevanceThreshold ?? 0.15;
         this._elements.kgRelevanceThreshold.value = kgRelevanceThreshold;
         this._elements.kgRelevanceThresholdValue.textContent = parseFloat(kgRelevanceThreshold).toFixed(2);
+        const kgWheelSensitivity = this._settings.kgWheelSensitivity ?? 1.0;
+        this._elements.kgWheelSensitivity.value = kgWheelSensitivity;
+        this._elements.kgWheelSensitivityValue.textContent = parseFloat(kgWheelSensitivity).toFixed(2);
         this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';

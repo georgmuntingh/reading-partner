@@ -54,9 +54,12 @@ export class GraphExplorer {
      * @param {(phrase: string) => Promise<{ definition?: string, translation?: string } | null>} [options.lookupDefinition]
      *   Returns a short definition for a phrase (used to populate the
      *   "Definition" row in the node-details sidebar). Optional.
+     * @param {() => number} [options.getWheelSensitivity] - Returns the
+     *   user-configured cytoscape wheelSensitivity (mouse-wheel zoom
+     *   speed). Read once per `open()`. Defaults to 1.0.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, onJumpToSentence }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onJumpToSentence }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -65,6 +68,10 @@ export class GraphExplorer {
         this._loadChapter = typeof loadChapter === 'function' ? loadChapter : null;
         this._onLookup = typeof onLookup === 'function' ? onLookup : null;
         this._lookupDefinition = typeof lookupDefinition === 'function' ? lookupDefinition : null;
+        this._getWheelSensitivity = typeof getWheelSensitivity === 'function'
+            ? getWheelSensitivity
+            : () => 1.0;
+        this._wheelSensitivity = 1.0;
         // Cache `phrase → definition` so repeatedly clicking the same node
         // doesn't re-hit the LLM. Scoped to the explorer instance.
         this._definitionCache = new Map();
@@ -203,6 +210,12 @@ export class GraphExplorer {
     async open() {
         this._container.classList.remove('hidden');
 
+        // Refresh settings-derived knobs at open time so changes to the
+        // wheel-sensitivity slider take effect on next open without
+        // requiring a page reload.
+        const ws = Number(this._getWheelSensitivity());
+        this._wheelSensitivity = Number.isFinite(ws) && ws > 0 ? ws : 1.0;
+
         if (!this._cytoscape) {
             const mod = await import('cytoscape');
             this._cytoscape = mod.default ?? mod;
@@ -323,7 +336,10 @@ export class GraphExplorer {
             layout: { name: 'cose', animate: false, padding: 30 },
             minZoom: 0.2,
             maxZoom: 3,
-            wheelSensitivity: 0.3
+            // Pulled from settings so users can tune zoom speed to their
+            // hardware (mice vs. trackpads vary wildly). 1.0 is cytoscape's
+            // documented default and notably snappier than our earlier 0.3.
+            wheelSensitivity: this._wheelSensitivity
         });
 
         // Single tap → side panel; double tap or long press → open the
@@ -438,13 +454,18 @@ export class GraphExplorer {
             targetEl.textContent = 'No definition available.';
             return;
         }
-        const def = String(result.definition || '').trim();
-        const trans = String(result.translation || '').trim();
-        if (!def && !trans) {
-            targetEl.textContent = 'No definition available.';
-            return;
+        // Accept both shapes:
+        //   - plain string (new — produced by the extraction LLM call)
+        //   - `{ definition, translation, ... }` object from lookupService
+        let text;
+        if (typeof result === 'string') {
+            text = result.trim();
+        } else {
+            const def = String(result.definition || '').trim();
+            const trans = String(result.translation || '').trim();
+            text = def || trans;
         }
-        targetEl.textContent = def || trans;
+        targetEl.textContent = text || 'No definition available.';
     }
 
     /**

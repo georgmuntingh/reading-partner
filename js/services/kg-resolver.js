@@ -129,7 +129,7 @@ export class KGResolver {
      *   Tier-2 anchor gate dropped this entity. Callers should treat the
      *   entity as never extracted and skip relations referencing it.
      */
-    async resolve({ name, type, aliases = [], bloom, embedding, chapterIndex, sentenceIndices }) {
+    async resolve({ name, type, aliases = [], bloom, definition = '', embedding, chapterIndex, sentenceIndices }) {
         if (!this._loaded) await this.load();
         if (!(embedding instanceof Float32Array)) {
             throw new Error('resolve: embedding must be a Float32Array');
@@ -196,6 +196,16 @@ export class KGResolver {
                 : 1;
             hit.embedding = updateRunningMean(hit.embedding, prevCount, embedding);
             hit.mergeCount = prevCount + 1;
+            // Fill in a definition opportunistically: only overwrite if the
+            // existing node has none. The first definition we get for a
+            // concept is treated as canonical so the side panel doesn't
+            // flicker between phrasings on repeat encounters.
+            const hasExistingDef = typeof hit.definition === 'string'
+                ? hit.definition.trim().length > 0
+                : Boolean(hit.definition);
+            if (!hasExistingDef && definition) {
+                hit.definition = definition;
+            }
             hit.updatedAt = now;
             await storage.saveKGNode(hit);
             return { id: hit.id, created: false };
@@ -209,6 +219,10 @@ export class KGResolver {
             aliases: aliases.slice(),
             type: type || 'OTHER',
             bloom: bloom || 'Remember',
+            // Plain-string definition from the extraction LLM call. Empty
+            // string when the model declined to provide one — the side
+            // panel can still trigger an on-demand lookup in that case.
+            definition: definition || '',
             embedding,
             mergeCount: 1,                    // observations folded into `embedding`
             relevanceScore,                  // null when no anchor; preserved on disk

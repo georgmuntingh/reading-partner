@@ -101,10 +101,11 @@ STRICT RULES — apply them in order:
 
 Schema:
 {
-  "entities": [{ "name": string, "type": "PERSON"|"PLACE"|"OBJECT"|"EVENT"|"CONCEPT"|"OTHER", "aliases": string[], "bloom": "Remember"|"Understand"|"Apply"|"Analyze"|"Evaluate"|"Create" }],
+  "entities": [{ "name": string, "type": "PERSON"|"PLACE"|"OBJECT"|"EVENT"|"CONCEPT"|"OTHER", "aliases": string[], "bloom": "Remember"|"Understand"|"Apply"|"Analyze"|"Evaluate"|"Create", "definition": string }],
   "relations": [{ "source": string, "target": string, "relation": string }]
 }
 
+- "definition" is a concise one-sentence dictionary-style definition of the entity, written for a learner of ${fallbackEmpty}. Stand-alone (do not start with "is" / "are"). Omit only if the passage gives you nothing to work with.
 - "source" and "target" in relations MUST exactly match an entity "name".
 - If the passage contains no concepts that are load-bearing for ${fallbackEmpty}, return {"entities": [], "relations": []}.`;
 }
@@ -134,12 +135,13 @@ Schema:
 {
   "passages": [
     {
-      "entities": [{ "name": string, "type": "PERSON"|"PLACE"|"OBJECT"|"EVENT"|"CONCEPT"|"OTHER", "aliases": string[], "bloom": "Remember"|"Understand"|"Apply"|"Analyze"|"Evaluate"|"Create" }],
+      "entities": [{ "name": string, "type": "PERSON"|"PLACE"|"OBJECT"|"EVENT"|"CONCEPT"|"OTHER", "aliases": string[], "bloom": "Remember"|"Understand"|"Apply"|"Analyze"|"Evaluate"|"Create", "definition": string }],
       "relations": [{ "source": string, "target": string, "relation": string }]
     }
   ]
 }
 
+- "definition" is a concise one-sentence dictionary-style definition of the entity, written for a learner. Stand-alone (do not start with "is" / "are"). Omit only if the passage gives you nothing to work with.
 - "passages" MUST have exactly one entry per input passage, in the same order.
 - A relation's "source" and "target" MUST exactly match an entity "name" from the SAME passage. Do NOT introduce cross-passage relations.`;
 }

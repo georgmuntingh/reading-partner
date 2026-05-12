@@ -317,3 +317,14 @@ describe('extractFromChunk — kgDomain plumbing', () => {
         expect(sys).not.toBe(KG_EXTRACTION_SYSTEM_PROMPT);
     });
 });
+
+describe('extractor schema asks the LLM for an inline definition', () => {
+    it('mentions "definition" in both the single-passage and batched prompts', () => {
+        const single = buildExtractionSystemPrompt({ kgDomain: 'Cell Biology' });
+        expect(single).toContain('"definition"');
+        // The "no-domain" fallback exports must carry the definition field
+        // too so the LLM schema stays consistent regardless of domain.
+        expect(KG_EXTRACTION_SYSTEM_PROMPT).toContain('"definition"');
+        expect(KG_BATCH_EXTRACTION_SYSTEM_PROMPT).toContain('"definition"');
+    });
+});

@@ -396,4 +396,56 @@ describe('GraphExplorer', () => {
         expect(modal).toBeTruthy();
         expect(modal.textContent).toContain('first mention');
     });
+
+    it('forwards the user-configured wheel sensitivity to cytoscape', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getWheelSensitivity: () => 2.5
+        });
+        await ge.open();
+        const args = cytoscapeFactory.mock.calls[0][0];
+        expect(args.wheelSensitivity).toBe(2.5);
+    });
+
+    it('intercepts anchor clicks inside the context preview so chapter-internal links do not 404', async () => {
+        await seedBookGraph();
+        const loadChapter = vi.fn(async () => ({
+            sentences: ['s0', 's1', 's2', 's3', 's4'],
+            html: '<p class="paragraph">'
+                + '<span class="sentence" data-index="0">s0</span>'
+                + '<span class="sentence" data-index="1">s1</span>'
+                + '<span class="sentence" data-index="2">'
+                +   'Some text <a href="ch12.xhtml#foo">internal link</a> here.'
+                + '</span>'
+                + '<span class="sentence" data-index="3">s3</span>'
+                + '<span class="sentence" data-index="4">s4</span>'
+                + '</p>'
+        }));
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1', chapters: [{ title: 'C' }] }),
+            loadChapter
+        });
+        await ge.open();
+        const node = (await storage.getKGNodesForBook('b1')).find((n) => n.canonicalName === 'Arthur');
+        ge._openContextPreview(node, 0, 2);
+
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+
+        const modal = document.querySelector('.kg-context-preview-modal');
+        expect(modal).toBeTruthy();
+        const anchor = modal.querySelector('a[href]');
+        expect(anchor).toBeTruthy();
+
+        const evt = new MouseEvent('click', { bubbles: true, cancelable: true });
+        anchor.dispatchEvent(evt);
+        // The modal must intercept the navigation that would otherwise
+        // 404 outside the EPUB reader iframe.
+        expect(evt.defaultPrevented).toBe(true);
+    });
 });

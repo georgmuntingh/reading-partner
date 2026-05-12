@@ -355,6 +355,8 @@ class ReadingPartnerApp {
             // controller-side prefetch. New nodes carry `node.definition`
             // directly and skip this path entirely.
             lookupDefinition,
+            getWheelSensitivity: () =>
+                this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });
