@@ -1,4 +1,7 @@
+# ToDo
 - [ ] In the top bar, implement an export chapters option, in which a modal appear in which chapters can be selected using check-boxes and then exported as a single HTML file, to be downloaded to the device. Make sure the icons in this top bar have the same size as in the bottom bar, to have space for all options.
+
+# Resolved
 - [x] Internal linking currently doesn't work. For instance, a link could point to "http://localhost:3000/lod_9781319208523_ch14_01.xhtml#har_9781319365028_tnasind5WZ", which would then yield "404 | The requested path could not be found"
 - [x] Images are currently not always being displayed for certain epub files, instead just showing an image icon. Could this be due to different file format support?
 - [x] In addition to the "back sentence", "play/pause", "forward sentence" navigation icons, please implement navigation buttons, previous chapter and next chapter, shown as icons. The "Back 2 sentences" button can be removed, and this icon can instead be used for the "Previous chapter" button. The analogous icon can be used for the "Next chapter" button.
