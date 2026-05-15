@@ -1,10 +1,11 @@
+- [ ] In the top bar, implement an export chapters option, in which a modal appear in which chapters can be selected using check-boxes and then exported as a single HTML file, to be downloaded to the device. Make sure the icons in this top bar have the same size as in the bottom bar, to have space for all options.
 - [x] Internal linking currently doesn't work. For instance, a link could point to "http://localhost:3000/lod_9781319208523_ch14_01.xhtml#har_9781319365028_tnasind5WZ", which would then yield "404 | The requested path could not be found"
 - [x] Images are currently not always being displayed for certain epub files, instead just showing an image icon. Could this be due to different file format support?
 - [x] In addition to the "back sentence", "play/pause", "forward sentence" navigation icons, please implement navigation buttons, previous chapter and next chapter, shown as icons. The "Back 2 sentences" button can be removed, and this icon can instead be used for the "Previous chapter" button. The analogous icon can be used for the "Next chapter" button.
-- [ ] In the Navigation pane, the sections are called "Chapter x" or have a more descriptive name. Is it possible to use names reflective of their content, instead of "Chapter x"?
+- [x] In the Navigation pane, the sections are called "Chapter x" or have a more descriptive name. Is it possible to use names reflective of their content, instead of "Chapter x"?
 - [x] Currently part of the text of each chapter is displayed. When play has been pressed and the app is moving from sentence to sentence, eventually a sentence is reached that is not on the current visible part. Instead, implement a separation into pages, as it is currently done in ebook readers. Then automatically move to the next page. In addition, show arrow buttons that allow navigation to the next page and the previous page.
-- [ ] For a given book, use browser cookies to remember where the user was, and the bookmarks made.
+- [x] For a given book, use browser cookies to remember where the user was, and the bookmarks made.
 - [x] When, in Q&A mode, if a request is made to the LLM, also include the title of the book (and the author, if available) in the context.
-- [ ] In the settings, include an option for the maximal number of characters in a sentence that is to be transcribed. Set the default length to None. This is an option that can limit GPU VRAM usage in constrained environments. This limit is then used to cut a sentence at softer targets (like a semi-colon or a colon), and in the worst case at the last word before this character limit was hit.
+- [x] In the settings, include an option for the maximal number of characters in a sentence that is to be transcribed. Set the default length to None. This is an option that can limit GPU VRAM usage in constrained environments. This limit is then used to cut a sentence at softer targets (like a semi-colon or a colon), and in the worst case at the last word before this character limit was hit.
 - [x] Provide UI functionality for reloading a new epub without refreshing the entire page.
-- [ ] Show page numbers.
+- [x] Show page numbers.
