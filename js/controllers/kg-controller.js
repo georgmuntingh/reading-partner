@@ -55,6 +55,11 @@ export class KGController {
         // runs instead of forcing the user to close and re-open.
         this.onNodeCreated = null;
         this.onEdgeCreated = null;
+        // Fired after each chunk-batch finishes extract → embed → resolve,
+        // i.e. one full LLM round-trip's worth of new nodes/edges has
+        // landed. The explorer uses this as a heartbeat to run a small
+        // settle layout on the newly-added subgraph.
+        this.onBatchComplete = null;
     }
 
     /**
@@ -176,81 +181,18 @@ export class KGController {
             // 3) Chunk the chapter
             const chunks = chunkSentences(chapter.sentences, chunkSize, chunkOverlap);
 
-            // 4) Phase A — extract chunks in groups of K (kgChunksPerRequest).
-            //    Each group is a single LLM call returning per-chunk entities/
-            //    relations, so a 20-chunk chapter with K=4 makes 5 LLM calls
-            //    instead of 20. Per-batch failures log + skip (one bad batch
-            //    loses K chunks but the rest of the chapter still completes).
-            const extractions = new Array(chunks.length).fill(null);
-            for (let start = 0; start < chunks.length; start += chunksPerRequest) {
-                const end = Math.min(start + chunksPerRequest, chunks.length);
-                const batchTexts = chunks.slice(start, end).map((c) => c.text);
-                this.onProgress?.({
-                    stage: 'extract',
-                    current: start + 1,
-                    total: chunks.length,
-                    batchSize: batchTexts.length
-                });
-                let batchResults;
-                try {
-                    batchResults = await extractFromChunkBatch(batchTexts, { kgDomain });
-                } catch (err) {
-                    console.warn(
-                        `[kg-controller] batch ${start}-${end - 1} extraction threw:`,
-                        err?.message
-                    );
-                    continue;
-                }
-                for (let j = 0; j < batchResults.length; j++) {
-                    extractions[start + j] = batchResults[j];
-                }
-            }
-
-            // 5) Phase B — collect a chapter-wide unique-name list so we
-            //    can do ONE batched embed call instead of one per chunk.
-            //    Repeated names across chunks share a single embedding.
-            const uniqueNames = [];
-            const seen = new Set();
-            for (const ex of extractions) {
-                if (!ex) continue;
-                for (const ent of ex.entities) {
-                    if (!ent?.name || seen.has(ent.name)) continue;
-                    seen.add(ent.name);
-                    uniqueNames.push(ent.name);
-                }
-            }
-
-            // 6) Phase C — batched embedding. EmbeddingProvider.embed()
-            //    auto-splits at EMBED_MAX_BATCH so callers can pass the
-            //    full set in one shot.
-            const nameToEmbedding = new Map();
-            if (uniqueNames.length > 0) {
-                this.onProgress?.({ stage: 'embed', count: uniqueNames.length });
-                try {
-                    const embeddings = await embeddingProvider.embed(uniqueNames);
-                    for (let i = 0; i < uniqueNames.length; i++) {
-                        nameToEmbedding.set(uniqueNames[i], embeddings[i]);
-                    }
-                } catch (err) {
-                    // No embeddings means nothing can be resolved — surface
-                    // the failure so the chapter stays unprocessed and the
-                    // user can retry.
-                    console.warn('[kg-controller] batch embedding failed:', err?.message);
-                    throw err;
-                }
-            }
-
-            // 7) Phase D — resolve nodes and edges per chunk, in order.
-            //    The resolver's state (existing candidates + new ones from
-            //    earlier chunks) is naturally maintained so cross-chunk
-            //    duplicates collapse exactly as before.
+            // 4) Stream per-batch: extract → embed → resolve for each
+            //    chunk-batch in turn so the explorer can paint a partial
+            //    graph after every LLM request instead of waiting for the
+            //    whole chapter. The previous design batched ALL
+            //    extractions, then ONE chapter-wide embedding call, then
+            //    sequential resolution — which gave the user nothing
+            //    visible until the very last phase.
             //
-            //    Important: the resolver also stores `sentenceIndices` for
-            //    each context. Naively passing chunks[i].sentenceIndices
-            //    (the whole chunk window — typically 6 sentences) means the
-            //    side panel's links lead to neighbours that don't actually
-            //    mention the concept. Filter down to sentences whose text
-            //    contains the canonical name or one of the aliases.
+            //    Cost trade-off: more embedding calls (one per chunk-batch
+            //    instead of one per chapter). Each embedding call still
+            //    batches its inputs internally, so per-call overhead is
+            //    small (HTTP roundtrip on cloud, model warmup on local).
             const chapterSentences = Array.isArray(chapter.sentences) ? chapter.sentences : [];
             const lowerCache = new Array(chapterSentences.length);
             const sentenceLower = (idx) => {
@@ -282,84 +224,139 @@ export class KGController {
             // on an LLM call).
             const newlyCreated = new Map();   // nodeId -> canonicalName
 
-            for (let i = 0; i < chunks.length; i++) {
-                this.onProgress?.({ stage: 'resolve', current: i + 1, total: chunks.length });
-                const ex = extractions[i];
-                if (!ex || ex.entities.length === 0) continue;
+            for (let start = 0; start < chunks.length; start += chunksPerRequest) {
+                const end = Math.min(start + chunksPerRequest, chunks.length);
+                const batchChunks = chunks.slice(start, end);
+                const batchTexts = batchChunks.map((c) => c.text);
 
-                const nameToNodeId = new Map();
-                const nameToSentenceIndices = new Map();
-                for (const ent of ex.entities) {
-                    const emb = nameToEmbedding.get(ent.name);
-                    if (!emb) continue;
-                    const aliases = Array.isArray(ent.aliases) ? ent.aliases : [];
-                    const entSentences = matchSentencesFor(chunks[i], [ent.name, ...aliases]);
+                // ---- Extract (one LLM call per batch) ----
+                this.onProgress?.({
+                    stage: 'extract',
+                    current: start + 1,
+                    total: chunks.length,
+                    batchSize: batchTexts.length
+                });
+                let batchResults;
+                try {
+                    batchResults = await extractFromChunkBatch(batchTexts, { kgDomain });
+                } catch (err) {
+                    console.warn(
+                        `[kg-controller] batch ${start}-${end - 1} extraction threw:`,
+                        err?.message
+                    );
+                    continue;
+                }
+
+                // ---- Embed (one call per batch's unique entity names) ----
+                const batchNames = [];
+                const seenInBatch = new Set();
+                for (const ex of batchResults) {
+                    if (!ex) continue;
+                    for (const ent of ex.entities) {
+                        if (!ent?.name || seenInBatch.has(ent.name)) continue;
+                        seenInBatch.add(ent.name);
+                        batchNames.push(ent.name);
+                    }
+                }
+                const nameToEmbedding = new Map();
+                if (batchNames.length > 0) {
+                    this.onProgress?.({ stage: 'embed', count: batchNames.length });
                     try {
-                        const result = await resolver.resolve({
-                            name: ent.name,
-                            type: ent.type,
-                            aliases,
-                            bloom: ent.bloom,
-                            definition: typeof ent.definition === 'string'
-                                ? ent.definition.trim()
-                                : '',
-                            embedding: emb,
-                            chapterIndex,
-                            sentenceIndices: entSentences
-                        });
-                        // result === null when the Tier-2 anchor gate dropped
-                        // the entity. Skip silently so relations referencing
-                        // it are also dropped below.
-                        if (result) {
-                            nameToNodeId.set(ent.name, result.id);
-                            nameToSentenceIndices.set(ent.name, entSentences);
-                            if (result.created) {
-                                newlyCreated.set(result.id, ent.name);
-                                if (result.node) {
-                                    try { this.onNodeCreated?.(result.node); }
-                                    catch (e) { console.warn('[kg-controller] onNodeCreated listener threw:', e?.message); }
+                        const embeddings = await embeddingProvider.embed(batchNames);
+                        for (let i = 0; i < batchNames.length; i++) {
+                            nameToEmbedding.set(batchNames[i], embeddings[i]);
+                        }
+                    } catch (err) {
+                        // No embeddings means this batch can't be resolved
+                        // and the chapter would end up half-built. Surface
+                        // so the chapter stays unprocessed and the user
+                        // can retry — earlier batches' work IS already on
+                        // disk, but the resolver dedups on retry so we
+                        // won't double-create.
+                        console.warn(
+                            `[kg-controller] batch ${start}-${end - 1} embedding failed:`,
+                            err?.message
+                        );
+                        throw err;
+                    }
+                }
+
+                // ---- Resolve this batch's chunks ----
+                for (let j = 0; j < batchChunks.length; j++) {
+                    const chunkIndex = start + j;
+                    this.onProgress?.({ stage: 'resolve', current: chunkIndex + 1, total: chunks.length });
+                    const ex = batchResults[j];
+                    if (!ex || ex.entities.length === 0) continue;
+
+                    const nameToNodeId = new Map();
+                    const nameToSentenceIndices = new Map();
+                    for (const ent of ex.entities) {
+                        const emb = nameToEmbedding.get(ent.name);
+                        if (!emb) continue;
+                        const aliases = Array.isArray(ent.aliases) ? ent.aliases : [];
+                        const entSentences = matchSentencesFor(batchChunks[j], [ent.name, ...aliases]);
+                        try {
+                            const result = await resolver.resolve({
+                                name: ent.name,
+                                type: ent.type,
+                                aliases,
+                                bloom: ent.bloom,
+                                definition: typeof ent.definition === 'string'
+                                    ? ent.definition.trim()
+                                    : '',
+                                embedding: emb,
+                                chapterIndex,
+                                sentenceIndices: entSentences
+                            });
+                            if (result) {
+                                nameToNodeId.set(ent.name, result.id);
+                                nameToSentenceIndices.set(ent.name, entSentences);
+                                if (result.created) {
+                                    newlyCreated.set(result.id, ent.name);
+                                    if (result.node) {
+                                        try { this.onNodeCreated?.(result.node); }
+                                        catch (e) { console.warn('[kg-controller] onNodeCreated listener threw:', e?.message); }
+                                    }
                                 }
                             }
+                        } catch (err) {
+                            console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
                         }
-                    } catch (err) {
-                        console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
+                    }
+
+                    for (const r of ex.relations) {
+                        const relStr = String(r.relation || '').toLowerCase().trim();
+                        if (RELATION_BLACKLIST.has(relStr)) continue;
+                        const sId = nameToNodeId.get(r.source);
+                        const tId = nameToNodeId.get(r.target);
+                        if (!sId || !tId) continue;
+                        const srcS = new Set(nameToSentenceIndices.get(r.source) || []);
+                        const tgtS = nameToSentenceIndices.get(r.target) || [];
+                        const both = tgtS.filter((si) => srcS.has(si));
+                        const edgeSentences = both.length > 0
+                            ? both
+                            : Array.from(new Set([...srcS, ...tgtS]));
+                        try {
+                            const edgeResult = await resolver.resolveEdge({
+                                sourceId: sId,
+                                targetId: tId,
+                                relation: r.relation,
+                                chapterIndex,
+                                sentenceIndices: edgeSentences
+                            });
+                            if (edgeResult?.created && edgeResult.edge) {
+                                try { this.onEdgeCreated?.(edgeResult.edge); }
+                                catch (e) { console.warn('[kg-controller] onEdgeCreated listener threw:', e?.message); }
+                            }
+                        } catch (err) {
+                            console.warn('[kg-controller] edge save failed:', err?.message);
+                        }
                     }
                 }
 
-                for (const r of ex.relations) {
-                    // Belt-and-braces: kg-extractor.sanitizeExtraction()
-                    // already filters the blacklist, but if a future caller
-                    // bypasses it we still won't write structural relations.
-                    const relStr = String(r.relation || '').toLowerCase().trim();
-                    if (RELATION_BLACKLIST.has(relStr)) continue;
-                    const sId = nameToNodeId.get(r.source);
-                    const tId = nameToNodeId.get(r.target);
-                    if (!sId || !tId) continue;
-                    // Sentences that mention BOTH endpoints are the strongest
-                    // evidence for the relation. Fall back to the union if
-                    // there's no overlap.
-                    const srcS = new Set(nameToSentenceIndices.get(r.source) || []);
-                    const tgtS = nameToSentenceIndices.get(r.target) || [];
-                    const both = tgtS.filter((si) => srcS.has(si));
-                    const edgeSentences = both.length > 0
-                        ? both
-                        : Array.from(new Set([...srcS, ...tgtS]));
-                    try {
-                        const edgeResult = await resolver.resolveEdge({
-                            sourceId: sId,
-                            targetId: tId,
-                            relation: r.relation,
-                            chapterIndex,
-                            sentenceIndices: edgeSentences
-                        });
-                        if (edgeResult?.created && edgeResult.edge) {
-                            try { this.onEdgeCreated?.(edgeResult.edge); }
-                            catch (e) { console.warn('[kg-controller] onEdgeCreated listener threw:', e?.message); }
-                        }
-                    } catch (err) {
-                        console.warn('[kg-controller] edge save failed:', err?.message);
-                    }
-                }
+                // ---- Batch boundary: explorer settles new positions ----
+                try { this.onBatchComplete?.({ batchStart: start, batchEnd: end - 1, totalChunks: chunks.length }); }
+                catch (e) { console.warn('[kg-controller] onBatchComplete listener threw:', e?.message); }
             }
 
             // Phase E — fallback definition lookup for nodes the

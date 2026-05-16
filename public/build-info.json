@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-05-16T08:07:38.523Z",
-  "commit": "317ff2c8015520f6641503df5bcf2a32e94d1cee",
-  "commitShort": "317ff2c",
+  "buildTime": "2026-05-16T10:10:22.576Z",
+  "commit": "d4a339889d8a44cbea2009ab4690757b1d968529",
+  "commitShort": "d4a3398",
   "branch": "claude/knowledge-graph-extraction-WM4k1",
-  "lastCommitDate": "2026-05-16T07:17:35+00:00"
+  "lastCommitDate": "2026-05-16T08:07:57+00:00"
 }

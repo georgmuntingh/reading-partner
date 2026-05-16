@@ -296,11 +296,12 @@ describe('KGController.buildChapterGraph', () => {
         expect(embeddingProvider.setApiKey).not.toHaveBeenCalled();
     });
 
-    it('batches embed: one embed() call for the whole chapter, with unique names deduped across chunks', async () => {
-        // Every chunk returns the same two entities. With chunkSize=2,overlap=1
-        // on a 3-sentence chapter we get 2 overlapping chunks, so the same
-        // names appear twice. embed() must still be called only once with
-        // unique names.
+    it('embed: one call per chunk-batch with within-batch unique names (cross-batch dedup is the resolver\'s job)', async () => {
+        // With kgChunksPerRequest=1, each chunk is its own batch — so
+        // embed() runs once per batch and the resolver dedupes the
+        // cross-batch overlap via similarity / exact-name. With a larger
+        // kgChunksPerRequest (verified in the test below), all the
+        // chunks fold into one batch and one embed call.
         llmClient.complete.mockResolvedValue(JSON.stringify({
             entities: [
                 { name: 'Arthur', type: 'PERSON', aliases: [], bloom: 'Remember' },
@@ -313,10 +314,11 @@ describe('KGController.buildChapterGraph', () => {
         const ctrl = new KGController({ getSettings: () => baseSettings, getBook: () => book });
         await ctrl.buildChapterGraph(0);
 
-        expect(embeddingProvider.embed).toHaveBeenCalledTimes(1);
-        const [argTexts] = embeddingProvider.embed.mock.calls[0];
-        // Sorted to make the assertion order-independent
-        expect(argTexts.slice().sort()).toEqual(['Arthur', 'sword']);
+        // 3-sentence chapter, chunkSize=2 + overlap=1 → 2 chunks, K=1 → 2 batches.
+        expect(embeddingProvider.embed).toHaveBeenCalledTimes(2);
+        for (const [argTexts] of embeddingProvider.embed.mock.calls) {
+            expect(argTexts.slice().sort()).toEqual(['Arthur', 'sword']);
+        }
     });
 
     it('emits stage="embed" with the unique-name count, plus stage="resolve" per chunk', async () => {

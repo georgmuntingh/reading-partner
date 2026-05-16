@@ -90,6 +90,18 @@ export class GraphExplorer {
         this._cytoscape = null;        // Lazy-loaded module
         // Total chapters in the currently-open book. Recomputed on each open().
         this._chapterCount = 0;
+        // Per-book in-memory position cache: bookId → Map<nodeId, {x, y}>.
+        // Populated on close()/relayout(); consumed on _initCytoscape() so
+        // re-opening the explorer preserves the previous layout instead of
+        // re-running cose and shuffling everything. Cleared per-book by
+        // the Re-layout button. Survives only within the current session
+        // (no IndexedDB persistence — by design, a reload starts fresh).
+        this._positionCache = new Map();
+        // Nodes added via handleLiveNode that haven't been snapped to a
+        // connected neighbour yet. Tracked per build so handleLiveEdge can
+        // anchor each newly-added node to its first incident edge's other
+        // endpoint, producing tight clusters instead of long radial arrows.
+        this._anchoredLiveNodes = new Set();
         this._render();
     }
 
@@ -114,6 +126,9 @@ export class GraphExplorer {
                         <input type="text" class="kg-toolbar-value" id="kg-min-relevance-value" value="0.15" aria-label="Minimum relevance" autocomplete="off" inputmode="decimal">
                     </label>
                 </div>
+                <button type="button" class="btn btn-secondary graph-relayout-btn" aria-label="Re-layout graph" title="Re-run the force-directed layout from scratch">
+                    Re-layout
+                </button>
                 <button type="button" class="btn btn-secondary graph-clear-highlights-btn hidden" aria-label="Clear highlights">
                     Clear highlights
                 </button>
@@ -140,6 +155,7 @@ export class GraphExplorer {
         `;
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
+        this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
 
         const degSlider = this._container.querySelector('#kg-min-degree');
         const relSlider = this._container.querySelector('#kg-min-relevance');
@@ -393,6 +409,27 @@ export class GraphExplorer {
             this._cy.destroy();
             this._cy = null;
         }
+
+        // Apply any cached positions to the element payload so we can use
+        // the cheap `preset` layout when every node already has a known
+        // position. Falls back to cose when even one node is missing,
+        // which naturally covers the first-build case and any case where
+        // a node was added since the cache was captured.
+        const bookId = this._getBook()?.id;
+        const cache = bookId ? this._positionCache.get(bookId) : null;
+        let allPositioned = elements.length > 0 && !!cache;
+        if (cache) {
+            for (const el of elements) {
+                if (el.data?.source) continue;   // edges don't carry positions
+                const pos = cache.get(el.data.id);
+                if (pos) el.position = { x: pos.x, y: pos.y };
+                else allPositioned = false;
+            }
+        }
+        const layout = allPositioned
+            ? { name: 'preset' }
+            : { name: 'cose', animate: false, padding: 30 };
+
         this._cy = cytoscape({
             container: this._container.querySelector('#cy-canvas'),
             elements,
@@ -471,7 +508,7 @@ export class GraphExplorer {
                     }
                 }
             ],
-            layout: { name: 'cose', animate: false, padding: 30 },
+            layout,
             minZoom: 0.2,
             maxZoom: 3,
             // Pulled from settings so users can tune zoom speed to their
@@ -1111,6 +1148,9 @@ export class GraphExplorer {
         this._cy.elements().addClass('kg-faded');
         this._highlightingActive = true;
         this._showClearHighlightsButton(true);
+        // Reset the per-build anchor tracker. Without this, two live
+        // builds in a row would leave stale ids and skip snapping.
+        this._anchoredLiveNodes = new Set();
     }
 
     /**
@@ -1198,6 +1238,26 @@ export class GraphExplorer {
         const src = this._cy.getElementById(edge.sourceId);
         const tgt = this._cy.getElementById(edge.targetId);
         if (src.empty() || tgt.empty()) return;
+
+        // Snap a newly-added endpoint to its first connected neighbour so
+        // we don't end up with very long arrows from a node parked at a
+        // random faded anchor's position. Each newly-added node is
+        // anchored on its first incident edge only — subsequent edges
+        // don't re-snap it, leaving the batch-settle layout to refine.
+        const snapTo = (movingNode, anchorNode) => {
+            if (!movingNode.hasClass('kg-newly-added')) return false;
+            if (this._anchoredLiveNodes.has(movingNode.id())) return false;
+            const ap = anchorNode.position();
+            const jitter = () => (Math.random() - 0.5) * 30;
+            movingNode.position({ x: ap.x + jitter(), y: ap.y + jitter() });
+            this._anchoredLiveNodes.add(movingNode.id());
+            return true;
+        };
+        // Try snapping source first; only snap target if we didn't move
+        // source (a single edge can only justify one snap to avoid the
+        // both-endpoints-newly-added case collapsing to a single point).
+        if (!snapTo(src, tgt)) snapTo(tgt, src);
+
         this._cy.add({
             group: 'edges',
             data: {
@@ -1212,6 +1272,38 @@ export class GraphExplorer {
         });
         this._highlightingActive = true;
         this._showClearHighlightsButton(true);
+    }
+
+    /**
+     * Called by the KG controller at the end of every chunk-batch (one
+     * full LLM round-trip's worth of nodes/edges). Runs a small cose
+     * pass restricted to the newly-added subgraph so positions settle
+     * naturally between batches — existing nodes are locked, so the
+     * user's mental map of the rest of the graph doesn't shift.
+     */
+    handleBatchComplete() {
+        if (!this._cy) return;
+        const newNodes = this._cy.nodes('.kg-newly-added');
+        if (newNodes.length === 0) return;
+        const newSubgraph = newNodes.union(newNodes.connectedEdges());
+        if (newSubgraph.length === 0) return;
+        const others = this._cy.nodes().difference(newNodes);
+        try {
+            if (typeof others.lock === 'function') others.lock();
+            const layout = newSubgraph.layout({
+                name: 'cose',
+                animate: false,
+                fit: false,
+                randomize: false,
+                padding: 30
+            });
+            // cytoscape's layout API is synchronous in our test mocks but
+            // real cose runs asynchronously. Don't await — we want the
+            // controller to move on to the next batch immediately.
+            if (layout && typeof layout.run === 'function') layout.run();
+        } finally {
+            if (typeof others.unlock === 'function') others.unlock();
+        }
     }
 
     /**
@@ -1250,6 +1342,62 @@ export class GraphExplorer {
         const btn = this._container.querySelector('.graph-clear-highlights-btn');
         if (!btn) return;
         btn.classList.toggle('hidden', !show);
+    }
+
+    /**
+     * User-triggered: run cose from scratch on the whole graph and update
+     * the position cache to the new layout. This is the only way to
+     * recompute positions now that open() preserves them — without this
+     * button, a heavily edited graph would never get a fresh layout.
+     */
+    relayout() {
+        if (!this._cy) return;
+        // Drop any cached positions for the current book so the layout
+        // truly starts from scratch.
+        const bookId = this._getBook()?.id;
+        if (bookId) this._positionCache.delete(bookId);
+        const layout = this._cy.layout({
+            name: 'cose',
+            animate: false,
+            padding: 30,
+            randomize: true
+        });
+        if (layout && typeof layout.run === 'function') {
+            layout.run();
+            // After the layout settles, refresh the cache so the next
+            // close()/open() preserves the new positions.
+            const after = () => this._savePositionsToCache();
+            if (typeof layout.on === 'function') layout.on('layoutstop', after);
+            else after();
+        }
+    }
+
+    /**
+     * Snapshot every node's current position into the per-book cache so
+     * the next open() can use `preset` and skip the cose pass. Called
+     * from close() and after a relayout() finishes.
+     */
+    _savePositionsToCache() {
+        if (!this._cy) return;
+        const bookId = this._getBook()?.id;
+        if (!bookId) return;
+        // Defensive: tests use minimal cy mocks that may not have nodes()
+        // or position()/id(). Skip silently rather than break the close()
+        // path the tests assert on.
+        const nodes = typeof this._cy.nodes === 'function' ? this._cy.nodes() : null;
+        if (!nodes || typeof nodes.forEach !== 'function') return;
+        let bucket = this._positionCache.get(bookId);
+        if (!bucket) {
+            bucket = new Map();
+            this._positionCache.set(bookId, bucket);
+        }
+        nodes.forEach((n) => {
+            if (typeof n?.position !== 'function' || typeof n?.id !== 'function') return;
+            const p = n.position();
+            if (p && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+                bucket.set(n.id(), { x: p.x, y: p.y });
+            }
+        });
     }
 
     /**
@@ -1294,6 +1442,9 @@ export class GraphExplorer {
      * Close the overlay and free the cytoscape instance.
      */
     close() {
+        // Capture positions before tearing down cytoscape so re-opening
+        // preserves the layout.
+        this._savePositionsToCache();
         this._container.classList.add('hidden');
         if (this._cy) {
             this._cy.destroy();

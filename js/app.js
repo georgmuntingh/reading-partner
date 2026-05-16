@@ -343,6 +343,8 @@ class ReadingPartnerApp {
             this._graphExplorer?.handleLiveNode(node);
         this._kgController.onEdgeCreated = (edge) =>
             this._graphExplorer?.handleLiveEdge(edge);
+        this._kgController.onBatchComplete = () =>
+            this._graphExplorer?.handleBatchComplete();
 
         this._graphExplorer = new GraphExplorer({
             container: document.getElementById('graph-explorer'),

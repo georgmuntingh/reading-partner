@@ -760,6 +760,131 @@ describe('GraphExplorer', () => {
         expect(payload.position.x).toBeLessThan(130);
     });
 
+    it('handleLiveEdge snaps a newly-added unanchored node to its connected neighbour\'s position', () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const positions = { src: { x: 0, y: 0 }, tgt: { x: 500, y: 300 } };
+        const newNode = {
+            empty: () => false,
+            hasClass: (c) => c === 'kg-newly-added',
+            id: () => 'src',
+            position: (p) => p === undefined ? positions.src : (positions.src = p)
+        };
+        const existingNode = {
+            empty: () => false,
+            hasClass: () => false,    // existing (not newly-added)
+            id: () => 'tgt',
+            position: () => positions.tgt
+        };
+        const addSpy = vi.fn();
+        ge._cy = {
+            getElementById: (id) => id === 'src' ? newNode : id === 'tgt' ? existingNode : { empty: () => true },
+            add: addSpy
+        };
+        ge._anchoredLiveNodes = new Set();
+        ge.handleLiveEdge({
+            id: 'e1', sourceId: 'src', targetId: 'tgt', relation: 'r', contexts: []
+        });
+        // src should have been snapped to near tgt's position (jitter ±15).
+        expect(positions.src.x).toBeGreaterThan(485);
+        expect(positions.src.x).toBeLessThan(515);
+        expect(positions.src.y).toBeGreaterThan(285);
+        expect(positions.src.y).toBeLessThan(315);
+        // Snapping is one-shot per node — re-firing on the same node is a no-op.
+        expect(ge._anchoredLiveNodes.has('src')).toBe(true);
+    });
+
+    it('handleBatchComplete runs a cose pass on the newly-added subgraph with existing nodes locked', () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const lockSpy = vi.fn();
+        const unlockSpy = vi.fn();
+        const layoutSpy = vi.fn(() => ({ run: vi.fn() }));
+        const newSubgraph = {
+            length: 3,
+            layout: layoutSpy
+        };
+        const newNodes = {
+            length: 2,
+            union: () => newSubgraph,
+            connectedEdges: () => ({})
+        };
+        const otherNodes = {
+            length: 5,
+            lock: lockSpy,
+            unlock: unlockSpy
+        };
+        ge._cy = {
+            nodes: (sel) => {
+                if (sel === '.kg-newly-added') return newNodes;
+                // .nodes() with no arg → all nodes; .difference(newNodes) → others
+                return { difference: () => otherNodes };
+            }
+        };
+        ge.handleBatchComplete();
+        expect(lockSpy).toHaveBeenCalled();
+        expect(unlockSpy).toHaveBeenCalled();
+        expect(layoutSpy).toHaveBeenCalledTimes(1);
+        const opts = layoutSpy.mock.calls[0][0];
+        expect(opts.name).toBe('cose');
+        expect(opts.randomize).toBe(false);
+        expect(opts.fit).toBe(false);
+    });
+
+    it('close() snapshots positions to the per-book cache; re-opening uses preset layout', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' })
+        });
+        // First open() — cytoscape gets cose because cache is empty.
+        await ge.open();
+        const firstLayout = cytoscapeFactory.mock.calls[0][0].layout;
+        expect(firstLayout.name).toBe('cose');
+
+        // Stub cy.nodes() so close() can populate the cache.
+        ge._cy.nodes = () => ({
+            forEach: (f) => {
+                f({ id: () => 'n1', position: () => ({ x: 100, y: 200 }) });
+                f({ id: () => 'n2', position: () => ({ x: 300, y: 400 }) });
+            }
+        });
+        ge.close();
+
+        await ge.open();
+        // Second open() — every element in the payload has a cached
+        // position, so layout flips to preset.
+        const secondLayout = cytoscapeFactory.mock.calls[1][0].layout;
+        expect(secondLayout.name).toBe('preset');
+        // And the cached coordinates are stamped onto the element payload.
+        const els = cytoscapeFactory.mock.calls[1][0].elements;
+        const n1 = els.find((e) => e.data.id === 'n1');
+        expect(n1.position).toEqual({ x: 100, y: 200 });
+    });
+
+    it('relayout() clears the per-book cache and runs cose with randomize:true', () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' })
+        });
+        // Seed the cache so we can prove relayout() drops it.
+        ge._positionCache.set('b1', new Map([['n1', { x: 5, y: 5 }]]));
+        const runSpy = vi.fn();
+        ge._cy = {
+            layout: vi.fn(() => ({ run: runSpy, on: () => {} })),
+            nodes: () => ({ forEach: () => {} })
+        };
+        ge.relayout();
+        expect(ge._cy.layout).toHaveBeenCalledTimes(1);
+        const opts = ge._cy.layout.mock.calls[0][0];
+        expect(opts.name).toBe('cose');
+        expect(opts.randomize).toBe(true);
+        expect(runSpy).toHaveBeenCalled();
+        expect(ge._positionCache.has('b1')).toBe(false);
+    });
+
     it('handleLiveEdge skips when an endpoint is missing in the canvas', () => {
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
