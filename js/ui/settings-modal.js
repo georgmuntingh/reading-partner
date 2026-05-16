@@ -781,6 +781,12 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
+                            <label for="settings-kg-domain">Current book's domain</label>
+                            <input type="text" id="settings-kg-domain" class="form-input" placeholder="Open a book to edit" autocomplete="off" disabled>
+                            <p class="form-hint">Per-book Tier-1 + Tier-2 anchor. The LLM is told to favour entities load-bearing to this topic, and each entity's cosine to this string acts as the relevance score. The text is set on first build by the domain prompt; you can revise it here at any time. Editing applies to nodes extracted from this point on — past nodes' relevance scores are unchanged.</p>
+                        </div>
+
+                        <div class="form-group">
                             <label for="settings-kg-relevance-threshold">Domain Relevance Floor: <span id="settings-kg-relevance-threshold-value">0.15</span></label>
                             <input type="range" id="settings-kg-relevance-threshold" class="form-input" min="0" max="1" step="0.01" value="0.15">
                             <p class="form-hint">Hard floor applied at extraction time — entities scoring below this against the book's domain anchor are discarded permanently. Keep this low (≈0.15) and tune visualisation strictness in the Graph Explorer.</p>
@@ -978,6 +984,7 @@ export class SettingsModal {
             kgChunksPerRequestValue: this._container.querySelector('#settings-kg-chunks-per-request-value'),
             kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
             kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
+            kgDomain: this._container.querySelector('#settings-kg-domain'),
             kgRelevanceThreshold: this._container.querySelector('#settings-kg-relevance-threshold'),
             kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
             kgWheelSensitivity: this._container.querySelector('#settings-kg-wheel-sensitivity'),
@@ -1110,6 +1117,22 @@ export class SettingsModal {
         });
         this._elements.kgWheelSensitivity.addEventListener('input', () => {
             this._elements.kgWheelSensitivityValue.textContent = parseFloat(this._elements.kgWheelSensitivity.value).toFixed(2);
+        });
+        // Per-book domain — committed on blur or Enter. Not included in
+        // the getSettings() return because it lives on the book record,
+        // not in the global settings store; the callback forwards to
+        // app.js which persists via storage.saveBook.
+        const commitKGDomain = () => {
+            if (!this._callbacks.onDomainChange) return;
+            const next = String(this._elements.kgDomain.value || '').trim();
+            this._callbacks.onDomainChange(next);
+        };
+        this._elements.kgDomain.addEventListener('blur', commitKGDomain);
+        this._elements.kgDomain.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this._elements.kgDomain.blur();
+            }
         });
         // Hide the semantic-threshold row when the user picks text mode —
         // the threshold doesn't apply there, and hiding it removes the
@@ -1673,6 +1696,28 @@ export class SettingsModal {
         this._container.classList.add('active');
         this._loadCurrentSettings();
         this._loadBuildInfo();
+        this._refreshKGDomainField();
+    }
+
+    /**
+     * Populate the KG domain text field from the current book. Called
+     * every time the modal opens so the field always reflects the
+     * currently-open book (which may have changed since the previous
+     * open). Disabled when no book is open or no callback is wired.
+     */
+    _refreshKGDomainField() {
+        const input = this._elements.kgDomain;
+        if (!input) return;
+        const book = this._callbacks.getBook ? this._callbacks.getBook() : null;
+        if (!book) {
+            input.value = '';
+            input.disabled = true;
+            input.placeholder = 'Open a book to edit';
+            return;
+        }
+        input.disabled = false;
+        input.placeholder = 'e.g. Molecular cell biology';
+        input.value = String(book.kgDomain || '');
     }
 
     /**

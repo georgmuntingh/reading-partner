@@ -239,7 +239,9 @@ class ReadingPartnerApp {
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
-                onClearKG: () => this._onClearKGClick()
+                onClearKG: () => this._onClearKGClick(),
+                getBook: () => this._currentBook,
+                onDomainChange: (domain) => this._onKGDomainChange(domain)
             }
         );
 
@@ -3453,6 +3455,25 @@ class ReadingPartnerApp {
         } else {
             btn.removeAttribute('disabled');
             btn.title = 'Build knowledge graph for this chapter';
+        }
+    }
+
+    /**
+     * Persist a user-edited knowledge-graph domain back onto the current
+     * book record. Called from the settings modal's commit-on-blur path.
+     * No-op if the value hasn't changed so we don't churn the book row
+     * (and bump lastOpened) on every blur where nothing actually moved.
+     */
+    async _onKGDomainChange(rawDomain) {
+        if (!this._currentBook) return;
+        const next = String(rawDomain || '').trim();
+        const current = String(this._currentBook.kgDomain || '').trim();
+        if (next === current) return;
+        this._currentBook.kgDomain = next;
+        try {
+            await storage.saveBook(this._currentBook);
+        } catch (err) {
+            console.warn('Persisting kgDomain change failed:', err?.message);
         }
     }
 
