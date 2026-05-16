@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { StorageService } from '../js/services/storage.js';
 
-describe('storage v4 migration + KG CRUD', () => {
+describe('storage v5 migration + KG CRUD', () => {
     let storage;
 
     beforeEach(async () => {
@@ -9,14 +9,15 @@ describe('storage v4 migration + KG CRUD', () => {
         await storage.init();
     });
 
-    it('opens DB at version 4 with kg_nodes and kg_edges stores', () => {
+    it('opens DB at version 5 with kg_nodes, kg_edges, and kg_flashcards stores', () => {
         const names = Array.from(storage._db.objectStoreNames);
         expect(names).toContain('kg_nodes');
         expect(names).toContain('kg_edges');
-        expect(storage._db.version).toBe(4);
+        expect(names).toContain('kg_flashcards');
+        expect(storage._db.version).toBe(5);
     });
 
-    it('preserves existing stores after the v4 upgrade', () => {
+    it('preserves existing stores after the v5 upgrade', () => {
         const names = Array.from(storage._db.objectStoreNames);
         expect(names).toEqual(expect.arrayContaining(['books', 'positions', 'bookmarks', 'settings', 'highlights', 'lookups']));
     });
@@ -240,6 +241,118 @@ describe('storage v4 migration + KG CRUD', () => {
         expect(await storage.getSetting('kgChunkSize')).toBe(6);
         expect(await storage.getSetting('kgChunkOverlap')).toBe(2);
         expect(await storage.getSetting('kgSimilarityThreshold')).toBe(0.88);
+    });
+
+    // ---------- kg_flashcards (decoupled SRS) ----------
+
+    const fcBase = (overrides = {}) => ({
+        id: 'fc1',
+        bookId: 'b1',
+        cognitiveLevel: 1,
+        targetNodeIds: ['n1'],
+        targetEdgeIds: [],
+        question: 'Who is Arthur?',
+        options: ['A king', 'A knight', 'A wizard', 'A dragon'],
+        correctIndex: 0,
+        explanation: 'The passage names Arthur as king.',
+        primaryChapterIndex: 0,
+        primarySentenceIndex: 3,
+        srsBox: 0,
+        ease: 2.5,
+        interval: 0,
+        repetitions: 0,
+        lastResult: 'new',
+        lastReviewedAt: null,
+        nextReviewAt: 1_000,
+        createdAt: 1_000,
+        updatedAt: 1_000,
+        ...overrides
+    });
+
+    it('saveFlashcard round-trips a card and getFlashcard returns it by id', async () => {
+        await storage.saveFlashcard(fcBase());
+        const got = await storage.getFlashcard('fc1');
+        expect(got.question).toBe('Who is Arthur?');
+        expect(got.options).toHaveLength(4);
+        expect(got.targetNodeIds).toEqual(['n1']);
+        expect(got.cognitiveLevel).toBe(1);
+        expect(got.srsBox).toBe(0);
+        expect(got.ease).toBe(2.5);
+    });
+
+    it('getFlashcard returns null for an unknown id', async () => {
+        const got = await storage.getFlashcard('does-not-exist');
+        expect(got).toBeNull();
+    });
+
+    it('getFlashcardsForBook scopes results to the requested book', async () => {
+        await storage.saveFlashcard(fcBase({ id: 'a', bookId: 'b1' }));
+        await storage.saveFlashcard(fcBase({ id: 'b', bookId: 'b1' }));
+        await storage.saveFlashcard(fcBase({ id: 'c', bookId: 'b2' }));
+        const b1 = await storage.getFlashcardsForBook('b1');
+        const b2 = await storage.getFlashcardsForBook('b2');
+        expect(b1.map((c) => c.id).sort()).toEqual(['a', 'b']);
+        expect(b2.map((c) => c.id)).toEqual(['c']);
+    });
+
+    it('bulkPutFlashcards writes all cards atomically', async () => {
+        await storage.bulkPutFlashcards([
+            fcBase({ id: 'a' }),
+            fcBase({ id: 'b' }),
+            fcBase({ id: 'c' })
+        ]);
+        const all = await storage.getFlashcardsForBook('b1');
+        expect(all.map((c) => c.id).sort()).toEqual(['a', 'b', 'c']);
+    });
+
+    it('bulkPutFlashcards is a no-op for an empty array', async () => {
+        await storage.bulkPutFlashcards([]);
+        const all = await storage.getFlashcardsForBook('b1');
+        expect(all).toEqual([]);
+    });
+
+    it('getDueFlashcards returns only cards with nextReviewAt <= now, scoped to book', async () => {
+        const now = 10_000;
+        await storage.saveFlashcard(fcBase({ id: 'past', bookId: 'b1', nextReviewAt: 5_000 }));
+        await storage.saveFlashcard(fcBase({ id: 'now',  bookId: 'b1', nextReviewAt: 10_000 }));
+        await storage.saveFlashcard(fcBase({ id: 'soon', bookId: 'b1', nextReviewAt: 20_000 }));
+        await storage.saveFlashcard(fcBase({ id: 'other', bookId: 'b2', nextReviewAt: 1_000 }));
+
+        const due = await storage.getDueFlashcards('b1', now);
+        expect(due.map((c) => c.id).sort()).toEqual(['now', 'past']);
+    });
+
+    it('getFlashcardsByNodeId filters cards whose targetNodeIds include the node', async () => {
+        await storage.saveFlashcard(fcBase({ id: 'fc-A', targetNodeIds: ['n1'] }));
+        await storage.saveFlashcard(fcBase({ id: 'fc-B', targetNodeIds: ['n1', 'n2'] }));
+        await storage.saveFlashcard(fcBase({ id: 'fc-C', targetNodeIds: ['n3'] }));
+        const hits = await storage.getFlashcardsByNodeId('b1', 'n1');
+        expect(hits.map((c) => c.id).sort()).toEqual(['fc-A', 'fc-B']);
+    });
+
+    it('deleteFlashcard removes a single card by id', async () => {
+        await storage.saveFlashcard(fcBase({ id: 'a' }));
+        await storage.saveFlashcard(fcBase({ id: 'b' }));
+        await storage.deleteFlashcard('a');
+        const remaining = await storage.getFlashcardsForBook('b1');
+        expect(remaining.map((c) => c.id)).toEqual(['b']);
+    });
+
+    it('deleteFlashcardsForBook removes only cards for the requested book', async () => {
+        await storage.saveFlashcard(fcBase({ id: 'a', bookId: 'b1' }));
+        await storage.saveFlashcard(fcBase({ id: 'b', bookId: 'b1' }));
+        await storage.saveFlashcard(fcBase({ id: 'c', bookId: 'b2' }));
+        await storage.deleteFlashcardsForBook('b1');
+        expect(await storage.getFlashcardsForBook('b1')).toEqual([]);
+        expect((await storage.getFlashcardsForBook('b2')).map((c) => c.id)).toEqual(['c']);
+    });
+
+    it('saveFlashcard with the same id overwrites (used for SRS state updates)', async () => {
+        await storage.saveFlashcard(fcBase({ id: 'a', srsBox: 0, repetitions: 0 }));
+        await storage.saveFlashcard(fcBase({ id: 'a', srsBox: 2, repetitions: 2 }));
+        const got = await storage.getFlashcard('a');
+        expect(got.srsBox).toBe(2);
+        expect(got.repetitions).toBe(2);
     });
 
     it('saveBook strips transient chapter caches (html / sentences / loaded) so blob URLs do not survive a reload', async () => {
