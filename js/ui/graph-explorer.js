@@ -18,6 +18,8 @@ import { openContextMenu } from './kg-context-menu.js';
 import { confirmAction } from './confirm-modal.js';
 import { mergeNodeMetadata, redirectAndDedupeEdges } from '../services/kg-merge.js';
 import { pickMergePrimary } from './kg-merge-primary-picker.js';
+import { embeddingProvider } from '../services/embedding-provider.js';
+import { cosine } from '../services/kg-resolver.js';
 
 // Bloom level → color (Remember = warm green, Create = warm red).
 const BLOOM_COLOR = {
@@ -68,7 +70,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence, getSearchSettings }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -82,6 +84,21 @@ export class GraphExplorer {
             : () => 1.0;
         this._wheelSensitivity = 1.0;
         this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
+        // Returns `{ mode: 'text'|'semantic', threshold: number }`. Read on
+        // every keystroke so a setting change takes effect immediately
+        // without re-opening the explorer.
+        this._getSearchSettings = typeof getSearchSettings === 'function'
+            ? getSearchSettings
+            : () => ({ mode: 'text', threshold: 0.5 });
+        // Per-instance cache of query → embedding so re-typing the same
+        // query (or retyping after deleting a character) doesn't re-hit
+        // the embedding provider. Cleared when the embedding source
+        // changes — but since open() reloads settings on every open,
+        // wiping it on close() is enough.
+        this._searchEmbeddingCache = new Map();
+        // Latest query the user has committed to — used to discard stale
+        // async results when a fast typist outruns the embedding call.
+        this._searchQueryToken = 0;
         // Cache `phrase → definition` so repeatedly clicking the same node
         // doesn't re-hit the LLM. Scoped to the explorer instance.
         this._definitionCache = new Map();
@@ -124,6 +141,11 @@ export class GraphExplorer {
                         <span class="kg-toolbar-name">Min relevance</span>
                         <input type="range" id="kg-min-relevance" min="0" max="1" step="0.05" value="0.15">
                         <input type="text" class="kg-toolbar-value" id="kg-min-relevance-value" value="0.15" aria-label="Minimum relevance" autocomplete="off" inputmode="decimal">
+                    </label>
+                    <label class="kg-toolbar-search">
+                        <span class="kg-toolbar-name">Search</span>
+                        <input type="search" id="kg-search-input" class="kg-toolbar-search-input" placeholder="Search nodes…" autocomplete="off" aria-label="Search nodes">
+                        <span class="kg-toolbar-search-status" id="kg-search-status" aria-live="polite"></span>
                     </label>
                 </div>
                 <button type="button" class="btn btn-secondary graph-relayout-btn" aria-label="Re-layout graph" title="Re-run the force-directed layout from scratch">
@@ -254,6 +276,28 @@ export class GraphExplorer {
                 }
             }, { passive: false });
         }
+
+        // Search input: debounced so a fast typist doesn't trigger an
+        // embedding call per keystroke. 250 ms is comfortable: short
+        // enough to feel live, long enough to coalesce normal typing.
+        const searchInput = this._container.querySelector('#kg-search-input');
+        let searchTimer = null;
+        searchInput.addEventListener('input', () => {
+            if (searchTimer) clearTimeout(searchTimer);
+            const raw = searchInput.value;
+            searchTimer = setTimeout(() => {
+                searchTimer = null;
+                this._runSearch(raw);
+            }, 250);
+        });
+        // Esc clears the input (and any matches).
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                searchInput.value = '';
+                this._runSearch('');
+                e.preventDefault();
+            }
+        });
 
         // Touch action bar (selection-mode only). Desktop uses the right-
         // click context menu instead.
@@ -489,7 +533,11 @@ export class GraphExplorer {
                     style: { 'opacity': 0.22 }
                 },
                 {
-                    selector: 'node.kg-newly-added',
+                    // Same yellow-ring treatment for nodes that landed in
+                    // the current LLM build OR that match the active
+                    // search query. The user can tell them apart by
+                    // context — the search field shows the active query.
+                    selector: 'node.kg-newly-added, node.kg-match',
                     style: {
                         'border-width': 4,
                         'border-color': '#ffd24a',
@@ -802,6 +850,144 @@ export class GraphExplorer {
 
         this._exitSelectionMode();
         this._applyDetailFilter();
+    }
+
+    /**
+     * Run the search routed by current settings: text substring or
+     * semantic cosine. Synchronous for text mode; async for semantic
+     * (the query is embedded, then cosine-compared to each node's
+     * stored embedding).
+     */
+    async _runSearch(rawQuery) {
+        const query = String(rawQuery ?? '').trim();
+        const statusEl = this._container.querySelector('#kg-search-status');
+        if (!this._cy) {
+            if (statusEl) statusEl.textContent = '';
+            return;
+        }
+        if (!query) {
+            this._clearSearchMatches();
+            if (statusEl) statusEl.textContent = '';
+            return;
+        }
+        const settings = this._getSearchSettings() || {};
+        const mode = settings.mode === 'semantic' ? 'semantic' : 'text';
+        if (mode === 'text') {
+            const matchIds = this._matchByText(query);
+            this._applySearchMatches(matchIds);
+            if (statusEl) statusEl.textContent = matchIds.size === 0
+                ? 'No matches'
+                : `${matchIds.size} match${matchIds.size === 1 ? '' : 'es'}`;
+            return;
+        }
+        // Semantic mode.
+        const token = ++this._searchQueryToken;
+        if (statusEl) statusEl.textContent = 'Embedding query…';
+        let matchIds;
+        try {
+            matchIds = await this._matchBySemantic(
+                query,
+                Number.isFinite(settings.threshold) ? settings.threshold : 0.5
+            );
+        } catch (err) {
+            // If embedding fails, surface the error in the status row and
+            // fall back to a plain text search so the user still gets a
+            // useful result.
+            console.warn('[graph-explorer] semantic search failed:', err?.message);
+            if (this._searchQueryToken !== token) return;
+            const fallback = this._matchByText(query);
+            this._applySearchMatches(fallback);
+            if (statusEl) statusEl.textContent =
+                `Semantic search failed (${err?.message ?? 'unknown'}); showing text matches: ${fallback.size}`;
+            return;
+        }
+        if (this._searchQueryToken !== token) return;   // stale result
+        this._applySearchMatches(matchIds);
+        if (statusEl) statusEl.textContent = matchIds.size === 0
+            ? 'No matches'
+            : `${matchIds.size} match${matchIds.size === 1 ? '' : 'es'}`;
+    }
+
+    /**
+     * Case-insensitive substring match against canonicalName + aliases.
+     * Returns a Set of cytoscape node ids that match. Stable across
+     * builds — does not consult node embeddings.
+     */
+    _matchByText(query) {
+        const needle = query.toLowerCase();
+        const matches = new Set();
+        if (!this._cy) return matches;
+        this._cy.nodes().forEach((n) => {
+            const raw = n.data('raw');
+            if (!raw) return;
+            const name = String(raw.canonicalName || '').toLowerCase();
+            if (name.includes(needle)) {
+                matches.add(n.id());
+                return;
+            }
+            const aliases = Array.isArray(raw.aliases) ? raw.aliases : [];
+            if (aliases.some((a) => String(a || '').toLowerCase().includes(needle))) {
+                matches.add(n.id());
+            }
+        });
+        return matches;
+    }
+
+    /**
+     * Embed the query, cosine-rank every node with an embedding, and
+     * return the ids of those above `threshold`. Nodes without a stored
+     * embedding (legacy records) are silently skipped — no false
+     * negatives, but the user gets fewer matches than they might expect.
+     */
+    async _matchBySemantic(query, threshold) {
+        const matches = new Set();
+        if (!this._cy) return matches;
+        // Lazy-load the embedding provider so opening the explorer
+        // without typing in the search box doesn't pull in the model.
+        if (typeof embeddingProvider.isReady === 'function'
+            && !embeddingProvider.isReady()) {
+            await embeddingProvider.load();
+        }
+        // Per-instance cache so re-typing the same query (or typing a
+        // character then deleting it) is free.
+        let qvec = this._searchEmbeddingCache.get(query);
+        if (!qvec) {
+            const out = await embeddingProvider.embed([query]);
+            qvec = Array.isArray(out) ? out[0] : null;
+            if (qvec instanceof Float32Array) {
+                this._searchEmbeddingCache.set(query, qvec);
+            }
+        }
+        if (!(qvec instanceof Float32Array)) return matches;
+        this._cy.nodes().forEach((n) => {
+            const raw = n.data('raw');
+            const emb = raw?.embedding;
+            if (!emb) return;
+            const vec = emb instanceof Float32Array ? emb : Float32Array.from(emb);
+            const sim = cosine(qvec, vec);
+            if (sim >= threshold) matches.add(n.id());
+        });
+        return matches;
+    }
+
+    _applySearchMatches(matchIds) {
+        if (!this._cy) return;
+        // Single batched pass: every node either gets `.kg-match` or
+        // loses it. This also clears matches from a previous query
+        // automatically — no separate "clear" pass needed.
+        this._cy.batch(() => {
+            this._cy.nodes().forEach((n) => {
+                if (matchIds.has(n.id())) n.addClass('kg-match');
+                else n.removeClass('kg-match');
+            });
+        });
+    }
+
+    _clearSearchMatches() {
+        if (!this._cy) return;
+        this._cy.nodes().removeClass('kg-match');
+        const statusEl = this._container.querySelector('#kg-search-status');
+        if (statusEl) statusEl.textContent = '';
     }
 
     _openFirstSeenPreview(node) {
@@ -1450,5 +1636,12 @@ export class GraphExplorer {
             this._cy.destroy();
             this._cy = null;
         }
+        // Reset transient search state — a fresh open() starts with an
+        // empty input. Cache survives in memory across the session so a
+        // user re-typing the same query gets an instant result.
+        const input = this._container.querySelector('#kg-search-input');
+        if (input) input.value = '';
+        const statusEl = this._container.querySelector('#kg-search-status');
+        if (statusEl) statusEl.textContent = '';
     }
 }

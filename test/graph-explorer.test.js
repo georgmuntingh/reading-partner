@@ -885,6 +885,141 @@ describe('GraphExplorer', () => {
         expect(ge._positionCache.has('b1')).toBe(false);
     });
 
+    it('text search highlights nodes whose canonicalName or aliases contain the query (case-insensitive)', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getSearchSettings: () => ({ mode: 'text', threshold: 0.5 })
+        });
+        const classed = new Map();   // id → Set<class>
+        const makeNode = (id, raw) => ({
+            id: () => id,
+            data: () => raw,
+            addClass: (c) => {
+                if (!classed.has(id)) classed.set(id, new Set());
+                classed.get(id).add(c);
+            },
+            removeClass: (c) => classed.get(id)?.delete(c)
+        });
+        const nodes = [
+            makeNode('n1', { canonicalName: 'Arthur', aliases: ['the king'] }),
+            makeNode('n2', { canonicalName: 'sword', aliases: [] }),
+            makeNode('n3', { canonicalName: 'Excalibur', aliases: ['the sword'] })
+        ];
+        const collection = {
+            forEach: (f) => nodes.forEach(f),
+            removeClass: () => {}
+        };
+        ge._cy = {
+            nodes: () => collection,
+            batch: (fn) => fn()
+        };
+
+        await ge._runSearch('king');
+        // Only n1 has 'king' in its aliases.
+        expect(classed.get('n1')?.has('kg-match')).toBe(true);
+        expect(classed.get('n2')?.has('kg-match')).toBeFalsy();
+        expect(classed.get('n3')?.has('kg-match')).toBeFalsy();
+        expect(container.querySelector('#kg-search-status').textContent).toBe('1 match');
+
+        await ge._runSearch('SWORD');
+        // Case-insensitive: both n2 (canonical name) and n3 (alias).
+        expect(classed.get('n2')?.has('kg-match')).toBe(true);
+        expect(classed.get('n3')?.has('kg-match')).toBe(true);
+        expect(classed.get('n1')?.has('kg-match')).toBe(false);
+        expect(container.querySelector('#kg-search-status').textContent).toBe('2 matches');
+    });
+
+    it('empty query clears matches and the status row', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getSearchSettings: () => ({ mode: 'text', threshold: 0.5 })
+        });
+        const removeSpy = vi.fn();
+        ge._cy = {
+            nodes: () => ({ removeClass: removeSpy }),
+            batch: (fn) => fn()
+        };
+        container.querySelector('#kg-search-status').textContent = '5 matches';
+        await ge._runSearch('   ');
+        expect(removeSpy).toHaveBeenCalledWith('kg-match');
+        expect(container.querySelector('#kg-search-status').textContent).toBe('');
+    });
+
+    it('semantic search embeds the query and highlights nodes above the threshold', async () => {
+        const { embeddingProvider } = await import('../js/services/embedding-provider.js');
+        // Query embedding aligned with [1,0]; n1 also [1,0] → cos=1; n2 [0,1] → cos=0.
+        const queryVec = Float32Array.from([1, 0]);
+        const embedSpy = vi.spyOn(embeddingProvider, 'embed')
+            .mockResolvedValue([queryVec]);
+        vi.spyOn(embeddingProvider, 'isReady').mockReturnValue(true);
+
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getSearchSettings: () => ({ mode: 'semantic', threshold: 0.5 })
+        });
+        const classed = new Map();
+        const makeNode = (id, embedding) => ({
+            id: () => id,
+            data: () => ({ embedding }),
+            addClass: (c) => {
+                if (!classed.has(id)) classed.set(id, new Set());
+                classed.get(id).add(c);
+            },
+            removeClass: (c) => classed.get(id)?.delete(c)
+        });
+        const nodes = [
+            makeNode('n1', Float32Array.from([1, 0])),     // cosine 1.0
+            makeNode('n2', Float32Array.from([0, 1])),     // cosine 0.0
+            makeNode('n3', null)                            // legacy, no embedding
+        ];
+        ge._cy = {
+            nodes: () => ({
+                forEach: (f) => nodes.forEach(f),
+                removeClass: () => {}
+            }),
+            batch: (fn) => fn()
+        };
+
+        await ge._runSearch('king');
+        expect(embedSpy).toHaveBeenCalledWith(['king']);
+        // Only n1 passes the 0.5 threshold.
+        expect(classed.get('n1')?.has('kg-match')).toBe(true);
+        expect(classed.get('n2')?.has('kg-match')).toBeFalsy();
+        // Legacy node without an embedding is silently skipped, never matched.
+        expect(classed.get('n3')?.has('kg-match')).toBeFalsy();
+        expect(container.querySelector('#kg-search-status').textContent).toBe('1 match');
+        embedSpy.mockRestore();
+    });
+
+    it('semantic search caches query embeddings so re-typing the same query is free', async () => {
+        const { embeddingProvider } = await import('../js/services/embedding-provider.js');
+        const embedSpy = vi.spyOn(embeddingProvider, 'embed')
+            .mockResolvedValue([Float32Array.from([1, 0])]);
+        vi.spyOn(embeddingProvider, 'isReady').mockReturnValue(true);
+
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getSearchSettings: () => ({ mode: 'semantic', threshold: 0.5 })
+        });
+        ge._cy = {
+            nodes: () => ({ forEach: () => {}, removeClass: () => {} }),
+            batch: (fn) => fn()
+        };
+        await ge._runSearch('king');
+        await ge._runSearch('king');
+        // Cache hit on the second call.
+        expect(embedSpy).toHaveBeenCalledTimes(1);
+        embedSpy.mockRestore();
+    });
+
     it('handleLiveEdge skips when an endpoint is missing in the canvas', () => {
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });

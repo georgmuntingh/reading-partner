@@ -366,6 +366,16 @@ class ReadingPartnerApp {
             lookupDefinition,
             getWheelSensitivity: () =>
                 this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
+            // Read on every keystroke so toggling the mode (or threshold)
+            // in Settings takes effect without re-opening the explorer.
+            getSearchSettings: () => {
+                const s = this._settingsModal?.getSettings() || {};
+                return {
+                    mode: s.kgSearchMode === 'semantic' ? 'semantic' : 'text',
+                    threshold: Number.isFinite(s.kgSemanticSearchThreshold)
+                        ? s.kgSemanticSearchThreshold : 0.5
+                };
+            },
             // Anchors inside the preview modal carry EPUB chapter-relative
             // hrefs. The reader already knows how to resolve those via
             // _handleInternalLink (file → chapter index + fragment scroll).

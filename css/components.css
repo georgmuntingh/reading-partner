@@ -3971,3 +3971,32 @@
 .kg-primary-picker-row:hover {
     background: var(--bg-color);
 }
+
+/* KG search input — sits in the filter toolbar but is wider than the
+   tiny numeric value fields next to the sliders. */
+.graph-filter-toolbar .kg-toolbar-search {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.graph-filter-toolbar .kg-toolbar-search-input {
+    min-width: 180px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--surface-color);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.graph-filter-toolbar .kg-toolbar-search-input:focus {
+    outline: 2px solid var(--primary-color, #4a8e53);
+    outline-offset: 1px;
+}
+
+.graph-filter-toolbar .kg-toolbar-search-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    min-width: 0;
+}

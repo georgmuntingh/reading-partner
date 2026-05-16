@@ -101,6 +101,13 @@ export class SettingsModal {
             // high-resolution wheels can dial it down and trackpad users
             // can dial it up.
             kgWheelSensitivity: 1.0,
+            // Search mode used by the explorer's search box. 'text' is a
+            // plain case-insensitive substring match against canonicalName
+            // and aliases; 'semantic' embeds the query and ranks every
+            // node's stored embedding by cosine, keeping those above
+            // kgSemanticSearchThreshold.
+            kgSearchMode: 'text',
+            kgSemanticSearchThreshold: 0.5,
             // Embedding backend — defaults to cloud (uses the OpenRouter API key
             // configured for Q&A) so first-time users don't have to wait on a
             // local model download.
@@ -785,6 +792,21 @@ export class SettingsModal {
                             <p class="form-hint">Controls how aggressively the mouse wheel zooms the knowledge graph. 1.0 is the cytoscape default; lower is gentler, higher is snappier.</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-search-mode">Graph search mode</label>
+                            <select id="settings-kg-search-mode" class="form-select">
+                                <option value="text">Text (substring)</option>
+                                <option value="semantic">Semantic (embedding cosine)</option>
+                            </select>
+                            <p class="form-hint">Text mode does a case-insensitive substring match against each node's canonical name and aliases. Semantic mode embeds the query and ranks every node by cosine similarity, keeping those above the threshold below. Semantic search requires the embedding model to be loaded (it loads on demand).</p>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-semantic-threshold-row">
+                            <label for="settings-kg-semantic-threshold">Semantic search threshold: <span id="settings-kg-semantic-threshold-value">0.50</span></label>
+                            <input type="range" id="settings-kg-semantic-threshold" class="form-input" min="0" max="1" step="0.01" value="0.5">
+                            <p class="form-hint">Minimum cosine similarity (0.0–1.0) between the query embedding and a node's embedding for the node to be highlighted. Higher = stricter / fewer matches.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Embedding Model</div>
 
                         <div class="form-group">
@@ -960,6 +982,10 @@ export class SettingsModal {
             kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
             kgWheelSensitivity: this._container.querySelector('#settings-kg-wheel-sensitivity'),
             kgWheelSensitivityValue: this._container.querySelector('#settings-kg-wheel-sensitivity-value'),
+            kgSearchMode: this._container.querySelector('#settings-kg-search-mode'),
+            kgSemanticThreshold: this._container.querySelector('#settings-kg-semantic-threshold'),
+            kgSemanticThresholdValue: this._container.querySelector('#settings-kg-semantic-threshold-value'),
+            kgSemanticThresholdRow: this._container.querySelector('#settings-kg-semantic-threshold-row'),
             kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
             kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
@@ -1084,6 +1110,18 @@ export class SettingsModal {
         });
         this._elements.kgWheelSensitivity.addEventListener('input', () => {
             this._elements.kgWheelSensitivityValue.textContent = parseFloat(this._elements.kgWheelSensitivity.value).toFixed(2);
+        });
+        // Hide the semantic-threshold row when the user picks text mode —
+        // the threshold doesn't apply there, and hiding it removes the
+        // visual noise of a knob that would otherwise look configurable.
+        const refreshSemanticRow = () => {
+            const isSemantic = this._elements.kgSearchMode.value === 'semantic';
+            this._elements.kgSemanticThresholdRow?.classList.toggle('hidden', !isSemantic);
+        };
+        this._elements.kgSearchMode.addEventListener('change', refreshSemanticRow);
+        this._elements.kgSemanticThreshold.addEventListener('input', () => {
+            this._elements.kgSemanticThresholdValue.textContent =
+                parseFloat(this._elements.kgSemanticThreshold.value).toFixed(2);
         });
 
         // KG embedding source — show only the matching sub-option group
@@ -1545,7 +1583,12 @@ export class SettingsModal {
             })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
-            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
+            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value,
+            kgSearchMode: this._elements.kgSearchMode.value === 'semantic' ? 'semantic' : 'text',
+            kgSemanticSearchThreshold: (() => {
+                const v = parseFloat(this._elements.kgSemanticThreshold.value);
+                return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5;
+            })()
         };
 
         // Validate
@@ -1793,6 +1836,14 @@ export class SettingsModal {
         const kgWheelSensitivity = this._settings.kgWheelSensitivity ?? 1.0;
         this._elements.kgWheelSensitivity.value = kgWheelSensitivity;
         this._elements.kgWheelSensitivityValue.textContent = parseFloat(kgWheelSensitivity).toFixed(2);
+        const kgSearchMode = this._settings.kgSearchMode === 'semantic' ? 'semantic' : 'text';
+        this._elements.kgSearchMode.value = kgSearchMode;
+        const kgSemanticThreshold = Number.isFinite(this._settings.kgSemanticSearchThreshold)
+            ? this._settings.kgSemanticSearchThreshold : 0.5;
+        this._elements.kgSemanticThreshold.value = kgSemanticThreshold;
+        this._elements.kgSemanticThresholdValue.textContent = parseFloat(kgSemanticThreshold).toFixed(2);
+        // Hide the threshold row when text mode is selected.
+        this._elements.kgSemanticThresholdRow?.classList.toggle('hidden', kgSearchMode !== 'semantic');
         this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
