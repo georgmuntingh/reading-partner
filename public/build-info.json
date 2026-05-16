@@ -1,8 +1,8 @@
 {
   "version": "1.0.0",
-  "buildTime": "2026-05-10T21:15:04.679Z",
-  "commit": "afab5b4fb9db2fe6793ea61b6b1b97acff089925",
-  "commitShort": "afab5b4",
-  "branch": "claude/knowledge-graph-pipeline-45eNW",
-  "lastCommitDate": "2026-05-10T21:01:58+00:00"
+  "buildTime": "2026-05-16T12:56:08.737Z",
+  "commit": "12f01300ba09963b1bd572005e35cd03dd212dc5",
+  "commitShort": "12f0130",
+  "branch": "claude/knowledge-graph-extraction-WM4k1",
+  "lastCommitDate": "2026-05-16T11:36:57+00:00"
 }

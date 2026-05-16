@@ -91,6 +91,23 @@ export class SettingsModal {
             kgChunkOverlap: 2,
             kgChunksPerRequest: 4,
             kgSimilarityThreshold: 0.88,
+            // Permissive extraction-time floor. Tier-2 anchor relevance below
+            // this is dropped at write time; the UI slider in graph explorer
+            // defaults to a stricter 0.25 but can drag down to reveal the
+            // 0.15–0.24 band that is preserved on disk.
+            kgRelevanceThreshold: 0.15,
+            // Mouse-wheel zoom speed in the graph explorer. Cytoscape's
+            // documented default is 1.0; we expose this so users with
+            // high-resolution wheels can dial it down and trackpad users
+            // can dial it up.
+            kgWheelSensitivity: 1.0,
+            // Search mode used by the explorer's search box. 'text' is a
+            // plain case-insensitive substring match against canonicalName
+            // and aliases; 'semantic' embeds the query and ranks every
+            // node's stored embedding by cosine, keeping those above
+            // kgSemanticSearchThreshold.
+            kgSearchMode: 'text',
+            kgSemanticSearchThreshold: 0.5,
             // Embedding backend — defaults to cloud (uses the OpenRouter API key
             // configured for Q&A) so first-time users don't have to wait on a
             // local model download.
@@ -763,6 +780,39 @@ export class SettingsModal {
                             <p class="form-hint">Cosine similarity above which two extracted entities are merged into the same node</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-domain">Current book's domain</label>
+                            <input type="text" id="settings-kg-domain" class="form-input" placeholder="Open a book to edit" autocomplete="off" disabled>
+                            <p class="form-hint">Per-book Tier-1 + Tier-2 anchor. The LLM is told to favour entities load-bearing to this topic, and each entity's cosine to this string acts as the relevance score. The text is set on first build by the domain prompt; you can revise it here at any time. Editing applies to nodes extracted from this point on — past nodes' relevance scores are unchanged.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-relevance-threshold">Domain Relevance Floor: <span id="settings-kg-relevance-threshold-value">0.15</span></label>
+                            <input type="range" id="settings-kg-relevance-threshold" class="form-input" min="0" max="1" step="0.01" value="0.15">
+                            <p class="form-hint">Hard floor applied at extraction time — entities scoring below this against the book's domain anchor are discarded permanently. Keep this low (≈0.15) and tune visualisation strictness in the Graph Explorer.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-wheel-sensitivity">Mouse-wheel zoom speed: <span id="settings-kg-wheel-sensitivity-value">1.00</span></label>
+                            <input type="range" id="settings-kg-wheel-sensitivity" class="form-input" min="0.1" max="3" step="0.1" value="1.0">
+                            <p class="form-hint">Controls how aggressively the mouse wheel zooms the knowledge graph. 1.0 is the cytoscape default; lower is gentler, higher is snappier.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-search-mode">Graph search mode</label>
+                            <select id="settings-kg-search-mode" class="form-select">
+                                <option value="text">Text (substring)</option>
+                                <option value="semantic">Semantic (embedding cosine)</option>
+                            </select>
+                            <p class="form-hint">Text mode does a case-insensitive substring match against each node's canonical name and aliases. Semantic mode embeds the query and ranks every node by cosine similarity, keeping those above the threshold below. Semantic search requires the embedding model to be loaded (it loads on demand).</p>
+                        </div>
+
+                        <div class="form-group" id="settings-kg-semantic-threshold-row">
+                            <label for="settings-kg-semantic-threshold">Semantic search threshold: <span id="settings-kg-semantic-threshold-value">0.50</span></label>
+                            <input type="range" id="settings-kg-semantic-threshold" class="form-input" min="0" max="1" step="0.01" value="0.5">
+                            <p class="form-hint">Minimum cosine similarity (0.0–1.0) between the query embedding and a node's embedding for the node to be highlighted. Higher = stricter / fewer matches.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Embedding Model</div>
 
                         <div class="form-group">
@@ -791,6 +841,13 @@ export class SettingsModal {
                                 <option value="Xenova/bge-small-en-v1.5">BGE-small EN v1.5 (384-d, ~33 MB)</option>
                                 <option value="Xenova/multilingual-e5-small">Multilingual E5 small (384-d, ~118 MB)</option>
                             </select>
+                        </div>
+
+                        <div class="settings-subsection-header">Maintenance</div>
+
+                        <div class="form-group">
+                            <button type="button" class="btn btn-danger" id="settings-kg-clear-btn">Clear Knowledge Graph</button>
+                            <p class="form-hint">Permanently deletes every node and edge for the currently-open book and re-enables extraction on each chapter. Cannot be undone.</p>
                         </div>
                     </details>
 
@@ -927,11 +984,21 @@ export class SettingsModal {
             kgChunksPerRequestValue: this._container.querySelector('#settings-kg-chunks-per-request-value'),
             kgSimilarityThreshold: this._container.querySelector('#settings-kg-similarity-threshold'),
             kgSimilarityThresholdValue: this._container.querySelector('#settings-kg-similarity-threshold-value'),
+            kgDomain: this._container.querySelector('#settings-kg-domain'),
+            kgRelevanceThreshold: this._container.querySelector('#settings-kg-relevance-threshold'),
+            kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
+            kgWheelSensitivity: this._container.querySelector('#settings-kg-wheel-sensitivity'),
+            kgWheelSensitivityValue: this._container.querySelector('#settings-kg-wheel-sensitivity-value'),
+            kgSearchMode: this._container.querySelector('#settings-kg-search-mode'),
+            kgSemanticThreshold: this._container.querySelector('#settings-kg-semantic-threshold'),
+            kgSemanticThresholdValue: this._container.querySelector('#settings-kg-semantic-threshold-value'),
+            kgSemanticThresholdRow: this._container.querySelector('#settings-kg-semantic-threshold-row'),
             kgEmbeddingSource: this._container.querySelector('#settings-kg-embedding-source'),
             kgCloudEmbeddingOptions: this._container.querySelector('#settings-kg-cloud-embedding-options'),
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
             kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
-            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model')
+            kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model'),
+            kgClearBtn: this._container.querySelector('#settings-kg-clear-btn')
         };
     }
 
@@ -1045,10 +1112,51 @@ export class SettingsModal {
         this._elements.kgSimilarityThreshold.addEventListener('input', () => {
             this._elements.kgSimilarityThresholdValue.textContent = parseFloat(this._elements.kgSimilarityThreshold.value).toFixed(2);
         });
+        this._elements.kgRelevanceThreshold.addEventListener('input', () => {
+            this._elements.kgRelevanceThresholdValue.textContent = parseFloat(this._elements.kgRelevanceThreshold.value).toFixed(2);
+        });
+        this._elements.kgWheelSensitivity.addEventListener('input', () => {
+            this._elements.kgWheelSensitivityValue.textContent = parseFloat(this._elements.kgWheelSensitivity.value).toFixed(2);
+        });
+        // Per-book domain — committed on blur or Enter. Not included in
+        // the getSettings() return because it lives on the book record,
+        // not in the global settings store; the callback forwards to
+        // app.js which persists via storage.saveBook.
+        const commitKGDomain = () => {
+            if (!this._callbacks.onDomainChange) return;
+            const next = String(this._elements.kgDomain.value || '').trim();
+            this._callbacks.onDomainChange(next);
+        };
+        this._elements.kgDomain.addEventListener('blur', commitKGDomain);
+        this._elements.kgDomain.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this._elements.kgDomain.blur();
+            }
+        });
+        // Hide the semantic-threshold row when the user picks text mode —
+        // the threshold doesn't apply there, and hiding it removes the
+        // visual noise of a knob that would otherwise look configurable.
+        const refreshSemanticRow = () => {
+            const isSemantic = this._elements.kgSearchMode.value === 'semantic';
+            this._elements.kgSemanticThresholdRow?.classList.toggle('hidden', !isSemantic);
+        };
+        this._elements.kgSearchMode.addEventListener('change', refreshSemanticRow);
+        this._elements.kgSemanticThreshold.addEventListener('input', () => {
+            this._elements.kgSemanticThresholdValue.textContent =
+                parseFloat(this._elements.kgSemanticThreshold.value).toFixed(2);
+        });
 
         // KG embedding source — show only the matching sub-option group
         this._elements.kgEmbeddingSource.addEventListener('change', () => {
             this._updateKGEmbeddingSourceUI();
+        });
+
+        // Clear Knowledge Graph button — delegates to the host app via a
+        // callback so the modal stays UI-only. The host is responsible for
+        // confirming, deleting, and refreshing the reader UI.
+        this._elements.kgClearBtn?.addEventListener('click', () => {
+            this._callbacks.onClearKG?.();
         });
 
         // Max sentence length slider
@@ -1488,9 +1596,22 @@ export class SettingsModal {
             kgChunkOverlap: parseInt(this._elements.kgChunkOverlap.value) || 0,
             kgChunksPerRequest: parseInt(this._elements.kgChunksPerRequest.value) || 4,
             kgSimilarityThreshold: parseFloat(this._elements.kgSimilarityThreshold.value) || 0.88,
+            kgRelevanceThreshold: (() => {
+                const v = parseFloat(this._elements.kgRelevanceThreshold.value);
+                return Number.isFinite(v) ? v : 0.15;
+            })(),
+            kgWheelSensitivity: (() => {
+                const v = parseFloat(this._elements.kgWheelSensitivity.value);
+                return Number.isFinite(v) && v > 0 ? v : 1.0;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
-            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value
+            kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value,
+            kgSearchMode: this._elements.kgSearchMode.value === 'semantic' ? 'semantic' : 'text',
+            kgSemanticSearchThreshold: (() => {
+                const v = parseFloat(this._elements.kgSemanticThreshold.value);
+                return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5;
+            })()
         };
 
         // Validate
@@ -1575,6 +1696,28 @@ export class SettingsModal {
         this._container.classList.add('active');
         this._loadCurrentSettings();
         this._loadBuildInfo();
+        this._refreshKGDomainField();
+    }
+
+    /**
+     * Populate the KG domain text field from the current book. Called
+     * every time the modal opens so the field always reflects the
+     * currently-open book (which may have changed since the previous
+     * open). Disabled when no book is open or no callback is wired.
+     */
+    _refreshKGDomainField() {
+        const input = this._elements.kgDomain;
+        if (!input) return;
+        const book = this._callbacks.getBook ? this._callbacks.getBook() : null;
+        if (!book) {
+            input.value = '';
+            input.disabled = true;
+            input.placeholder = 'Open a book to edit';
+            return;
+        }
+        input.disabled = false;
+        input.placeholder = 'e.g. Molecular cell biology';
+        input.value = String(book.kgDomain || '');
     }
 
     /**
@@ -1732,6 +1875,20 @@ export class SettingsModal {
         const kgSimilarityThreshold = this._settings.kgSimilarityThreshold ?? 0.88;
         this._elements.kgSimilarityThreshold.value = kgSimilarityThreshold;
         this._elements.kgSimilarityThresholdValue.textContent = parseFloat(kgSimilarityThreshold).toFixed(2);
+        const kgRelevanceThreshold = this._settings.kgRelevanceThreshold ?? 0.15;
+        this._elements.kgRelevanceThreshold.value = kgRelevanceThreshold;
+        this._elements.kgRelevanceThresholdValue.textContent = parseFloat(kgRelevanceThreshold).toFixed(2);
+        const kgWheelSensitivity = this._settings.kgWheelSensitivity ?? 1.0;
+        this._elements.kgWheelSensitivity.value = kgWheelSensitivity;
+        this._elements.kgWheelSensitivityValue.textContent = parseFloat(kgWheelSensitivity).toFixed(2);
+        const kgSearchMode = this._settings.kgSearchMode === 'semantic' ? 'semantic' : 'text';
+        this._elements.kgSearchMode.value = kgSearchMode;
+        const kgSemanticThreshold = Number.isFinite(this._settings.kgSemanticSearchThreshold)
+            ? this._settings.kgSemanticSearchThreshold : 0.5;
+        this._elements.kgSemanticThreshold.value = kgSemanticThreshold;
+        this._elements.kgSemanticThresholdValue.textContent = parseFloat(kgSemanticThreshold).toFixed(2);
+        // Hide the threshold row when text mode is selected.
+        this._elements.kgSemanticThresholdRow?.classList.toggle('hidden', kgSearchMode !== 'semantic');
         this._elements.kgEmbeddingSource.value = this._settings.kgEmbeddingSource || 'openrouter';
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';

@@ -1379,6 +1379,14 @@
     visibility: visible;
 }
 
+/* Modals dynamically injected on top of the graph-explorer overlay
+   (z-index: 1000) need to render above it, not behind it. */
+.kg-context-preview-overlay,
+.kg-domain-modal-overlay,
+.confirm-modal-overlay {
+    z-index: 1100;
+}
+
 .modal {
     width: 100%;
     max-width: 480px;
@@ -3664,6 +3672,124 @@
     font-size: var(--font-size-lg);
 }
 
+.graph-filter-toolbar {
+    display: flex;
+    gap: var(--spacing-lg);
+    align-items: center;
+    margin-left: auto;
+    margin-right: var(--spacing-md);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary, inherit);
+}
+
+.graph-filter-toolbar label {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    white-space: nowrap;
+}
+
+.graph-filter-toolbar input[type="range"] {
+    width: 120px;
+}
+
+.graph-filter-toolbar .kg-toolbar-value {
+    width: 4.5em;
+    padding: 2px 6px;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    background: var(--surface-color);
+    color: var(--text-color);
+    font: inherit;
+    text-align: right;
+}
+
+.graph-filter-toolbar .kg-toolbar-value:focus {
+    outline: 2px solid var(--primary-color);
+    outline-offset: -1px;
+}
+
+.graph-filter-toolbar .kg-toolbar-value:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* On narrow screens each (name | slider | value) triple becomes its own
+   full-width row inside the toolbar. The slider takes all available
+   horizontal space so it's tappable on a phone. */
+@media (max-width: 768px) {
+    .graph-explorer-header {
+        flex-wrap: wrap;
+    }
+    .graph-filter-toolbar {
+        order: 3;
+        width: 100%;
+        margin-left: 0;
+        margin-right: 0;
+        padding-top: var(--spacing-sm);
+        flex-direction: column;
+        align-items: stretch;
+        gap: var(--spacing-sm);
+    }
+    .graph-filter-toolbar label {
+        display: grid;
+        grid-template-columns: minmax(7em, auto) 1fr auto;
+        align-items: center;
+        gap: var(--spacing-sm);
+        width: 100%;
+    }
+    .graph-filter-toolbar input[type="range"] {
+        width: 100%;
+        min-width: 0;
+    }
+}
+
+/* ===== KG context preview modal ===== */
+.kg-context-preview-modal {
+    max-width: 640px;
+}
+
+.kg-context-preview-subtitle {
+    margin-top: 0;
+    color: var(--text-secondary, inherit);
+    font-size: var(--font-size-sm);
+}
+
+.kg-context-preview-body {
+    margin-top: var(--spacing-md);
+    line-height: 1.55;
+}
+
+.kg-context-preview-sentence {
+    margin: 0 0 var(--spacing-sm) 0;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--text-secondary, inherit);
+}
+
+.kg-context-preview-sentence.is-target,
+.kg-context-preview-target {
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.kg-context-preview-body img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: var(--spacing-sm) auto;
+}
+
+.kg-context-preview-loading,
+.kg-context-preview-error {
+    color: var(--text-secondary, inherit);
+    font-style: italic;
+}
+
+.kg-side-definition .kg-side-definition-body {
+    color: var(--text-secondary, inherit);
+}
+
 .graph-body {
     flex: 1;
     display: flex;
@@ -3762,4 +3888,115 @@
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
     margin: 0;
+}
+
+/* ---- KG context menu (right-click on a node) ---- */
+.kg-context-menu {
+    position: fixed;
+    z-index: 1200;
+    min-width: 180px;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: var(--spacing-xs) 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.kg-context-menu-item {
+    appearance: none;
+    background: transparent;
+    border: 0;
+    text-align: left;
+    padding: var(--spacing-sm) var(--spacing-md);
+    font: inherit;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.kg-context-menu-item:hover,
+.kg-context-menu-item:focus-visible {
+    background: var(--bg-color);
+}
+
+.kg-context-menu-item.is-danger {
+    color: var(--danger-color, #c0392b);
+}
+
+/* ---- KG action bar (touch / mobile selection mode) ---- */
+.kg-action-bar {
+    position: absolute;
+    left: 50%;
+    bottom: var(--spacing-lg);
+    transform: translateX(-50%);
+    z-index: 1050;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+}
+
+.kg-action-bar.hidden {
+    display: none;
+}
+
+.kg-action-bar-count {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-right: var(--spacing-sm);
+}
+
+/* ---- KG merge primary picker (touch fallback) ---- */
+.kg-primary-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    margin-top: var(--spacing-sm);
+}
+
+.kg-primary-picker-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.kg-primary-picker-row:hover {
+    background: var(--bg-color);
+}
+
+/* KG search input — sits in the filter toolbar but is wider than the
+   tiny numeric value fields next to the sliders. */
+.graph-filter-toolbar .kg-toolbar-search {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+.graph-filter-toolbar .kg-toolbar-search-input {
+    min-width: 180px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--surface-color);
+    color: var(--text-primary);
+    font: inherit;
+}
+
+.graph-filter-toolbar .kg-toolbar-search-input:focus {
+    outline: 2px solid var(--primary-color, #4a8e53);
+    outline-offset: 1px;
+}
+
+.graph-filter-toolbar .kg-toolbar-search-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    min-width: 0;
 }

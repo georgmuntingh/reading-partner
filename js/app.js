@@ -31,6 +31,8 @@ import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
+import { promptForDomain } from './ui/kg-domain-modal.js';
+import { confirmAction } from './ui/confirm-modal.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -236,7 +238,10 @@ class ReadingPartnerApp {
                 onMaxSentenceLengthChange: (maxLen) => this._onMaxSentenceLengthChange(maxLen),
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
-                onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config)
+                onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
+                onClearKG: () => this._onClearKGClick(),
+                getBook: () => this._currentBook,
+                onDomainChange: (domain) => this._onKGDomainChange(domain)
             }
         );
 
@@ -306,15 +311,77 @@ class ReadingPartnerApp {
         );
 
         // Initialize Knowledge Graph (controller + explorer overlay)
+        // Shared "fetch a concise definition" helper used both by the KG
+        // controller (to prefetch and persist definitions at node-creation
+        // time) and by the graph-explorer side panel (to look up legacy
+        // nodes on demand). Returns null if no API key is configured.
+        const lookupDefinition = async (phrase) => {
+            if (!llmClient.hasApiKey() || !this._currentBook) return null;
+            const entry = await lookupService.lookup({
+                phrase,
+                sentenceContext: phrase,
+                bookId: this._currentBook.id,
+                chapterIndex: this._currentChapterIndex,
+                sentenceIndex: -1,
+                bookMeta: {
+                    title: this._currentBook.title,
+                    author: this._currentBook.author
+                }
+            });
+            return entry?.result ?? null;
+        };
+
         this._kgController = new KGController({
             getSettings: () => this._settingsModal?.getSettings() ?? {},
-            getBook: () => this._currentBook
+            getBook: () => this._currentBook,
+            promptForDomain: (book) => promptForDomain(book),
+            lookupDefinition
         });
         this._kgController.onProgress = (p) => this._showKGProgress(p);
+        // Live-build pipe: every freshly-resolved node/edge is forwarded
+        // to the graph explorer so the user can watch the graph grow as
+        // extraction runs. The explorer no-ops these if it's not open.
+        this._kgController.onNodeCreated = (node) =>
+            this._graphExplorer?.handleLiveNode(node);
+        this._kgController.onEdgeCreated = (edge) =>
+            this._graphExplorer?.handleLiveEdge(edge);
+        this._kgController.onBatchComplete = () =>
+            this._graphExplorer?.handleBatchComplete();
 
         this._graphExplorer = new GraphExplorer({
             container: document.getElementById('graph-explorer'),
             getBook: () => this._currentBook,
+            getCurrentChapterIndex: () => this._currentChapterIndex,
+            // Load the chapter (sentences + full HTML) so the preview modal
+            // can render images and inline formatting just like the reader.
+            loadChapter: async (chapterIndex) => {
+                await this._readingState.loadChapter(chapterIndex);
+                return this._currentBook?.chapters?.[chapterIndex] ?? null;
+            },
+            // Right-click / "look up" inside the preview modal feeds the
+            // same _performLookup pipeline the reader uses.
+            onLookup: (text, context, chapterIndex, sentenceIndex) =>
+                this._performLookup(text, sentenceIndex, context),
+            // Sidebar fallback for legacy nodes that pre-date the
+            // controller-side prefetch. New nodes carry `node.definition`
+            // directly and skip this path entirely.
+            lookupDefinition,
+            getWheelSensitivity: () =>
+                this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
+            // Read on every keystroke so toggling the mode (or threshold)
+            // in Settings takes effect without re-opening the explorer.
+            getSearchSettings: () => {
+                const s = this._settingsModal?.getSettings() || {};
+                return {
+                    mode: s.kgSearchMode === 'semantic' ? 'semantic' : 'text',
+                    threshold: Number.isFinite(s.kgSemanticSearchThreshold)
+                        ? s.kgSemanticSearchThreshold : 0.5
+                };
+            },
+            // Anchors inside the preview modal carry EPUB chapter-relative
+            // hrefs. The reader already knows how to resolve those via
+            // _handleInternalLink (file → chapter index + fragment scroll).
+            onInternalLink: (href) => this._handleInternalLink(href),
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
                 this._jumpToKGContext(chapterIndex, sentenceIndex)
         });
@@ -3355,11 +3422,18 @@ class ReadingPartnerApp {
         }
         try {
             this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
+            // Auto-open the explorer so the user can watch nodes/edges
+            // arrive in real time. beginLiveBuild snapshots the current
+            // graph (fades it) so anything that appears during the build
+            // is visually distinct.
+            await this._graphExplorer?.open();
+            await this._graphExplorer?.beginLiveBuild();
             await this._kgController.buildChapterGraph(this._currentChapterIndex);
         } catch (error) {
             console.error('KG build failed:', error);
             this._showToast(`KG build failed: ${error.message}`);
         } finally {
+            this._graphExplorer?.endLiveBuild();
             // Re-evaluate the button: stays disabled if processed succeeded,
             // re-enabled if the build failed (so the user can retry).
             this._updateKGBuildButtonState();
@@ -3381,6 +3455,70 @@ class ReadingPartnerApp {
         } else {
             btn.removeAttribute('disabled');
             btn.title = 'Build knowledge graph for this chapter';
+        }
+    }
+
+    /**
+     * Persist a user-edited knowledge-graph domain back onto the current
+     * book record. Called from the settings modal's commit-on-blur path.
+     * No-op if the value hasn't changed so we don't churn the book row
+     * (and bump lastOpened) on every blur where nothing actually moved.
+     */
+    async _onKGDomainChange(rawDomain) {
+        if (!this._currentBook) return;
+        const next = String(rawDomain || '').trim();
+        const current = String(this._currentBook.kgDomain || '').trim();
+        if (next === current) return;
+        this._currentBook.kgDomain = next;
+        try {
+            await storage.saveBook(this._currentBook);
+        } catch (err) {
+            console.warn('Persisting kgDomain change failed:', err?.message);
+        }
+    }
+
+    /**
+     * Handler for the "Clear Knowledge Graph" button in settings. Prompts the
+     * user, deletes every node + edge for the current book, resets the
+     * per-chapter `kgProcessed` flags so the user can re-extract, and
+     * refreshes the build button state.
+     */
+    async _onClearKGClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        const confirmed = await confirmAction({
+            title: 'Clear Knowledge Graph?',
+            message: `This will permanently delete every node and edge of the knowledge graph for "${this._currentBook.title || 'this book'}", and re-enable extraction on each chapter. This cannot be undone.`,
+            confirmLabel: 'Clear Graph',
+            cancelLabel: 'Cancel',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+            await storage.clearKGForBook(this._currentBook.id);
+            // Re-enable extraction on every chapter and persist.
+            let touched = false;
+            for (const ch of this._currentBook.chapters || []) {
+                if (ch.kgProcessed) {
+                    ch.kgProcessed = false;
+                    touched = true;
+                }
+            }
+            if (touched) {
+                try {
+                    await storage.saveBook(this._currentBook);
+                } catch (err) {
+                    console.warn('Clear-KG: failed to persist kgProcessed reset:', err?.message);
+                }
+            }
+            this._updateKGBuildButtonState();
+            this._showToast('Knowledge graph cleared');
+        } catch (err) {
+            console.error('Clear-KG failed:', err);
+            this._showToast(`Failed to clear graph: ${err.message}`);
         }
     }
 

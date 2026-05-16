@@ -31,16 +31,68 @@ export function cosine(a, b) {
     return s;
 }
 
+/**
+ * Update a node's stored embedding to the L2-normalised running mean of
+ * every observation it has merged so far. Reusing the cosine helper
+ * downstream relies on unit-norm vectors, so we re-normalise after the
+ * weighted update.
+ *
+ * @param {Float32Array | number[]} stored - The node's current embedding
+ * @param {number} mergeCount - Observations already folded into `stored`
+ * @param {Float32Array} incoming - The new observation to fold in
+ * @returns {Float32Array} L2-normalised running mean
+ */
+export function updateRunningMean(stored, mergeCount, incoming) {
+    const n = Math.max(1, mergeCount | 0);
+    const a = stored instanceof Float32Array ? stored : Float32Array.from(stored);
+    const len = Math.min(a.length, incoming.length);
+    const out = new Float32Array(len);
+    // mean_{n+1} = (mean_n * n + x_{n+1}) / (n + 1)
+    for (let i = 0; i < len; i++) {
+        out[i] = (a[i] * n + incoming[i]) / (n + 1);
+    }
+    let norm = 0;
+    for (let i = 0; i < len; i++) norm += out[i] * out[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < len; i++) out[i] /= norm;
+    return out;
+}
+
 export class KGResolver {
-    constructor({ bookId, similarityThreshold }) {
+    /**
+     * @param {Object} opts
+     * @param {string} opts.bookId
+     * @param {number} opts.similarityThreshold
+     * @param {Float32Array} [opts.anchor] - L2-normalised "domain anchor"
+     *   embedding. When present, each new entity's cosine to it is computed
+     *   and stored as `relevanceScore`; entities below `relevanceThreshold`
+     *   are dropped entirely (signalled by resolve() returning null).
+     * @param {number} [opts.relevanceThreshold=0]
+     */
+    constructor({ bookId, similarityThreshold, anchor = null, relevanceThreshold = 0 }) {
         this.bookId = bookId;
         this.threshold = similarityThreshold;
+        this._anchor = anchor instanceof Float32Array ? anchor : null;
+        this._relevanceThreshold = Number.isFinite(relevanceThreshold) ? relevanceThreshold : 0;
         this._nodes = [];
         this._nodesByName = new Map();        // name.toLowerCase() -> node
         this._loaded = false;
         // Edge cache, lazy-initialised on first resolveEdge() call
         this._edges = null;
         this._edgesByKey = null;
+        // Names dropped by the Tier-2 anchor gate. The controller consults
+        // this set when filtering relations so an edge to a dropped entity
+        // never reaches storage.
+        this._droppedEntityNames = new Set();
+    }
+
+    /**
+     * @param {string} name
+     * @returns {boolean} true if Tier-2 gating dropped this name earlier
+     *   in the current session.
+     */
+    wasDropped(name) {
+        return this._droppedEntityNames.has(String(name || '').toLowerCase());
     }
 
     /**
@@ -73,17 +125,34 @@ export class KGResolver {
      * Existing-node path appends the new alias + chapter context.
      * New-node path initialises SM-2 SRS stub fields.
      *
-     * @returns {Promise<{ id: string, created: boolean }>}
+     * @returns {Promise<{ id: string, created: boolean, node: Object } | null>} null when the
+     *   Tier-2 anchor gate dropped this entity. Callers should treat the
+     *   entity as never extracted and skip relations referencing it. The
+     *   returned `node` is the full record (existing or newly-created) — a
+     *   live convenience for callers that want to forward it to a UI
+     *   listener without an extra storage round-trip.
      */
-    async resolve({ name, type, aliases = [], bloom, embedding, chapterIndex, sentenceIndices }) {
+    async resolve({ name, type, aliases = [], bloom, definition = '', embedding, chapterIndex, sentenceIndices }) {
         if (!this._loaded) await this.load();
         if (!(embedding instanceof Float32Array)) {
             throw new Error('resolve: embedding must be a Float32Array');
         }
         const now = Date.now();
+        const lc = name.toLowerCase();
+
+        // Tier-2 semantic gate. Skip when no anchor (blank domain or
+        // anchor embedding failed). Done BEFORE the similarity search so
+        // we never spend dedupe cycles on entities we're about to drop.
+        let relevanceScore = null;
+        if (this._anchor) {
+            relevanceScore = cosine(this._anchor, embedding);
+            if (relevanceScore < this._relevanceThreshold) {
+                this._droppedEntityNames.add(lc);
+                return null;
+            }
+        }
 
         // 1) Exact-name fast path
-        const lc = name.toLowerCase();
         let hit = this._nodesByName.get(lc);
 
         // 2) Cosine search
@@ -122,9 +191,27 @@ export class KGResolver {
             for (const si of sentenceIndices) {
                 if (!ctx.sentenceIndices.includes(si)) ctx.sentenceIndices.push(si);
             }
+            // Update the stored embedding to the L2-normalised running mean
+            // of every observation that has merged into this node. Defaults
+            // mergeCount=1 for legacy nodes created before this field existed.
+            const prevCount = Number.isInteger(hit.mergeCount) && hit.mergeCount > 0
+                ? hit.mergeCount
+                : 1;
+            hit.embedding = updateRunningMean(hit.embedding, prevCount, embedding);
+            hit.mergeCount = prevCount + 1;
+            // Fill in a definition opportunistically: only overwrite if the
+            // existing node has none. The first definition we get for a
+            // concept is treated as canonical so the side panel doesn't
+            // flicker between phrasings on repeat encounters.
+            const hasExistingDef = typeof hit.definition === 'string'
+                ? hit.definition.trim().length > 0
+                : Boolean(hit.definition);
+            if (!hasExistingDef && definition) {
+                hit.definition = definition;
+            }
             hit.updatedAt = now;
             await storage.saveKGNode(hit);
-            return { id: hit.id, created: false };
+            return { id: hit.id, created: false, node: hit };
         }
 
         // 3) Create new node (SM-2 stub)
@@ -135,7 +222,13 @@ export class KGResolver {
             aliases: aliases.slice(),
             type: type || 'OTHER',
             bloom: bloom || 'Remember',
+            // Plain-string definition from the extraction LLM call. Empty
+            // string when the model declined to provide one — the side
+            // panel can still trigger an on-demand lookup in that case.
+            definition: definition || '',
             embedding,
+            mergeCount: 1,                    // observations folded into `embedding`
+            relevanceScore,                  // null when no anchor; preserved on disk
             contexts: [{ chapterIndex, sentenceIndices: sentenceIndices.slice() }],
             firstSeenChapter: chapterIndex,
             srs: {
@@ -151,7 +244,7 @@ export class KGResolver {
         await storage.saveKGNode(node);
         this._nodes.push(node);
         this._nodesByName.set(lc, node);
-        return { id: node.id, created: true };
+        return { id: node.id, created: true, node };
     }
 
     /**
@@ -173,7 +266,7 @@ export class KGResolver {
                 if (!ctx.sentenceIndices.includes(si)) ctx.sentenceIndices.push(si);
             }
             await storage.saveKGEdge(existing);
-            return { id: existing.id, created: false };
+            return { id: existing.id, created: false, edge: existing };
         }
 
         const edge = {
@@ -188,6 +281,6 @@ export class KGResolver {
         await storage.saveKGEdge(edge);
         this._edges.push(edge);
         this._edgesByKey.set(key, edge);
-        return { id: edge.id, created: true };
+        return { id: edge.id, created: true, edge };
     }
 }

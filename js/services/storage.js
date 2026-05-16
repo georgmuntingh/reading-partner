@@ -18,6 +18,28 @@ const STORES = {
     KG_EDGES: 'kg_edges'
 };
 
+/**
+ * Strip per-chapter runtime caches that must not survive a page reload.
+ * Specifically `chapter.html` may carry `blob:` URLs created by
+ * `URL.createObjectURL`; those URLs are scoped to the current session and
+ * resolve to ERR_FILE_NOT_FOUND on the next load. `sentences` and `loaded`
+ * are deterministically derivable from `html` and re-extracted on demand.
+ *
+ * Returns a shallow clone so callers can keep mutating the in-memory book
+ * without affecting the persisted copy.
+ */
+function stripTransientChapterState(book) {
+    if (!book || !Array.isArray(book.chapters)) return book;
+    return {
+        ...book,
+        chapters: book.chapters.map((ch) => {
+            if (!ch || typeof ch !== 'object') return ch;
+            const { html: _h, sentences: _s, loaded: _l, ...rest } = ch;
+            return rest;
+        })
+    };
+}
+
 export class StorageService {
     constructor() {
         this._db = null;
@@ -164,8 +186,16 @@ export class StorageService {
 
         book.lastOpened = Date.now();
 
+        // Strip per-chapter runtime caches before persisting. `chapter.html`
+        // contains `blob:` URLs created by `URL.createObjectURL` in the
+        // current session; those URLs are gone on the next page load and
+        // would render as ERR_FILE_NOT_FOUND if reused. `sentences` and the
+        // `loaded` flag are derived from `html` and can be re-extracted
+        // lazily, so they're stripped too.
+        const persistable = stripTransientChapterState(book);
+
         return new Promise((resolve, reject) => {
-            const request = store.put(book);
+            const request = store.put(persistable);
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
@@ -182,7 +212,12 @@ export class StorageService {
 
         return new Promise((resolve, reject) => {
             const request = store.get(id);
-            request.onsuccess = () => resolve(request.result || null);
+            request.onsuccess = () => resolve(
+                // Even if a stale persisted record still carries a cached
+                // `chapter.html` from before this fix (with dead blob URLs),
+                // strip it on read so we never paint with stale blobs.
+                request.result ? stripTransientChapterState(request.result) : null
+            );
             request.onerror = () => reject(request.error);
         });
     }
@@ -737,6 +772,98 @@ export class StorageService {
     async clearKGForBook(bookId) {
         await this.deleteKGNodesForBook(bookId);
         await this.deleteKGEdgesForBook(bookId);
+    }
+
+    /**
+     * Delete a single knowledge graph node by id.
+     * @param {string} id
+     */
+    async deleteKGNode(id) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_NODES);
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete a single knowledge graph edge by id.
+     * @param {string} id
+     */
+    async deleteKGEdge(id) {
+        const transaction = this._db.transaction([STORES.KG_EDGES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Atomic multi-store delete used by graph-explorer's bulk Delete action.
+     * One transaction over kg_nodes + kg_edges so a partial failure cannot
+     * leave the graph with edges referencing deleted nodes.
+     *
+     * @param {Object} payload
+     * @param {string[]} payload.deletedNodeIds
+     * @param {string[]} payload.deletedEdgeIds
+     */
+    async applyDeleteTransaction({ deletedNodeIds = [], deletedEdgeIds = [] } = {}) {
+        const transaction = this._db.transaction(
+            [STORES.KG_NODES, STORES.KG_EDGES], 'readwrite');
+        const nodes = transaction.objectStore(STORES.KG_NODES);
+        const edges = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            for (const id of deletedEdgeIds) edges.delete(id);
+            for (const id of deletedNodeIds) nodes.delete(id);
+        });
+    }
+
+    /**
+     * Atomic merge: write the surviving Primary node, write the rewritten
+     * edges, delete the absorbed/self-loop edges, and delete the Secondary
+     * nodes — all inside one transaction spanning kg_nodes + kg_edges.
+     *
+     * FUTURE: when a kg_flashcards store is added (decoupled SRS), it must
+     * be added to this transaction's store list and the rewrite of each
+     * flashcard's `targetNodeIds` (Secondary id → Primary id, plus dedup of
+     * the resulting array) must be queued here so flashcard updates land
+     * atomically with node/edge updates.
+     *
+     * @param {Object} payload
+     * @param {Object} payload.updatedNode
+     * @param {string[]} payload.deletedNodeIds
+     * @param {Object[]} payload.savedEdges
+     * @param {string[]} payload.deletedEdgeIds
+     */
+    async applyMergeTransaction({
+        updatedNode,
+        deletedNodeIds = [],
+        savedEdges = [],
+        deletedEdgeIds = []
+    } = {}) {
+        if (!updatedNode || !updatedNode.id) {
+            throw new Error('applyMergeTransaction: updatedNode is required');
+        }
+        const transaction = this._db.transaction(
+            [STORES.KG_NODES, STORES.KG_EDGES], 'readwrite');
+        const nodes = transaction.objectStore(STORES.KG_NODES);
+        const edges = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            nodes.put(updatedNode);
+            for (const e of savedEdges) edges.put(e);
+            for (const id of deletedEdgeIds) edges.delete(id);
+            for (const id of deletedNodeIds) nodes.delete(id);
+        });
     }
 
     /**
