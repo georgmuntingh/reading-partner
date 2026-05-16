@@ -28,7 +28,7 @@ describe('cosine helper', () => {
 describe('KGResolver.resolve', () => {
     it('creates a brand-new node when the resolver is empty (initialises SM-2 stub)', async () => {
         const r = new KGResolver({ bookId: 'b1', similarityThreshold: 0.88 });
-        const { id, created } = await r.resolve({
+        const result = await r.resolve({
             name: 'Arthur',
             type: 'PERSON',
             aliases: ['the king'],
@@ -37,8 +37,13 @@ describe('KGResolver.resolve', () => {
             chapterIndex: 0,
             sentenceIndices: [3]
         });
-        expect(created).toBe(true);
-        const stored = await storage.getKGNode(id);
+        expect(result.created).toBe(true);
+        // The full record is returned alongside id/created so live-build
+        // listeners can react without an extra storage round-trip.
+        expect(result.node).toBeTruthy();
+        expect(result.node.id).toBe(result.id);
+        expect(result.node.canonicalName).toBe('Arthur');
+        const stored = await storage.getKGNode(result.id);
         expect(stored.canonicalName).toBe('Arthur');
         expect(stored.aliases).toEqual(['the king']);
         expect(stored.srs.ease).toBe(2.5);

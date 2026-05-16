@@ -336,6 +336,13 @@ class ReadingPartnerApp {
             lookupDefinition
         });
         this._kgController.onProgress = (p) => this._showKGProgress(p);
+        // Live-build pipe: every freshly-resolved node/edge is forwarded
+        // to the graph explorer so the user can watch the graph grow as
+        // extraction runs. The explorer no-ops these if it's not open.
+        this._kgController.onNodeCreated = (node) =>
+            this._graphExplorer?.handleLiveNode(node);
+        this._kgController.onEdgeCreated = (edge) =>
+            this._graphExplorer?.handleLiveEdge(edge);
 
         this._graphExplorer = new GraphExplorer({
             container: document.getElementById('graph-explorer'),
@@ -3401,11 +3408,18 @@ class ReadingPartnerApp {
         }
         try {
             this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
+            // Auto-open the explorer so the user can watch nodes/edges
+            // arrive in real time. beginLiveBuild snapshots the current
+            // graph (fades it) so anything that appears during the build
+            // is visually distinct.
+            await this._graphExplorer?.open();
+            await this._graphExplorer?.beginLiveBuild();
             await this._kgController.buildChapterGraph(this._currentChapterIndex);
         } catch (error) {
             console.error('KG build failed:', error);
             this._showToast(`KG build failed: ${error.message}`);
         } finally {
+            this._graphExplorer?.endLiveBuild();
             // Re-evaluate the button: stays disabled if processed succeeded,
             // re-enabled if the build failed (so the user can retry).
             this._updateKGBuildButtonState();

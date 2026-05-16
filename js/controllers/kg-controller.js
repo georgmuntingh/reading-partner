@@ -49,6 +49,12 @@ export class KGController {
         this.state = KG_STATE.IDLE;
         // Progress callback. Stages: 'embed-load' | 'extract' | 'done' | 'error'
         this.onProgress = null;
+        // Live-build callbacks. Invoked once per freshly-created record
+        // immediately after resolver.resolve()/resolveEdge() persist; the
+        // graph explorer uses these to grow the live view as extraction
+        // runs instead of forcing the user to close and re-open.
+        this.onNodeCreated = null;
+        this.onEdgeCreated = null;
     }
 
     /**
@@ -307,7 +313,13 @@ export class KGController {
                         if (result) {
                             nameToNodeId.set(ent.name, result.id);
                             nameToSentenceIndices.set(ent.name, entSentences);
-                            if (result.created) newlyCreated.set(result.id, ent.name);
+                            if (result.created) {
+                                newlyCreated.set(result.id, ent.name);
+                                if (result.node) {
+                                    try { this.onNodeCreated?.(result.node); }
+                                    catch (e) { console.warn('[kg-controller] onNodeCreated listener threw:', e?.message); }
+                                }
+                            }
                         }
                     } catch (err) {
                         console.warn(`[kg-controller] resolve failed for "${ent.name}":`, err?.message);
@@ -333,13 +345,17 @@ export class KGController {
                         ? both
                         : Array.from(new Set([...srcS, ...tgtS]));
                     try {
-                        await resolver.resolveEdge({
+                        const edgeResult = await resolver.resolveEdge({
                             sourceId: sId,
                             targetId: tId,
                             relation: r.relation,
                             chapterIndex,
                             sentenceIndices: edgeSentences
                         });
+                        if (edgeResult?.created && edgeResult.edge) {
+                            try { this.onEdgeCreated?.(edgeResult.edge); }
+                            catch (e) { console.warn('[kg-controller] onEdgeCreated listener threw:', e?.message); }
+                        }
                     } catch (err) {
                         console.warn('[kg-controller] edge save failed:', err?.message);
                     }

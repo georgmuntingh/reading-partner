@@ -196,13 +196,13 @@ describe('GraphExplorer', () => {
         expect(cytoscapeFactory).toHaveBeenCalledTimes(2);
     });
 
-    it('chapter slider defaults to the reader\'s current chapter and exposes an "All" sentinel', async () => {
+    it('chapter slider defaults to the "All chapters" sentinel and exposes per-chapter positions', async () => {
         await seedBookGraph();
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({
             container,
             getBook: () => ({ id: 'b1', chapters: [{}, {}, {}] }),  // 3 chapters
-            getCurrentChapterIndex: () => 1                          // reader on Ch 2
+            getCurrentChapterIndex: () => 1                          // reader on Ch 2 — IGNORED now
         });
         await ge.open();
         const slider = container.querySelector('#kg-chapter');
@@ -210,16 +210,17 @@ describe('GraphExplorer', () => {
         expect(slider.disabled).toBe(false);
         expect(slider.min).toBe('0');
         expect(slider.max).toBe('3');         // 3 chapters + 1 "All" slot
-        expect(slider.value).toBe('1');       // current chapter
-        // The value display is now an editable text input; show 1-based
-        // chapter numbers ("2" for slider value 1) so the user can type
-        // a number to jump to a chapter.
-        expect(label.value).toBe('2');
-
-        // Last position is the "All chapters" sentinel.
-        slider.value = '3';
-        slider.dispatchEvent(new Event('input'));
+        // Default is the "All chapters" sentinel (max position), not the
+        // reader's current chapter — the user explicitly wanted the
+        // default view to show every node in the graph regardless of
+        // which chapter they're reading.
+        expect(slider.value).toBe('3');
         expect(label.value).toBe('All');
+
+        // Per-chapter positions still work.
+        slider.value = '1';
+        slider.dispatchEvent(new Event('input'));
+        expect(label.value).toBe('2');         // 1-based chapter number
     });
 
     it('falls back to "All" when no current-chapter callback is provided', async () => {
@@ -712,6 +713,90 @@ describe('GraphExplorer', () => {
         });
         expect(removeSpy).toHaveBeenCalled();
         applySpy.mockRestore();
+    });
+
+    it('beginLiveBuild fades existing elements and handleLiveNode adds a new node with the highlight class', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+
+        const addedFaded = new Set();
+        const removedFaded = new Set();
+        const elementsCollection = {
+            addClass: (c) => { if (c === 'kg-faded') addedFaded.add('all'); },
+            removeClass: () => {}
+        };
+        const addSpy = vi.fn();
+        const nodeStub = {
+            id: () => 'n_existing',
+            position: () => ({ x: 100, y: 100 })
+        };
+        const nodesByClass = (sel) => sel === '.kg-faded'
+            ? Object.assign([nodeStub], { length: 1 })
+            : Object.assign([nodeStub], { length: 1 });
+        ge._cy = {
+            elements: () => elementsCollection,
+            nodes: nodesByClass,
+            add: addSpy,
+            getElementById: () => ({ empty: () => true })
+        };
+        await ge.beginLiveBuild();
+        expect(addedFaded.has('all')).toBe(true);
+        expect(container.querySelector('.graph-clear-highlights-btn')
+            .classList.contains('hidden')).toBe(false);
+
+        ge.handleLiveNode({
+            id: 'n_new', canonicalName: 'Excalibur', type: 'OBJECT',
+            bloom: 'Apply', relevanceScore: 0.7,
+            contexts: [{ chapterIndex: 0, sentenceIndices: [4] }]
+        });
+        expect(addSpy).toHaveBeenCalledTimes(1);
+        const payload = addSpy.mock.calls[0][0];
+        expect(payload.group).toBe('nodes');
+        expect(payload.classes).toBe('kg-newly-added');
+        expect(payload.data.id).toBe('n_new');
+        // Position is the chosen anchor + small jitter.
+        expect(payload.position.x).toBeGreaterThan(70);
+        expect(payload.position.x).toBeLessThan(130);
+    });
+
+    it('handleLiveEdge skips when an endpoint is missing in the canvas', () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const addSpy = vi.fn();
+        ge._cy = {
+            getElementById: (id) => id === 'present'
+                ? { empty: () => false }
+                : { empty: () => true },
+            add: addSpy
+        };
+        ge.handleLiveEdge({
+            id: 'e_dangling', sourceId: 'present', targetId: 'missing',
+            relation: 'r', contexts: []
+        });
+        expect(addSpy).not.toHaveBeenCalled();
+    });
+
+    it('clearHighlights strips both classes from every element and re-runs the filter', () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const removed = [];
+        ge._cy = {
+            elements: () => ({
+                removeClass: (c) => {
+                    removed.push(c);
+                    return { removeClass: (c2) => removed.push(c2) };
+                }
+            })
+        };
+        const filterSpy = vi.fn();
+        ge._applyDetailFilter = filterSpy;
+        ge._highlightingActive = true;
+        ge.clearHighlights();
+        expect(removed).toEqual(['kg-faded', 'kg-newly-added']);
+        expect(filterSpy).toHaveBeenCalled();
+        expect(container.querySelector('.graph-clear-highlights-btn')
+            .classList.contains('hidden')).toBe(true);
     });
 
     it('min-connections threshold keeps anchors AND their neighbours (not only the anchors)', async () => {

@@ -114,6 +114,9 @@ export class GraphExplorer {
                         <input type="text" class="kg-toolbar-value" id="kg-min-relevance-value" value="0.15" aria-label="Minimum relevance" autocomplete="off" inputmode="decimal">
                     </label>
                 </div>
+                <button type="button" class="btn btn-secondary graph-clear-highlights-btn hidden" aria-label="Clear highlights">
+                    Clear highlights
+                </button>
                 <button class="btn-icon graph-close-btn" aria-label="Close">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -136,6 +139,7 @@ export class GraphExplorer {
             </div>
         `;
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
+        this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
 
         const degSlider = this._container.querySelector('#kg-min-degree');
         const relSlider = this._container.querySelector('#kg-min-relevance');
@@ -298,10 +302,11 @@ export class GraphExplorer {
         chValue.disabled = false;
         chSlider.min = '0';
         chSlider.max = String(count);    // last slot = "All"
-        const current = this._getCurrentChapterIndex();
-        const defaultPos = (Number.isInteger(current) && current >= 0 && current < count)
-            ? current
-            : count;                     // fall back to "All"
+        // Default to the "All chapters" sentinel so users see the whole
+        // graph by default — the live-build flow especially needs this,
+        // since pinning to the reader's current chapter would hide
+        // pre-existing nodes from other chapters during a build.
+        const defaultPos = count;
         chSlider.value = String(defaultPos);
         chValue.value = this._chapterSliderLabel(defaultPos);
     }
@@ -345,17 +350,6 @@ export class GraphExplorer {
         }
         this._hideEmptyState();
 
-        // Pre-compute the unique chapter set for each node and edge so the
-        // chapter slider can do an O(1) lookup per element instead of
-        // re-scanning `contexts` on every slider tick.
-        const chaptersOf = (item) => {
-            const s = new Set();
-            for (const c of item.contexts || []) {
-                if (Number.isInteger(c.chapterIndex)) s.add(c.chapterIndex);
-            }
-            return s;
-        };
-
         const elements = [
             ...nodes.map((n) => ({
                 data: {
@@ -366,7 +360,7 @@ export class GraphExplorer {
                     // Legacy nodes lack a relevanceScore — coerce to null
                     // so the filter can recognise them and exempt them.
                     relevanceScore: typeof n.relevanceScore === 'number' ? n.relevanceScore : null,
-                    chapterSet: chaptersOf(n),
+                    chapterSet: this._chaptersOf(n),
                     raw: n
                 }
             })),
@@ -376,18 +370,29 @@ export class GraphExplorer {
                     source: e.sourceId,
                     target: e.targetId,
                     label: e.relation,
-                    chapterSet: chaptersOf(e),
+                    chapterSet: this._chaptersOf(e),
                     raw: e
                 }
             }))
         ];
 
-        // Tear down a previous instance if open() is called twice without close()
+        this._initCytoscape(elements);
+    }
+
+    /**
+     * Set up the cytoscape instance with the supplied elements payload
+     * (may be empty). Tears down any prior instance, applies the full
+     * stylesheet, runs the cose layout, and wires every node / background
+     * tap / right-click handler the explorer needs. Called from open()
+     * with a storage-derived element list, and from _bootstrapEmptyCytoscape
+     * during live builds against a previously-empty graph.
+     */
+    _initCytoscape(elements) {
+        const cytoscape = this._cytoscape;
         if (this._cy) {
             this._cy.destroy();
             this._cy = null;
         }
-
         this._cy = cytoscape({
             container: this._container.querySelector('#cy-canvas'),
             elements,
@@ -438,6 +443,32 @@ export class GraphExplorer {
                 {
                     selector: '.kg-hidden',
                     style: { display: 'none' }
+                },
+                // Live-build classes: pre-existing nodes/edges fade so the
+                // newly-arriving ones pop. Both classes survive until the
+                // user clicks "Clear highlights".
+                {
+                    selector: '.kg-faded',
+                    style: { 'opacity': 0.22 }
+                },
+                {
+                    selector: 'node.kg-newly-added',
+                    style: {
+                        'border-width': 4,
+                        'border-color': '#ffd24a',
+                        'border-opacity': 1,
+                        'overlay-color': '#ffd24a',
+                        'overlay-opacity': 0.25,
+                        'overlay-padding': 6
+                    }
+                },
+                {
+                    selector: 'edge.kg-newly-added',
+                    style: {
+                        'line-color': '#ffd24a',
+                        'target-arrow-color': '#ffd24a',
+                        'width': 3
+                    }
                 }
             ],
             layout: { name: 'cose', animate: false, padding: 30 },
@@ -841,6 +872,11 @@ export class GraphExplorer {
         // full neighbourhood of each well-connected node — even neighbours
         // that don't individually meet the degree threshold.
         const passesUniversal = (n) => {
+            // Live-build exemption: newly-arrived nodes are always visible
+            // during a build so the user can see them appear regardless of
+            // the current min-degree / min-relevance threshold. The
+            // exemption clears when the user clicks "Clear highlights".
+            if (typeof n.hasClass === 'function' && n.hasClass('kg-newly-added')) return true;
             const score = n.data('relevanceScore');
             const passesRel = score == null || score >= minRel;
             const chSet = n.data('chapterSet');
@@ -1048,6 +1084,210 @@ export class GraphExplorer {
 
     _hideSide() {
         this._container.querySelector('#kg-side-panel').classList.add('hidden');
+    }
+
+    /**
+     * Snapshot the current node + edge set and visually fade every one of
+     * them so that nodes/edges added during the upcoming build via
+     * {@link handleLiveNode} and {@link handleLiveEdge} stand out.
+     *
+     * Idempotent — called at the start of every build, even one that opens
+     * a fresh explorer instance. If the book has zero nodes yet (empty
+     * graph for chapter 1's first build) we bootstrap an empty cytoscape
+     * so handleLiveNode has somewhere to add to.
+     */
+    async beginLiveBuild() {
+        // Make sure the overlay is visible — the app auto-opens the
+        // explorer on build, but beginLiveBuild() is also safe to call
+        // when the user already had it open.
+        this._container.classList.remove('hidden');
+        if (!this._cy) {
+            // open() showed the empty state and skipped cytoscape init.
+            // Bootstrap an empty cytoscape so the live additions have a
+            // canvas to land on, and hide the empty state.
+            await this._bootstrapEmptyCytoscape();
+        }
+        if (!this._cy) return;
+        this._cy.elements().addClass('kg-faded');
+        this._highlightingActive = true;
+        this._showClearHighlightsButton(true);
+    }
+
+    /**
+     * Lazy-bootstrap a zero-element cytoscape instance. Used when the user
+     * triggers a build on a book that has no graph yet — open() takes the
+     * empty-state branch and skips cytoscape; live additions still need
+     * somewhere to render.
+     */
+    async _bootstrapEmptyCytoscape() {
+        if (this._cy) return;
+        if (!this._cytoscape) {
+            const mod = await import('cytoscape');
+            this._cytoscape = mod.default ?? mod;
+        }
+        const book = this._getBook();
+        if (book) this._configureChapterSlider(book);
+        this._hideEmptyState();
+        this._initCytoscape([]);
+    }
+
+    /**
+     * Called by the KG controller for every freshly-resolved node. Adds it
+     * to cytoscape with the `.kg-newly-added` class, placed near a
+     * connected existing neighbour if any, otherwise near a random
+     * non-faded anchor or the viewport centre.
+     *
+     * Silently no-ops if the explorer isn't open (controller fires the
+     * callback regardless; the explorer just ignores them).
+     */
+    handleLiveNode(node) {
+        if (!this._cy || !node?.id) return;
+        // If a node with this id is already in cy (re-resolve after a
+        // merge, racy duplicate, etc.) just upgrade its data + class.
+        const existing = this._cy.getElementById(node.id);
+        if (!existing.empty()) {
+            existing.data({
+                raw: node,
+                label: node.canonicalName,
+                relevanceScore: typeof node.relevanceScore === 'number'
+                    ? node.relevanceScore : null,
+                chapterSet: this._chaptersOf(node)
+            });
+            existing.removeClass('kg-faded').addClass('kg-newly-added');
+            return;
+        }
+        const position = this._pickLivePosition();
+        this._cy.add({
+            group: 'nodes',
+            data: {
+                id: node.id,
+                label: node.canonicalName,
+                type: node.type,
+                bloom: node.bloom,
+                relevanceScore: typeof node.relevanceScore === 'number'
+                    ? node.relevanceScore : null,
+                chapterSet: this._chaptersOf(node),
+                raw: node
+            },
+            position,
+            classes: 'kg-newly-added'
+        });
+        this._highlightingActive = true;
+        this._showClearHighlightsButton(true);
+    }
+
+    /**
+     * Called by the KG controller for every freshly-resolved edge. Adds it
+     * with the `.kg-newly-added` class so it pulses out against the faded
+     * background. If either endpoint isn't in cy yet (extremely rare race
+     * — the controller resolves entities before relations within a chunk),
+     * the edge is dropped; it will appear correctly on the next open().
+     */
+    handleLiveEdge(edge) {
+        if (!this._cy || !edge?.id) return;
+        const existing = this._cy.getElementById(edge.id);
+        if (!existing.empty()) {
+            existing.data({
+                raw: edge,
+                label: edge.relation,
+                chapterSet: this._chaptersOf(edge)
+            });
+            existing.removeClass('kg-faded').addClass('kg-newly-added');
+            return;
+        }
+        const src = this._cy.getElementById(edge.sourceId);
+        const tgt = this._cy.getElementById(edge.targetId);
+        if (src.empty() || tgt.empty()) return;
+        this._cy.add({
+            group: 'edges',
+            data: {
+                id: edge.id,
+                source: edge.sourceId,
+                target: edge.targetId,
+                label: edge.relation,
+                chapterSet: this._chaptersOf(edge),
+                raw: edge
+            },
+            classes: 'kg-newly-added'
+        });
+        this._highlightingActive = true;
+        this._showClearHighlightsButton(true);
+    }
+
+    /**
+     * Called by the app after buildChapterGraph() resolves (either way:
+     * success or error). The fade/highlight classes stay on per design
+     * ("Keep until explicitly cleared") so the user can study what just
+     * changed; clicking the "Clear highlights" toolbar button removes them.
+     */
+    endLiveBuild() {
+        // Re-run the filter once at the end of the build so any thresholds
+        // the user moved during the build (or that were already in effect)
+        // re-apply to the now-complete graph. Newly-added items remain
+        // exempt while their class lingers.
+        this._applyDetailFilter();
+    }
+
+    /**
+     * Remove `.kg-faded` and `.kg-newly-added` from every element so the
+     * graph returns to its normal coloured state. Re-runs the detail
+     * filter so anything that was held visible only by the live-build
+     * exemption falls back under the user's current thresholds.
+     */
+    clearHighlights() {
+        if (!this._cy) {
+            this._highlightingActive = false;
+            this._showClearHighlightsButton(false);
+            return;
+        }
+        this._cy.elements().removeClass('kg-faded').removeClass('kg-newly-added');
+        this._highlightingActive = false;
+        this._showClearHighlightsButton(false);
+        this._applyDetailFilter();
+    }
+
+    _showClearHighlightsButton(show) {
+        const btn = this._container.querySelector('.graph-clear-highlights-btn');
+        if (!btn) return;
+        btn.classList.toggle('hidden', !show);
+    }
+
+    /**
+     * Pre-compute the unique chapter set of an item's contexts. Mirrors
+     * the helper inside open() so live additions land with the same
+     * `chapterSet` shape the detail filter expects.
+     */
+    _chaptersOf(item) {
+        const s = new Set();
+        for (const c of item?.contexts || []) {
+            if (Number.isInteger(c.chapterIndex)) s.add(c.chapterIndex);
+        }
+        return s;
+    }
+
+    /**
+     * Choose a position for a node arriving during a live build. Prefers
+     * a random non-faded existing node's position (jittered) so the new
+     * node lands near the existing graph; falls back to the viewport
+     * centre if there are no existing nodes (first-ever build).
+     */
+    _pickLivePosition() {
+        const jitter = () => (Math.random() - 0.5) * 60;
+        // Prefer an existing (non-faded) anchor — that's the original
+        // graph from before this build started. Among only faded-and-new
+        // nodes, fall back to any random node.
+        const original = this._cy.nodes('.kg-faded');
+        const anchors = original.length > 0 ? original : this._cy.nodes();
+        if (anchors.length > 0) {
+            const pick = anchors[Math.floor(Math.random() * anchors.length)];
+            const pos = pick.position();
+            return { x: pos.x + jitter(), y: pos.y + jitter() };
+        }
+        const extent = this._cy.extent();
+        return {
+            x: (extent.x1 + extent.x2) / 2 + jitter(),
+            y: (extent.y1 + extent.y2) / 2 + jitter()
+        };
     }
 
     /**

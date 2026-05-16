@@ -125,9 +125,12 @@ export class KGResolver {
      * Existing-node path appends the new alias + chapter context.
      * New-node path initialises SM-2 SRS stub fields.
      *
-     * @returns {Promise<{ id: string, created: boolean } | null>} null when the
+     * @returns {Promise<{ id: string, created: boolean, node: Object } | null>} null when the
      *   Tier-2 anchor gate dropped this entity. Callers should treat the
-     *   entity as never extracted and skip relations referencing it.
+     *   entity as never extracted and skip relations referencing it. The
+     *   returned `node` is the full record (existing or newly-created) — a
+     *   live convenience for callers that want to forward it to a UI
+     *   listener without an extra storage round-trip.
      */
     async resolve({ name, type, aliases = [], bloom, definition = '', embedding, chapterIndex, sentenceIndices }) {
         if (!this._loaded) await this.load();
@@ -208,7 +211,7 @@ export class KGResolver {
             }
             hit.updatedAt = now;
             await storage.saveKGNode(hit);
-            return { id: hit.id, created: false };
+            return { id: hit.id, created: false, node: hit };
         }
 
         // 3) Create new node (SM-2 stub)
@@ -241,7 +244,7 @@ export class KGResolver {
         await storage.saveKGNode(node);
         this._nodes.push(node);
         this._nodesByName.set(lc, node);
-        return { id: node.id, created: true };
+        return { id: node.id, created: true, node };
     }
 
     /**
@@ -263,7 +266,7 @@ export class KGResolver {
                 if (!ctx.sentenceIndices.includes(si)) ctx.sentenceIndices.push(si);
             }
             await storage.saveKGEdge(existing);
-            return { id: existing.id, created: false };
+            return { id: existing.id, created: false, edge: existing };
         }
 
         const edge = {
@@ -278,6 +281,6 @@ export class KGResolver {
         await storage.saveKGEdge(edge);
         this._edges.push(edge);
         this._edgesByKey.set(key, edge);
-        return { id: edge.id, created: true };
+        return { id: edge.id, created: true, edge };
     }
 }
