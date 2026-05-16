@@ -219,6 +219,13 @@
                             <path d="M9 14l2 2 4-4"/>
                         </svg>
                     </button>
+                    <button class="btn-icon btn-srs" id="srs-btn" aria-label="Spaced review" title="Spaced review">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 12a9 9 0 1 0 3-6.7"/>
+                            <polyline points="3 4 3 10 9 10"/>
+                            <path d="M12 8v4l3 2"/>
+                        </svg>
+                    </button>
                     <button class="btn-icon btn-kg-build" id="kg-build-btn" aria-label="Build knowledge graph for this chapter" title="Build knowledge graph for this chapter">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="6" cy="6" r="2"/>
@@ -343,6 +350,11 @@
     <!-- Quiz Overlay -->
     <div id="quiz-overlay" class="quiz-overlay hidden">
         <!-- Content will be rendered by QuizOverlay component -->
+    </div>
+
+    <!-- Spaced Review (SRS) Overlay -->
+    <div id="srs-overlay" class="srs-overlay hidden">
+        <!-- Content will be rendered by SRSOverlay component -->
     </div>
 
     <!-- Chapter Overview Overlay -->
