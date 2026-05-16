@@ -14,6 +14,10 @@
 
 import { storage } from '../services/storage.js';
 import { openContextPreview } from './kg-context-preview-modal.js';
+import { openContextMenu } from './kg-context-menu.js';
+import { confirmAction } from './confirm-modal.js';
+import { mergeNodeMetadata, redirectAndDedupeEdges } from '../services/kg-merge.js';
+import { pickMergePrimary } from './kg-merge-primary-picker.js';
 
 // Bloom level → color (Remember = warm green, Create = warm red).
 const BLOOM_COLOR = {
@@ -121,6 +125,12 @@ export class GraphExplorer {
                 <div id="cy-canvas" class="cy-canvas"></div>
                 <aside id="kg-side-panel" class="kg-side-panel hidden"></aside>
             </div>
+            <div id="kg-action-bar" class="kg-action-bar hidden">
+                <span class="kg-action-bar-count">0 selected</span>
+                <button type="button" class="btn btn-secondary" data-action="cancel">Cancel</button>
+                <button type="button" class="btn btn-secondary" data-action="merge" hidden>Merge</button>
+                <button type="button" class="btn btn-danger" data-action="delete">Delete</button>
+            </div>
             <div id="graph-empty-state" class="graph-empty-state hidden">
                 <p>No knowledge graph yet. Open a chapter and click "Build graph" in the reader controls to extract entities and relations.</p>
             </div>
@@ -224,6 +234,29 @@ export class GraphExplorer {
                 }
             }, { passive: false });
         }
+
+        // Touch action bar (selection-mode only). Desktop uses the right-
+        // click context menu instead.
+        const bar = this._container.querySelector('#kg-action-bar');
+        bar.querySelector('[data-action="cancel"]').addEventListener('click', () => {
+            this._exitSelectionMode();
+        });
+        bar.querySelector('[data-action="delete"]').addEventListener('click', () => {
+            this._deleteSelected();
+        });
+        bar.querySelector('[data-action="merge"]').addEventListener('click', async () => {
+            const selected = this._cy ? this._cy.nodes(':selected') : null;
+            if (!selected || selected.length < 2) return;
+            const candidates = selected.map((n) => ({
+                id: n.id(),
+                name: n.data('raw')?.canonicalName || n.id()
+            }));
+            const primaryId = await pickMergePrimary({ candidates });
+            if (!primaryId) return;
+            const primary = this._cy.getElementById(primaryId);
+            if (!primary || primary.empty()) return;
+            this._mergeSelected(primary);
+        });
     }
 
     /**
@@ -408,16 +441,24 @@ export class GraphExplorer {
             // Pulled from settings so users can tune zoom speed to their
             // hardware (mice vs. trackpads vary wildly). 1.0 is cytoscape's
             // documented default and notably snappier than our earlier 0.3.
-            wheelSensitivity: this._wheelSensitivity
+            wheelSensitivity: this._wheelSensitivity,
+            // Per design: ctrl/cmd-click toggles selection; no box-select
+            // drag. Panning explicitly stays on so a future cytoscape default
+            // flip cannot turn the canvas into a giant box-select region.
+            selectionType: 'additive',
+            boxSelectionEnabled: false,
+            userPanningEnabled: true
         });
 
-        // Single tap → side panel; double tap or long press → open the
-        // preview modal at the node's first-seen sentence so the user gets
-        // immediate context without having to drill into the sidebar.
+        // Single tap → side panel; double tap opens the preview modal at the
+        // node's first-seen sentence. Long press on touch enters selection
+        // mode so the user can multi-select and act via the bottom action
+        // bar (mirroring the desktop ctrl-click + right-click flow).
         const LONG_PRESS_MS = 500;
         let lastTapAt = 0;
         let lastTapId = null;
         let longPressTimer = null;
+        let longPressFired = false;
         const cancelLongPress = () => {
             if (longPressTimer) {
                 clearTimeout(longPressTimer);
@@ -425,9 +466,23 @@ export class GraphExplorer {
             }
         };
         this._cy.on('tap', 'node', (evt) => {
+            // Suppress the tap that always trails a long-press release.
+            if (longPressFired) {
+                longPressFired = false;
+                return;
+            }
             const now = Date.now();
             const node = evt.target.data('raw');
             const id = evt.target.id();
+            // Selection mode (touch): taps toggle the selection rather than
+            // opening the side panel.
+            if (this._selectionMode) {
+                evt.target.selected()
+                    ? evt.target.unselect()
+                    : evt.target.select();
+                this._refreshActionBar();
+                return;
+            }
             // Double-tap detection: same node, second tap within 350 ms.
             if (lastTapId === id && now - lastTapAt < 350) {
                 cancelLongPress();
@@ -439,23 +494,240 @@ export class GraphExplorer {
             lastTapId = id;
             this._showNodeDetails(node);
         });
-        // Long-press (mouse hold or touch hold) on a node opens the preview.
+        // Long press on touch enters selection mode.
         this._cy.on('tapstart', 'node', (evt) => {
             cancelLongPress();
-            const node = evt.target.data('raw');
+            longPressFired = false;
+            const targetNode = evt.target;
             longPressTimer = setTimeout(() => {
                 longPressTimer = null;
-                this._openFirstSeenPreview(node);
+                longPressFired = true;
+                targetNode.select();
+                this._enterSelectionMode();
             }, LONG_PRESS_MS);
         });
         this._cy.on('tapend tapdrag', 'node', cancelLongPress);
 
+        // Right-click → context menu. Right-clicking an unselected node first
+        // sets the selection to just that node (file-manager convention).
+        this._cy.on('cxttap', 'node', (evt) => {
+            const node = evt.target;
+            if (!node.selected()) {
+                this._cy.elements().unselect();
+                node.select();
+            }
+            // The renderedPosition is canvas-relative; the cytoscape
+            // container is `position: absolute` inside graph-body, which is
+            // itself inside the fixed-position graph-explorer overlay — so
+            // renderedPosition converted to client coordinates via the
+            // container's bounding rect is the correct anchor for a
+            // `position: fixed` menu.
+            const containerRect = this._container
+                .querySelector('#cy-canvas').getBoundingClientRect();
+            const rp = evt.renderedPosition || evt.position || { x: 0, y: 0 };
+            this._openContextMenu({
+                x: containerRect.left + rp.x,
+                y: containerRect.top + rp.y
+            }, node);
+        });
+
         this._cy.on('tap', (evt) => {
-            if (evt.target === this._cy) this._hideSide();
+            if (evt.target === this._cy) {
+                this._hideSide();
+                // Plain background tap clears the selection (per design).
+                // In selection mode this also exits selection mode.
+                this._cy.elements().unselect();
+                if (this._selectionMode) this._exitSelectionMode();
+            }
         });
 
         // Apply the initial detail filter so the default UI state (min
         // relevance 0.15, min degree 1) takes effect on first render.
+        this._applyDetailFilter();
+    }
+
+    _enterSelectionMode() {
+        if (this._selectionMode) {
+            this._refreshActionBar();
+            return;
+        }
+        this._selectionMode = true;
+        this._container.classList.add('is-selection-mode');
+        this._container.querySelector('#kg-action-bar').classList.remove('hidden');
+        this._hideSide();
+        this._refreshActionBar();
+    }
+
+    _exitSelectionMode() {
+        this._selectionMode = false;
+        this._container.classList.remove('is-selection-mode');
+        this._container.querySelector('#kg-action-bar').classList.add('hidden');
+        if (this._cy) this._cy.elements().unselect();
+    }
+
+    _refreshActionBar() {
+        const bar = this._container.querySelector('#kg-action-bar');
+        if (!bar || !this._cy) return;
+        const count = this._cy.nodes(':selected').length;
+        bar.querySelector('.kg-action-bar-count').textContent =
+            `${count} selected`;
+        bar.querySelector('[data-action="delete"]').disabled = count === 0;
+        bar.querySelector('[data-action="merge"]').hidden = count < 2;
+    }
+
+    /**
+     * Desktop right-click handler — builds the menu items and dispatches to
+     * the appropriate handler. `primaryNode` is the cytoscape node element
+     * the user right-clicked on (the Primary for a Merge action).
+     */
+    async _openContextMenu({ x, y }, primaryNode) {
+        const selected = this._cy.nodes(':selected');
+        const items = [{ id: 'delete', label: 'Delete', danger: true }];
+        if (selected.length >= 2) {
+            const name = primaryNode.data('raw')?.canonicalName
+                || primaryNode.id();
+            items.unshift({ id: 'merge', label: `Merge into ${name}` });
+        }
+        const picked = await openContextMenu({ x, y, items });
+        if (picked === 'delete') this._deleteSelected();
+        else if (picked === 'merge') this._mergeSelected(primaryNode);
+    }
+
+    /**
+     * Delete every selected node. Cascades to incident edges (an edge whose
+     * source/target points at a deleted node is meaningless), wrapped in a
+     * single atomic transaction so a partial failure leaves the graph
+     * unchanged on disk.
+     */
+    async _deleteSelected() {
+        if (!this._cy) return;
+        const selectedNodes = this._cy.nodes(':selected');
+        const count = selectedNodes.length;
+        if (count === 0) return;
+        const nodeIds = selectedNodes.map((n) => n.id());
+        const edgeIds = selectedNodes.connectedEdges().map((e) => e.id());
+
+        const ok = await confirmAction({
+            title: count === 1 ? 'Delete node?' : `Delete ${count} nodes?`,
+            message: count === 1
+                ? `"${selectedNodes[0].data('raw')?.canonicalName}" and its ${edgeIds.length} connection(s) will be removed.`
+                : `${count} nodes and ${edgeIds.length} incident connection(s) will be removed.`,
+            confirmLabel: 'Delete',
+            danger: true
+        });
+        if (!ok) return;
+
+        await storage.applyDeleteTransaction({
+            deletedNodeIds: nodeIds,
+            deletedEdgeIds: edgeIds
+        });
+        this._cy.remove(selectedNodes.union(selectedNodes.connectedEdges()));
+        this._exitSelectionMode();
+        this._applyDetailFilter();
+    }
+
+    /**
+     * Merge every other selected node into the right-clicked `primaryNode`.
+     * Pure metadata merge is delegated to kg-merge.js; persistence is a
+     * single atomic transaction over both KG stores.
+     */
+    async _mergeSelected(primaryNode) {
+        if (!this._cy) return;
+        const selected = this._cy.nodes(':selected');
+        if (selected.length < 2) return;
+        const primaryRecord = primaryNode.data('raw');
+        const secondaryNodes = selected.difference(primaryNode);
+        const secondaryRecords = secondaryNodes.map((n) => n.data('raw')).filter(Boolean);
+        if (secondaryRecords.length === 0) return;
+
+        const ok = await confirmAction({
+            title: `Merge ${secondaryRecords.length} node(s) into "${primaryRecord.canonicalName}"?`,
+            message: 'Aliases and contexts will be folded into the survivor. Connections will be redirected; duplicates will be deduplicated.',
+            confirmLabel: 'Merge',
+            danger: true
+        });
+        if (!ok) return;
+
+        const book = this._getBook();
+        const allEdges = book?.id
+            ? await storage.getKGEdgesForBook(book.id)
+            : [];
+        const secondaryIdSet = new Set(secondaryRecords.map((s) => s.id));
+        const updatedNode = mergeNodeMetadata(primaryRecord, secondaryRecords);
+        const { saves: savedEdges, deletes: deletedEdgeIds } =
+            redirectAndDedupeEdges(allEdges, primaryRecord.id, secondaryIdSet);
+
+        await storage.applyMergeTransaction({
+            updatedNode,
+            deletedNodeIds: secondaryRecords.map((s) => s.id),
+            savedEdges,
+            deletedEdgeIds
+        });
+
+        // Update cytoscape in-place to preserve node positions. Cytoscape's
+        // edge `source`/`target` are immutable once an edge is added, so
+        // any edge whose endpoint changed must be removed + re-added rather
+        // than data-patched.
+        this._cy.batch(() => {
+            // 1. Drop every Secondary node (and cytoscape cascades their
+            //    incident edges automatically) plus any explicitly deleted
+            //    edges still hanging on the Primary.
+            this._cy.remove(secondaryNodes);
+            for (const id of deletedEdgeIds) {
+                const e = this._cy.getElementById(id);
+                if (e && !e.empty()) this._cy.remove(e);
+            }
+
+            // 2. Refresh the surviving Primary's data (label / aliases /
+            //    contexts / chapterSet). Node `data` is freely mutable.
+            const chapterSet = new Set();
+            for (const c of updatedNode.contexts || []) {
+                if (Number.isInteger(c.chapterIndex)) chapterSet.add(c.chapterIndex);
+            }
+            primaryNode.data({
+                label: updatedNode.canonicalName,
+                raw: updatedNode,
+                chapterSet
+            });
+
+            // 3. Re-render the saved edges. For each, if the cy edge with
+            //    that id still exists, only the contexts changed — patch
+            //    data in place. Otherwise the endpoints changed (or the edge
+            //    was absorbed under a different id pair) — remove the old
+            //    representation if any and re-add fresh.
+            for (const edge of savedEdges) {
+                const chSet = new Set();
+                for (const c of edge.contexts || []) {
+                    if (Number.isInteger(c.chapterIndex)) chSet.add(c.chapterIndex);
+                }
+                const existing = this._cy.getElementById(edge.id);
+                const endpointsMatch = !existing.empty()
+                    && existing.data('source') === edge.sourceId
+                    && existing.data('target') === edge.targetId;
+                if (endpointsMatch) {
+                    existing.data({
+                        raw: edge,
+                        label: edge.relation,
+                        chapterSet: chSet
+                    });
+                } else {
+                    if (!existing.empty()) this._cy.remove(existing);
+                    this._cy.add({
+                        group: 'edges',
+                        data: {
+                            id: edge.id,
+                            source: edge.sourceId,
+                            target: edge.targetId,
+                            label: edge.relation,
+                            chapterSet: chSet,
+                            raw: edge
+                        }
+                    });
+                }
+            }
+        });
+
+        this._exitSelectionMode();
         this._applyDetailFilter();
     }
 

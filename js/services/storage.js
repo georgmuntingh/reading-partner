@@ -775,6 +775,98 @@ export class StorageService {
     }
 
     /**
+     * Delete a single knowledge graph node by id.
+     * @param {string} id
+     */
+    async deleteKGNode(id) {
+        const transaction = this._db.transaction([STORES.KG_NODES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_NODES);
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete a single knowledge graph edge by id.
+     * @param {string} id
+     */
+    async deleteKGEdge(id) {
+        const transaction = this._db.transaction([STORES.KG_EDGES], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Atomic multi-store delete used by graph-explorer's bulk Delete action.
+     * One transaction over kg_nodes + kg_edges so a partial failure cannot
+     * leave the graph with edges referencing deleted nodes.
+     *
+     * @param {Object} payload
+     * @param {string[]} payload.deletedNodeIds
+     * @param {string[]} payload.deletedEdgeIds
+     */
+    async applyDeleteTransaction({ deletedNodeIds = [], deletedEdgeIds = [] } = {}) {
+        const transaction = this._db.transaction(
+            [STORES.KG_NODES, STORES.KG_EDGES], 'readwrite');
+        const nodes = transaction.objectStore(STORES.KG_NODES);
+        const edges = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            for (const id of deletedEdgeIds) edges.delete(id);
+            for (const id of deletedNodeIds) nodes.delete(id);
+        });
+    }
+
+    /**
+     * Atomic merge: write the surviving Primary node, write the rewritten
+     * edges, delete the absorbed/self-loop edges, and delete the Secondary
+     * nodes — all inside one transaction spanning kg_nodes + kg_edges.
+     *
+     * FUTURE: when a kg_flashcards store is added (decoupled SRS), it must
+     * be added to this transaction's store list and the rewrite of each
+     * flashcard's `targetNodeIds` (Secondary id → Primary id, plus dedup of
+     * the resulting array) must be queued here so flashcard updates land
+     * atomically with node/edge updates.
+     *
+     * @param {Object} payload
+     * @param {Object} payload.updatedNode
+     * @param {string[]} payload.deletedNodeIds
+     * @param {Object[]} payload.savedEdges
+     * @param {string[]} payload.deletedEdgeIds
+     */
+    async applyMergeTransaction({
+        updatedNode,
+        deletedNodeIds = [],
+        savedEdges = [],
+        deletedEdgeIds = []
+    } = {}) {
+        if (!updatedNode || !updatedNode.id) {
+            throw new Error('applyMergeTransaction: updatedNode is required');
+        }
+        const transaction = this._db.transaction(
+            [STORES.KG_NODES, STORES.KG_EDGES], 'readwrite');
+        const nodes = transaction.objectStore(STORES.KG_NODES);
+        const edges = transaction.objectStore(STORES.KG_EDGES);
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            nodes.put(updatedNode);
+            for (const e of savedEdges) edges.put(e);
+            for (const id of deletedEdgeIds) edges.delete(id);
+            for (const id of deletedNodeIds) nodes.delete(id);
+        });
+    }
+
+    /**
      * Close the database connection
      */
     close() {

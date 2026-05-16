@@ -490,6 +490,69 @@ describe('GraphExplorer', () => {
         expect(container.classList.contains('hidden')).toBe(true);
     });
 
+    it('passes selection-mode flags (additive selection, panning on, no box-select) to cytoscape', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        const args = cytoscapeFactory.mock.calls[0][0];
+        expect(args.selectionType).toBe('additive');
+        expect(args.boxSelectionEnabled).toBe(false);
+        expect(args.userPanningEnabled).toBe(true);
+    });
+
+    it('_deleteSelected confirms, calls applyDeleteTransaction with the right ids, and removes from cy', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+
+        // Stub a minimal cytoscape API supporting selection + removal.
+        const selectedNodeIds = ['n1', 'n2'];
+        const removeSpy = vi.fn();
+        const connectedEdges = {
+            map: (f) => ['e1'].map((id) => f({ id: () => id }))
+        };
+        const selectedColl = {
+            length: selectedNodeIds.length,
+            map: (f) => selectedNodeIds.map((id) => f({
+                id: () => id,
+                data: (k) => k === 'raw' ? { canonicalName: id } : undefined
+            })),
+            connectedEdges: () => connectedEdges,
+            union: function() { return this; },
+            difference: function() { return this; },
+            [0]: { data: () => ({ canonicalName: 'n1' }) }
+        };
+        ge._cy = {
+            nodes: () => selectedColl,
+            remove: removeSpy,
+            elements: () => ({ unselect: () => {} }),
+            batch: (fn) => fn()
+        };
+        // Skip the post-delete re-filter — exercising it requires the much
+        // richer cytoscape mock from the min-connections test below.
+        ge._applyDetailFilter = () => {};
+
+        // Auto-confirm the destructive dialog.
+        const applySpy = vi.spyOn(storage, 'applyDeleteTransaction')
+            .mockResolvedValue();
+
+        const p = ge._deleteSelected();
+        // Wait for the confirm modal to mount, then click Delete.
+        await new Promise((r) => setTimeout(r, 0));
+        const confirmBtn = document.querySelector('.confirm-modal [data-action="confirm"]');
+        expect(confirmBtn).toBeTruthy();
+        confirmBtn.click();
+        await p;
+
+        expect(applySpy).toHaveBeenCalledWith({
+            deletedNodeIds: ['n1', 'n2'],
+            deletedEdgeIds: ['e1']
+        });
+        expect(removeSpy).toHaveBeenCalled();
+        applySpy.mockRestore();
+    });
+
     it('min-connections threshold keeps anchors AND their neighbours (not only the anchors)', async () => {
         // Build a tiny graph: A is connected to B, C, D, E (degree 4);
         // F is connected to G only (degree 1, F not an anchor under

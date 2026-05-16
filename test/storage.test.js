@@ -142,6 +142,94 @@ describe('storage v4 migration + KG CRUD', () => {
         expect(await storage.getKGEdgesForBook('b2')).toHaveLength(1);
     });
 
+    it('deleteKGNode removes a single node by id and leaves siblings intact', async () => {
+        const base = (id) => ({
+            id, bookId: 'b1', canonicalName: id, aliases: [], type: 'OTHER',
+            bloom: 'Remember', embedding: new Float32Array(1), contexts: [],
+            firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+        });
+        await storage.saveKGNode(base('n1'));
+        await storage.saveKGNode(base('n2'));
+        await storage.deleteKGNode('n1');
+        const remaining = await storage.getKGNodesForBook('b1');
+        expect(remaining.map((n) => n.id)).toEqual(['n2']);
+    });
+
+    it('deleteKGEdge removes a single edge by id', async () => {
+        await storage.saveKGEdge({
+            id: 'e1', bookId: 'b1', sourceId: 'a', targetId: 'b', relation: 'r',
+            contexts: [], createdAt: 0
+        });
+        await storage.saveKGEdge({
+            id: 'e2', bookId: 'b1', sourceId: 'a', targetId: 'c', relation: 'r',
+            contexts: [], createdAt: 0
+        });
+        await storage.deleteKGEdge('e1');
+        const all = await storage.getKGEdgesForBook('b1');
+        expect(all.map((e) => e.id)).toEqual(['e2']);
+    });
+
+    it('applyMergeTransaction is atomic across kg_nodes and kg_edges', async () => {
+        const base = (id) => ({
+            id, bookId: 'b1', canonicalName: id, aliases: [], type: 'OTHER',
+            bloom: 'Remember', embedding: new Float32Array(1), contexts: [],
+            firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+        });
+        await storage.saveKGNode(base('P'));
+        await storage.saveKGNode(base('S'));
+        await storage.saveKGEdge({
+            id: 'e_keep', bookId: 'b1', sourceId: 'P', targetId: 'P_OTHER',
+            relation: 'k', contexts: [], createdAt: 0
+        });
+        await storage.saveKGEdge({
+            id: 'e_dup', bookId: 'b1', sourceId: 'S', targetId: 'P_OTHER',
+            relation: 'k', contexts: [{ chapterIndex: 0, sentenceIndices: [4] }],
+            createdAt: 0
+        });
+
+        await storage.applyMergeTransaction({
+            updatedNode: { ...base('P'), canonicalName: 'P', aliases: ['S-name'] },
+            deletedNodeIds: ['S'],
+            savedEdges: [{
+                id: 'e_keep', bookId: 'b1', sourceId: 'P', targetId: 'P_OTHER',
+                relation: 'k',
+                contexts: [{ chapterIndex: 0, sentenceIndices: [4] }],
+                createdAt: 0
+            }],
+            deletedEdgeIds: ['e_dup']
+        });
+
+        const nodes = await storage.getKGNodesForBook('b1');
+        expect(nodes.map((n) => n.id).sort()).toEqual(['P']);
+        expect(nodes[0].aliases).toEqual(['S-name']);
+
+        const edges = await storage.getKGEdgesForBook('b1');
+        expect(edges.map((e) => e.id)).toEqual(['e_keep']);
+        expect(edges[0].contexts[0].sentenceIndices).toEqual([4]);
+    });
+
+    it('applyDeleteTransaction removes nodes and edges in one shot', async () => {
+        const base = (id) => ({
+            id, bookId: 'b1', canonicalName: id, aliases: [], type: 'OTHER',
+            bloom: 'Remember', embedding: new Float32Array(1), contexts: [],
+            firstSeenChapter: 0, srs: {}, createdAt: 0, updatedAt: 0
+        });
+        await storage.saveKGNode(base('n1'));
+        await storage.saveKGNode(base('n2'));
+        await storage.saveKGEdge({
+            id: 'e1', bookId: 'b1', sourceId: 'n1', targetId: 'n2', relation: 'r',
+            contexts: [], createdAt: 0
+        });
+        await storage.applyDeleteTransaction({
+            deletedNodeIds: ['n1'],
+            deletedEdgeIds: ['e1']
+        });
+        const nodes = await storage.getKGNodesForBook('b1');
+        const edges = await storage.getKGEdgesForBook('b1');
+        expect(nodes.map((n) => n.id)).toEqual(['n2']);
+        expect(edges).toEqual([]);
+    });
+
     it('persists and reads KG settings via the existing settings store', async () => {
         await storage.saveSetting('kgExtractionBackend', 'local');
         await storage.saveSetting('kgChunkSize', 6);
