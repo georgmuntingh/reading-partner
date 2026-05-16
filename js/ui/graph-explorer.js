@@ -427,7 +427,12 @@ export class GraphExplorer {
                     style: {
                         'background-color': '#fa3',
                         'line-color': '#fa3',
-                        'target-arrow-color': '#fa3'
+                        'target-arrow-color': '#fa3',
+                        // Multi-select is a primary action surface now —
+                        // make selected nodes obviously distinct from the
+                        // crowd, not just slightly orange.
+                        'border-width': 3,
+                        'border-color': '#c45a00'
                     }
                 },
                 {

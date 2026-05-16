@@ -9,12 +9,27 @@ const cytoscapeFactory = vi.fn(() => ({
 
 vi.mock('cytoscape', () => ({ default: cytoscapeFactory }));
 
+// Mock the floating menu + touch picker so tests can assert on the items
+// list directly and resolve the user's pick programmatically.
+const contextMenuSpy = vi.fn(async () => null);
+vi.mock('../js/ui/kg-context-menu.js', () => ({
+    openContextMenu: (...args) => contextMenuSpy(...args)
+}));
+const primaryPickerSpy = vi.fn(async () => null);
+vi.mock('../js/ui/kg-merge-primary-picker.js', () => ({
+    pickMergePrimary: (...args) => primaryPickerSpy(...args)
+}));
+
 import { GraphExplorer } from '../js/ui/graph-explorer.js';
 import { storage } from '../js/services/storage.js';
 
 beforeEach(async () => {
     cytoscapeFactory.mockClear();
     cytoscapeFactory.mockImplementation(() => ({ on: vi.fn(), destroy: vi.fn() }));
+    contextMenuSpy.mockClear();
+    contextMenuSpy.mockResolvedValue(null);
+    primaryPickerSpy.mockClear();
+    primaryPickerSpy.mockResolvedValue(null);
     document.body.innerHTML =
         '<div id="graph-explorer" class="graph-explorer hidden"></div>';
     await storage.init();
@@ -499,6 +514,152 @@ describe('GraphExplorer', () => {
         expect(args.selectionType).toBe('additive');
         expect(args.boxSelectionEnabled).toBe(false);
         expect(args.userPanningEnabled).toBe(true);
+    });
+
+    it('right-click on a single node opens a context menu with only Delete', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const primaryStub = {
+            id: () => 'n1',
+            data: (k) => k === 'raw' ? { canonicalName: 'Arthur' } : undefined
+        };
+        ge._cy = {
+            nodes: (sel) => sel === ':selected' ? { length: 1 } : { length: 0 }
+        };
+        await ge._openContextMenu({ x: 100, y: 200 }, primaryStub);
+        expect(contextMenuSpy).toHaveBeenCalledTimes(1);
+        const { items } = contextMenuSpy.mock.calls[0][0];
+        expect(items.map((i) => i.id)).toEqual(['delete']);
+    });
+
+    it('right-click with ≥2 selected adds a "Merge into <name>" item ahead of Delete', async () => {
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        const primaryStub = {
+            id: () => 'n1',
+            data: (k) => k === 'raw' ? { canonicalName: 'Arthur' } : undefined
+        };
+        ge._cy = {
+            nodes: (sel) => sel === ':selected' ? { length: 3 } : { length: 0 }
+        };
+        await ge._openContextMenu({ x: 1, y: 2 }, primaryStub);
+        const { items } = contextMenuSpy.mock.calls[0][0];
+        expect(items.map((i) => i.id)).toEqual(['merge', 'delete']);
+        expect(items[0].label).toBe('Merge into Arthur');
+    });
+
+    it('background tap clears the selection and exits selection-mode', async () => {
+        await seedBookGraph();
+        const container = document.getElementById('graph-explorer');
+        // Capture handlers registered on cytoscape so we can fire them.
+        const handlers = {};
+        cytoscapeFactory.mockImplementationOnce(() => {
+            const cy = {
+                on: (events, ...rest) => {
+                    const fn = rest[rest.length - 1];
+                    const selector = rest.length === 2 ? rest[0] : null;
+                    for (const ev of events.split(/\s+/)) {
+                        handlers[`${ev}|${selector ?? ''}`] = fn;
+                    }
+                },
+                destroy: vi.fn(),
+                elements: () => ({ unselect: vi.fn() })
+            };
+            return cy;
+        });
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+        await ge.open();
+        const elementsUnselect = vi.fn();
+        ge._cy.elements = () => ({ unselect: elementsUnselect });
+        ge._selectionMode = true;
+        container.classList.add('is-selection-mode');
+        // Fire the background tap.
+        const tapHandler = handlers['tap|'];
+        expect(tapHandler).toBeTruthy();
+        tapHandler({ target: ge._cy });
+        expect(elementsUnselect).toHaveBeenCalled();
+        expect(ge._selectionMode).toBe(false);
+        expect(container.classList.contains('is-selection-mode')).toBe(false);
+    });
+
+    it('_mergeSelected confirms, calls applyMergeTransaction with the merged-node shape, and removes secondaries', async () => {
+        await storage.saveKGEdge({
+            id: 'e1', bookId: 'b1', sourceId: 'n_s', targetId: 'n_x',
+            relation: 'rel', contexts: [], createdAt: 0
+        });
+        const container = document.getElementById('graph-explorer');
+        const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
+
+        const primaryRecord = {
+            id: 'n_p', bookId: 'b1', canonicalName: 'Mitochondrion',
+            aliases: ['ATP'], type: 'CONCEPT', bloom: 'Remember',
+            embedding: new Float32Array(1), relevanceScore: 0.9,
+            definition: 'powerhouse', mergeCount: 1, firstSeenChapter: 0,
+            srs: {}, contexts: [{ chapterIndex: 0, sentenceIndices: [1] }],
+            createdAt: 0, updatedAt: 0
+        };
+        const secondaryRecord = {
+            id: 'n_s', bookId: 'b1', canonicalName: 'mitochondria',
+            aliases: [], type: 'CONCEPT', bloom: 'Remember',
+            embedding: new Float32Array(1), relevanceScore: 0.1,
+            mergeCount: 1, firstSeenChapter: 0, srs: {},
+            contexts: [{ chapterIndex: 1, sentenceIndices: [7] }],
+            createdAt: 0, updatedAt: 0
+        };
+
+        const primaryNode = {
+            id: () => 'n_p',
+            data: (k) => k === 'raw' ? primaryRecord : undefined,
+        };
+        primaryNode.data = function(arg) {
+            if (typeof arg === 'string') return arg === 'raw' ? primaryRecord : undefined;
+            return undefined;   // setter form is a no-op in the stub
+        };
+        const secondaryNode = {
+            id: () => 'n_s',
+            data: (k) => k === 'raw' ? secondaryRecord : undefined
+        };
+        const selectedColl = {
+            length: 2,
+            map: (f) => [primaryNode, secondaryNode].map(f),
+            difference: () => ({
+                length: 1,
+                map: (f) => [secondaryNode].map(f)
+            })
+        };
+        ge._cy = {
+            nodes: () => selectedColl,
+            batch: (fn) => fn(),
+            remove: vi.fn(),
+            getElementById: () => ({ empty: () => true }),
+            add: vi.fn(),
+            elements: () => ({ unselect: () => {} })
+        };
+        ge._applyDetailFilter = () => {};
+
+        const applySpy = vi.spyOn(storage, 'applyMergeTransaction')
+            .mockResolvedValue();
+
+        const p = ge._mergeSelected(primaryNode);
+        await new Promise((r) => setTimeout(r, 0));
+        document.querySelector('.confirm-modal [data-action="confirm"]').click();
+        await p;
+
+        expect(applySpy).toHaveBeenCalledTimes(1);
+        const payload = applySpy.mock.calls[0][0];
+        expect(payload.deletedNodeIds).toEqual(['n_s']);
+        expect(payload.updatedNode.id).toBe('n_p');
+        // mergeNodeMetadata folded the secondary's canonicalName into aliases.
+        expect(payload.updatedNode.aliases).toEqual(['ATP', 'mitochondria']);
+        // Contexts merged by chapter.
+        expect(payload.updatedNode.contexts).toEqual([
+            { chapterIndex: 0, sentenceIndices: [1] },
+            { chapterIndex: 1, sentenceIndices: [7] }
+        ]);
+        // e1 (sourceId 'n_s') was redirected to 'n_p'.
+        expect(payload.savedEdges).toHaveLength(1);
+        expect(payload.savedEdges[0].sourceId).toBe('n_p');
+        applySpy.mockRestore();
     });
 
     it('_deleteSelected confirms, calls applyDeleteTransaction with the right ids, and removes from cy', async () => {
