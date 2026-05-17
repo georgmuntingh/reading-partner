@@ -14,6 +14,7 @@ export class PlaybackControls {
      * @param {HTMLElement} options.nextChapterBtn
      * @param {HTMLElement} options.askBtn
      * @param {HTMLElement} options.quizBtn
+     * @param {HTMLElement} [options.srsBtn] - Optional Spaced Review entry point
      * @param {HTMLInputElement} [options.speedSlider] - Optional, for backward compatibility
      * @param {HTMLElement} [options.speedValue] - Optional, for backward compatibility
      * @param {HTMLSelectElement} [options.voiceSelect] - Optional, for backward compatibility
@@ -26,6 +27,7 @@ export class PlaybackControls {
      * @param {() => void} callbacks.onNextChapter
      * @param {() => void} callbacks.onAsk
      * @param {() => void} callbacks.onQuiz
+     * @param {() => void} [callbacks.onSRS]
      * @param {(speed: number) => void} [callbacks.onSpeedChange] - Optional, for backward compatibility
      * @param {(voiceId: string) => void} [callbacks.onVoiceChange] - Optional, for backward compatibility
      */
@@ -39,6 +41,7 @@ export class PlaybackControls {
         this._nextChapterBtn = options.nextChapterBtn;
         this._askBtn = options.askBtn;
         this._quizBtn = options.quizBtn;
+        this._srsBtn = options.srsBtn || null;
         this._speedSlider = options.speedSlider || null;
         this._speedValue = options.speedValue || null;
         this._voiceSelect = options.voiceSelect || null;
@@ -89,6 +92,13 @@ export class PlaybackControls {
         this._quizBtn.addEventListener('click', () => {
             this._callbacks.onQuiz?.();
         });
+
+        // Spaced Review (SRS) button — optional
+        if (this._srsBtn) {
+            this._srsBtn.addEventListener('click', () => {
+                this._callbacks.onSRS?.();
+            });
+        }
 
         // Speed slider (optional)
         if (this._speedSlider) {
@@ -171,6 +181,7 @@ export class PlaybackControls {
         this._nextChapterBtn.disabled = !enabled;
         this._askBtn.disabled = !enabled;
         this._quizBtn.disabled = !enabled;
+        if (this._srsBtn) this._srsBtn.disabled = !enabled;
         if (this._speedSlider) {
             this._speedSlider.disabled = !enabled;
         }

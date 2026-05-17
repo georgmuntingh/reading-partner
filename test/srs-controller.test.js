@@ -74,6 +74,21 @@ const makeController = async (overrides = {}) => {
     return { controller, storage, callbacks, generator: opts.generator };
 };
 
+// ---------- setSettings ----------
+
+describe('SRSController.setSettings', () => {
+    it('replaces the controller settings and propagates to the internal generator', async () => {
+        const generator = stubGenerator();
+        // Give the generator a settings field so we can observe the update.
+        generator.settings = { srsLLMTemperature: 0.4 };
+        const { controller } = await makeController({ generator });
+        controller.setSettings({ srsLLMTemperature: 0.9, srsMaxNewPerSession: 3 });
+        expect(controller.settings.srsLLMTemperature).toBe(0.9);
+        expect(controller.settings.srsMaxNewPerSession).toBe(3);
+        expect(generator.settings.srsLLMTemperature).toBe(0.9);
+    });
+});
+
 // ---------- openDeck ----------
 
 describe('SRSController.openDeck', () => {

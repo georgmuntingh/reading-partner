@@ -82,6 +82,17 @@ export class SRSController {
     currentCard() { return this._deck[0] ?? null; }
     getDeckSize() { return this._deck.length; }
 
+    /**
+     * Replace the live settings. Propagates to the internal generator
+     * so changes the user saves take effect on the very next deck
+     * build / generation pass (the controller has long-lived state
+     * that would otherwise capture stale settings).
+     */
+    setSettings(settings) {
+        this.settings = settings;
+        if (this.generator) this.generator.settings = settings;
+    }
+
     // ---------- internal ----------
 
     _setState(state) {

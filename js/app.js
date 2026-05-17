@@ -30,6 +30,7 @@ import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
+import { SRSController } from './controllers/srs-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { promptForDomain } from './ui/kg-domain-modal.js';
 import { confirmAction } from './ui/confirm-modal.js';
@@ -39,6 +40,7 @@ import { PlaybackControls } from './ui/controls.js';
 import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
 import { QuizOverlay } from './ui/quiz-overlay.js';
+import { SRSOverlay } from './ui/srs-overlay.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
@@ -119,6 +121,12 @@ class ReadingPartnerApp {
         this._qaOverlay = null;
         this._quizController = null;
         this._quizOverlay = null;
+        // Spaced Review (Grounded SRS) — lazily instantiated on first
+        // open. Re-uses the same llmClient + readingState + storage.
+        this._srsController = null;
+        this._srsOverlay = null;
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
         this._settingsModal = null;
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
@@ -624,6 +632,7 @@ class ReadingPartnerApp {
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
             quizBtn: document.getElementById('quiz-btn'),
+            srsBtn: document.getElementById('srs-btn'),
             kgBuildBtn: document.getElementById('kg-build-btn'),
             kgOpenBtn: document.getElementById('kg-open-btn'),
             fullscreenBtn: document.getElementById('fullscreen-btn'),
@@ -1542,7 +1551,8 @@ class ReadingPartnerApp {
                 prevChapterBtn: this._elements.prevChapterBtn,
                 nextChapterBtn: this._elements.nextChapterBtn,
                 askBtn: this._elements.askBtn,
-                quizBtn: this._elements.quizBtn
+                quizBtn: this._elements.quizBtn,
+                srsBtn: this._elements.srsBtn
             },
             {
                 onPlay: () => this._play(),
@@ -1552,7 +1562,8 @@ class ReadingPartnerApp {
                 onPrevChapter: () => this._navigateToPrevChapter(),
                 onNextChapter: () => this._navigateToNextChapter(),
                 onAsk: () => this._startQA(),
-                onQuiz: () => this._startQuiz()
+                onQuiz: () => this._startQuiz(),
+                onSRS: () => this._openSRSOverlay()
             }
         );
 
@@ -2317,6 +2328,131 @@ class ReadingPartnerApp {
         this._loadQuizHistory();
     }
 
+    // ========== Spaced Review (SRS) ==========
+
+    /**
+     * Lazily instantiate the SRS controller + overlay on first open.
+     * Settings are pushed in on every settings save via setSettings.
+     */
+    _initializeSRS() {
+        if (this._srsController) return;
+
+        const container = document.getElementById('srs-overlay');
+        if (!container) return;
+
+        const settings = this._settingsModal?.getSettings() ?? {};
+
+        this._srsOverlay = new SRSOverlay(
+            { container },
+            {
+                onClose: () => this._closeSRSOverlay(),
+                onAnswer: (idx) => this._onSRSAnswer(idx),
+                onContinue: () => { this._srsIsRevealing = false; },
+                onJump: () => this._srsController?.jumpToBook(),
+                onGenerateMore: () => this._onSRSGenerateMore()
+            }
+        );
+
+        this._srsController = new SRSController(
+            {
+                storage,
+                readingState: this._readingState,
+                llmClient,
+                settings
+            },
+            {
+                onStateChange: (state) => {
+                    if (state === 'loading') this._srsOverlay?.setLoading();
+                },
+                onCardReady: (card) => {
+                    if (this._srsIsRevealing) {
+                        // Buffer the next card so the user can finish reading
+                        // the explanation before advancing.
+                        this._srsOverlay?.setNextCard(card);
+                    } else {
+                        this._srsOverlay?.showCard(card);
+                    }
+                },
+                onResult: ({ card, result }) => {
+                    this._srsIsRevealing = true;
+                    this._srsOverlay?.revealAnswer({
+                        card,
+                        result,
+                        selectedIndex: this._srsLastSelectedIndex
+                    });
+                },
+                onDeckEmpty: () => {
+                    if (!this._srsIsRevealing) this._srsOverlay?.setEmpty();
+                    // else: overlay is showing the explanation; the Continue
+                    // button click will flip to empty state via the overlay's
+                    // own fallback.
+                },
+                onJump: ({ chapterIndex, sentenceIndex }) => {
+                    this._closeSRSOverlay();
+                    this._jumpToKGContext(chapterIndex, sentenceIndex);
+                },
+                onGenerationComplete: (count) => {
+                    if (count > 0) this._showToast?.(`Generated ${count} new card${count === 1 ? '' : 's'}.`);
+                },
+                onError: (err) => {
+                    this._showToast?.(`Spaced Review: ${err?.message || err}`);
+                }
+            }
+        );
+    }
+
+    /**
+     * Open the Spaced Review overlay for the current book.
+     */
+    async _openSRSOverlay() {
+        if (!this._currentBook) {
+            this._showToast?.('Open a book first.');
+            return;
+        }
+        this._initializeSRS();
+        // Push the latest settings every open in case the user tweaked
+        // them while the overlay was closed.
+        const settings = this._settingsModal?.getSettings() ?? {};
+        this._srsController.setSettings(settings);
+
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+        this._pause();
+        this._srsOverlay.setLoading();
+        this._srsOverlay.show();
+        await this._srsController.openDeck(this._currentBook.id);
+    }
+
+    /**
+     * Close the SRS overlay. Returns the controller to IDLE.
+     */
+    _closeSRSOverlay() {
+        this._srsController?.closeDeck();
+        this._srsOverlay?.hide();
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+    }
+
+    /**
+     * Track the user's selection so it can be passed to revealAnswer
+     * (the controller doesn't echo it back in onResult).
+     */
+    _onSRSAnswer(selectedIndex) {
+        this._srsLastSelectedIndex = selectedIndex;
+        this._srsController?.submitAnswer(selectedIndex).catch((err) => {
+            this._showToast?.(`Spaced Review: ${err?.message || err}`);
+        });
+    }
+
+    /**
+     * Manual "Generate more cards" button in the empty state.
+     */
+    async _onSRSGenerateMore() {
+        if (!this._currentBook || !this._srsController) return;
+        this._srsOverlay.setLoading('Generating cards…');
+        await this._srsController.openDeck(this._currentBook.id);
+    }
+
     // ========== Chapter Overview ==========
 
     /**
@@ -2563,6 +2699,10 @@ class ReadingPartnerApp {
         // Update LLM client
         llmClient.setApiKey(this._qaSettings.apiKey);
         llmClient.setModel(this._qaSettings.model);
+
+        // Push fresh settings to the SRS controller if it's been
+        // initialized. No-op when SRS hasn't been opened yet.
+        this._srsController?.setSettings(settings);
 
         // Update Q&A controller if it exists
         if (this._qaController) {
@@ -3552,6 +3692,16 @@ class ReadingPartnerApp {
         } else if (p.stage === 'done') {
             text.textContent = 'Knowledge graph updated.';
             el.classList.remove('hidden');
+            // Workflow 1 trigger: kick off grounded card generation for
+            // this chapter's new nodes. Fire-and-forget — the toast on
+            // completion is handled by the controller's
+            // onGenerationComplete callback. Guarded by settings.
+            if (this._currentBook && typeof p.chapterIndex === 'number') {
+                this._initializeSRS();
+                this._srsController
+                    ?.onChapterFinished(this._currentBook.id, p.chapterIndex)
+                    .catch(() => {});
+            }
         } else if (p.stage === 'error') {
             text.textContent = `Error: ${p.error || 'unknown'}`;
             el.classList.remove('hidden');
