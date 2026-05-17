@@ -20,6 +20,31 @@ import { mergeNodeMetadata, redirectAndDedupeEdges } from '../services/kg-merge.
 import { pickMergePrimary } from './kg-merge-primary-picker.js';
 import { embeddingProvider } from '../services/embedding-provider.js';
 import { cosine } from '../services/kg-resolver.js';
+import {
+    Band,
+    bandFor,
+    cardMatchesBand,
+    cardsByNodeId,
+    cardsByEdgeId
+} from '../services/srs-mastery.js';
+import { computeNodeDegrees } from '../services/srs-centrality.js';
+
+// Bottleneck threshold: a failing node with this many or more graph
+// connections gets a louder visual treatment so the user knows it is
+// blocking advanced cards downstream. Tuned conservatively; revisit
+// once we have real usage data.
+const BOTTLENECK_DEGREE_MIN = 5;
+
+// The cycle order. `clearHighlights()` and the cycle button both honor it.
+const CARD_HIGHLIGHT_CYCLE = Object.freeze(['off', 'any', 'failing', 'learning', 'mastered']);
+
+const CARD_HIGHLIGHT_LABEL = Object.freeze({
+    off:      'Highlight cards',
+    any:      'All cards',
+    failing:  'Failing',
+    learning: 'Learning',
+    mastered: 'Mastered'
+});
 
 // Bloom level → color (Remember = warm green, Create = warm red).
 const BLOOM_COLOR = {
@@ -70,7 +95,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence, getSearchSettings }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -103,6 +128,15 @@ export class GraphExplorer {
         // doesn't re-hit the LLM. Scoped to the explorer instance.
         this._definitionCache = new Map();
         this._onJumpToSentence = onJumpToSentence;
+        // Flashcard integration (Phase 4 + 5). All optional — the
+        // cycle button and node-detail Flashcards section gracefully
+        // no-op when these are missing.
+        this._getFlashcards = typeof getFlashcards === 'function' ? getFlashcards : null;
+        this._onOpenCardOverview = typeof onOpenCardOverview === 'function' ? onOpenCardOverview : null;
+        this._onReviewConcept = typeof onReviewConcept === 'function' ? onReviewConcept : null;
+        this._flashcardsCache = null;
+        // 'off' | 'any' | 'failing' | 'learning' | 'mastered'
+        this._cardHighlightMode = 'off';
         this._cy = null;
         this._cytoscape = null;        // Lazy-loaded module
         // Total chapters in the currently-open book. Recomputed on each open().
@@ -151,6 +185,9 @@ export class GraphExplorer {
                 <button type="button" class="btn btn-secondary graph-relayout-btn" aria-label="Re-layout graph" title="Re-run the force-directed layout from scratch">
                     Re-layout
                 </button>
+                <button type="button" class="btn btn-secondary graph-card-highlight-btn" aria-label="Cycle flashcard highlight mode" title="Cycle: off → any card → failing → learning → mastered">
+                    <span class="graph-card-highlight-label">Highlight cards</span>
+                </button>
                 <button type="button" class="btn btn-secondary graph-clear-highlights-btn hidden" aria-label="Clear highlights">
                     Clear highlights
                 </button>
@@ -178,6 +215,7 @@ export class GraphExplorer {
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
         this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
+        this._container.querySelector('.graph-card-highlight-btn').addEventListener('click', () => this._advanceCardHighlightMode());
 
         const degSlider = this._container.querySelector('#kg-min-degree');
         const relSlider = this._container.querySelector('#kg-min-relevance');
@@ -554,6 +592,55 @@ export class GraphExplorer {
                         'target-arrow-color': '#ffd24a',
                         'width': 3
                     }
+                },
+                // Card-highlight cycle (Phase 4). Every entry sets
+                // border-width explicitly — Cytoscape's default is 0,
+                // so border-color alone would render nothing.
+                {
+                    selector: 'node.kg-card-has',
+                    style: { 'border-width': 4, 'border-color': 'var(--srs-band-any)', 'border-opacity': 1 }
+                },
+                {
+                    selector: 'node.kg-card-failing',
+                    style: { 'border-width': 4, 'border-color': 'var(--srs-band-failing)', 'border-opacity': 1 }
+                },
+                {
+                    selector: 'node.kg-card-learning',
+                    style: { 'border-width': 4, 'border-color': 'var(--srs-band-learning)', 'border-opacity': 1 }
+                },
+                {
+                    selector: 'node.kg-card-mastered',
+                    style: { 'border-width': 4, 'border-color': 'var(--srs-band-mastered)', 'border-opacity': 1 }
+                },
+                // Bottleneck: high-degree failing node. Layered on top
+                // of .kg-card-failing for a doubled dashed border + halo.
+                {
+                    selector: 'node.kg-card-bottleneck',
+                    style: {
+                        'border-width': 8,
+                        'border-style': 'double',
+                        'border-color': 'var(--srs-band-failing)',
+                        'border-opacity': 1,
+                        'overlay-color': 'var(--srs-band-failing)',
+                        'overlay-padding': 8,
+                        'overlay-opacity': 0.18
+                    }
+                },
+                {
+                    selector: 'edge.kg-card-has',
+                    style: { 'line-color': 'var(--srs-band-any)', 'target-arrow-color': 'var(--srs-band-any)', 'width': 4 }
+                },
+                {
+                    selector: 'edge.kg-card-failing',
+                    style: { 'line-color': 'var(--srs-band-failing)', 'target-arrow-color': 'var(--srs-band-failing)', 'width': 4 }
+                },
+                {
+                    selector: 'edge.kg-card-learning',
+                    style: { 'line-color': 'var(--srs-band-learning)', 'target-arrow-color': 'var(--srs-band-learning)', 'width': 4 }
+                },
+                {
+                    selector: 'edge.kg-card-mastered',
+                    style: { 'line-color': 'var(--srs-band-mastered)', 'target-arrow-color': 'var(--srs-band-mastered)', 'width': 4 }
                 }
             ],
             layout,
@@ -1512,14 +1599,165 @@ export class GraphExplorer {
      * filter so anything that was held visible only by the live-build
      * exemption falls back under the user's current thresholds.
      */
-    clearHighlights() {
-        if (!this._cy) {
-            this._highlightingActive = false;
+    /**
+     * Whether the overlay is currently visible. Used by app.js's
+     * closeAllSRSurfaces helper so it only fires close() when needed.
+     */
+    isOpen() {
+        return !this._container.classList.contains('hidden');
+    }
+
+    /**
+     * Drop the cached deck so the next cycle re-fetches from storage.
+     * Called by app.js after a flashcard delete elsewhere in the UI.
+     */
+    invalidateFlashcardCache() {
+        this._flashcardsCache = null;
+    }
+
+    /**
+     * Advance the card-highlight mode through the 5-state cycle.
+     * Triggered by the toolbar button click.
+     */
+    async _advanceCardHighlightMode() {
+        const i = CARD_HIGHLIGHT_CYCLE.indexOf(this._cardHighlightMode);
+        const next = CARD_HIGHLIGHT_CYCLE[(i + 1) % CARD_HIGHLIGHT_CYCLE.length];
+        this._cardHighlightMode = next;
+        this._updateCardHighlightButtonLabel();
+        await this._applyCardHighlightMode();
+    }
+
+    _updateCardHighlightButtonLabel() {
+        const label = this._container.querySelector('.graph-card-highlight-label');
+        if (!label) return;
+        label.textContent = CARD_HIGHLIGHT_LABEL[this._cardHighlightMode] ?? 'Highlight cards';
+    }
+
+    /**
+     * Apply the current `_cardHighlightMode` to every node + edge.
+     * Reads the cached deck, builds Phase-1 by-id maps, and updates
+     * Cytoscape classes. In 'failing' mode also computes bottleneck
+     * nodes (high-degree failing) so the user can prioritize them.
+     */
+    async _applyCardHighlightMode() {
+        if (!this._cy) return;
+        const mode = this._cardHighlightMode;
+
+        // Always wipe previous classes before reapplying.
+        this._cy.elements()
+            .removeClass('kg-faded')
+            .removeClass('kg-card-has')
+            .removeClass('kg-card-failing')
+            .removeClass('kg-card-learning')
+            .removeClass('kg-card-mastered')
+            .removeClass('kg-card-bottleneck');
+
+        if (mode === 'off') {
             this._showClearHighlightsButton(false);
             return;
         }
-        this._cy.elements().removeClass('kg-faded').removeClass('kg-newly-added');
+
+        // Lazy fetch + cache.
+        if (!this._flashcardsCache) {
+            const bookId = this._getBook()?.id;
+            if (!bookId || !this._getFlashcards) {
+                this._showClearHighlightsButton(true);
+                return;
+            }
+            try {
+                this._flashcardsCache = await this._getFlashcards(bookId);
+            } catch {
+                this._flashcardsCache = [];
+            }
+        }
+        const cards = this._flashcardsCache ?? [];
+        const byNode = cardsByNodeId(cards);
+        const byEdge = cardsByEdgeId(cards);
+
+        // Pre-compute degree map for the bottleneck check (only used
+        // in 'failing' mode but cheap enough to always build).
+        let degreeMap = null;
+        if (mode === 'failing') {
+            const book = this._getBook();
+            const edges = book ? Array.from(this._cy.edges()).map((e) => ({
+                sourceId: e.data('source'),
+                targetId: e.data('target')
+            })) : [];
+            degreeMap = computeNodeDegrees(edges);
+        }
+
+        // Walk nodes.
+        const fadedNodeIds = new Set();
+        for (const node of this._cy.nodes()) {
+            const id = node.data('id');
+            const cardsForNode = byNode.get(id) ?? [];
+            const matching = cardsForNode.filter((c) => cardMatchesBand(c, mode));
+            if (matching.length === 0) {
+                fadedNodeIds.add(id);
+                continue;
+            }
+            // Apply the band class. For 'any' mode use the neutral
+            // class; otherwise the band-specific class.
+            if (mode === Band.ANY) {
+                node.addClass('kg-card-has');
+            } else {
+                node.addClass(`kg-card-${mode}`);
+            }
+            // Bottleneck: failing mode + high degree.
+            if (mode === 'failing' && (degreeMap?.get(id) ?? 0) >= BOTTLENECK_DEGREE_MIN) {
+                node.addClass('kg-card-bottleneck');
+            }
+        }
+
+        // Walk edges.
+        for (const edge of this._cy.edges()) {
+            const id = edge.data('id');
+            const cardsForEdge = byEdge.get(id) ?? [];
+            const matching = cardsForEdge.filter((c) => cardMatchesBand(c, mode));
+            if (matching.length === 0) {
+                // Fade the edge too — but only if BOTH endpoints are faded
+                // (otherwise an edge between a matched and a non-matched
+                // node would visually conflict).
+                const src = edge.data('source');
+                const tgt = edge.data('target');
+                if (fadedNodeIds.has(src) && fadedNodeIds.has(tgt)) {
+                    edge.addClass('kg-faded');
+                }
+                continue;
+            }
+            if (mode === Band.ANY) {
+                edge.addClass('kg-card-has');
+            } else {
+                edge.addClass(`kg-card-${mode}`);
+            }
+        }
+
+        // Fade non-matching nodes.
+        for (const id of fadedNodeIds) {
+            this._cy.getElementById(id).addClass('kg-faded');
+        }
+        this._showClearHighlightsButton(true);
+    }
+
+    clearHighlights() {
+        if (!this._cy) {
+            this._highlightingActive = false;
+            this._cardHighlightMode = 'off';
+            this._updateCardHighlightButtonLabel();
+            this._showClearHighlightsButton(false);
+            return;
+        }
+        this._cy.elements()
+            .removeClass('kg-faded')
+            .removeClass('kg-newly-added')
+            .removeClass('kg-card-has')
+            .removeClass('kg-card-failing')
+            .removeClass('kg-card-learning')
+            .removeClass('kg-card-mastered')
+            .removeClass('kg-card-bottleneck');
         this._highlightingActive = false;
+        this._cardHighlightMode = 'off';
+        this._updateCardHighlightButtonLabel();
         this._showClearHighlightsButton(false);
         this._applyDetailFilter();
     }

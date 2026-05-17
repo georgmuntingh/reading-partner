@@ -395,7 +395,12 @@ class ReadingPartnerApp {
             // _handleInternalLink (file → chapter index + fragment scroll).
             onInternalLink: (href) => this._handleInternalLink(href),
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
-                this._jumpToKGContext(chapterIndex, sentenceIndex)
+                this._jumpToKGContext(chapterIndex, sentenceIndex),
+            // Source for the card-highlight cycle button + node-detail
+            // Flashcards section. The explorer caches the result per
+            // open session and the app invalidates that cache on delete
+            // via graphExplorer.invalidateFlashcardCache().
+            getFlashcards: (bookId) => storage.getFlashcardsForBook(bookId)
         });
 
         // Setup KG buttons in the reader controls
