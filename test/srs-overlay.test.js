@@ -238,8 +238,16 @@ describe('SRSOverlay jump/close/generate-more', () => {
 
     it('clicking the close button calls onClose', () => {
         const { container, cb } = mount();
-        container.querySelector('.srs-close-btn').click();
+        container.querySelector('#srs-close-btn').click();
         expect(cb.onClose).toHaveBeenCalled();
+    });
+
+    it('clicking the all-cards header button calls onCardOverview', () => {
+        const { container, cb } = mount({ onCardOverview: vi.fn() });
+        container.querySelector('#srs-cards-btn').click();
+        expect(cb.onCardOverview).toHaveBeenCalledTimes(1);
+        // The close button is independent.
+        expect(cb.onClose).not.toHaveBeenCalled();
     });
 
     it('clicking "Generate more" in empty state calls onGenerateMore', () => {

@@ -31,6 +31,7 @@ export class SRSOverlay {
      * @param {() => void} [callbacks.onContinue]
      * @param {() => void} [callbacks.onJump]
      * @param {() => void} [callbacks.onGenerateMore]
+     * @param {() => void} [callbacks.onCardOverview]   open the Flashcard Overview modal
      */
     constructor(options, callbacks = {}) {
         this._container = options.container;
@@ -55,7 +56,13 @@ export class SRSOverlay {
                         <h2 class="srs-title">Spaced Review</h2>
                         <span class="srs-level-chip hidden" id="srs-level-chip"></span>
                     </div>
-                    <button class="srs-close-btn" aria-label="Close">
+                    <button class="srs-cards-btn srs-close-btn" id="srs-cards-btn" aria-label="All flashcards" title="View all flashcards">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="5" width="14" height="14" rx="2"/>
+                            <rect x="7" y="3" width="14" height="14" rx="2" fill="currentColor" fill-opacity="0.12"/>
+                        </svg>
+                    </button>
+                    <button class="srs-close-btn" id="srs-close-btn" aria-label="Close">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"/>
                             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -101,7 +108,8 @@ export class SRSOverlay {
 
         this._elements = {
             dialog: this._container.querySelector('.srs-dialog'),
-            closeBtn: this._container.querySelector('.srs-close-btn'),
+            closeBtn: this._container.querySelector('#srs-close-btn'),
+            cardsBtn: this._container.querySelector('#srs-cards-btn'),
             levelChip: this._container.querySelector('#srs-level-chip'),
             statusSection: this._container.querySelector('#srs-status-section'),
             statusText: this._container.querySelector('#srs-status-text'),
@@ -121,6 +129,7 @@ export class SRSOverlay {
 
     _setupEventListeners() {
         this._elements.closeBtn.addEventListener('click', () => this._callbacks.onClose?.());
+        this._elements.cardsBtn?.addEventListener('click', () => this._callbacks.onCardOverview?.());
 
         for (const optBtn of this._elements.options) {
             optBtn.addEventListener('click', () => {

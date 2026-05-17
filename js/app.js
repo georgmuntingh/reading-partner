@@ -41,6 +41,8 @@ import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
 import { QuizOverlay } from './ui/quiz-overlay.js';
 import { SRSOverlay } from './ui/srs-overlay.js';
+import { FlashcardOverview } from './ui/flashcard-overview.js';
+import { sortForCustomDeck, closeAllSRSurfaces } from './utils/srs-app-helpers.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
@@ -127,6 +129,8 @@ class ReadingPartnerApp {
         this._srsOverlay = null;
         this._srsIsRevealing = false;
         this._srsLastSelectedIndex = -1;
+        // Flashcard Overview modal — lazily instantiated on first open.
+        this._flashcardOverview = null;
         this._settingsModal = null;
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
@@ -2349,7 +2353,8 @@ class ReadingPartnerApp {
                 onAnswer: (idx) => this._onSRSAnswer(idx),
                 onContinue: () => { this._srsIsRevealing = false; },
                 onJump: () => this._srsController?.jumpToBook(),
-                onGenerateMore: () => this._onSRSGenerateMore()
+                onGenerateMore: () => this._onSRSGenerateMore(),
+                onCardOverview: () => this._openFlashcardOverview()
             }
         );
 
@@ -2388,6 +2393,13 @@ class ReadingPartnerApp {
                     // own fallback.
                 },
                 onJump: ({ chapterIndex, sentenceIndex }) => {
+                    // Close every SRS-related surface so the reader is
+                    // unblocked before we scroll (handles the explorer →
+                    // node-detail → flashcard → overview chain).
+                    closeAllSRSurfaces({
+                        flashcardOverview: this._flashcardOverview,
+                        graphExplorer: this._graphExplorer
+                    });
                     this._closeSRSOverlay();
                     this._jumpToKGContext(chapterIndex, sentenceIndex);
                 },
@@ -2451,6 +2463,121 @@ class ReadingPartnerApp {
         if (!this._currentBook || !this._srsController) return;
         this._srsOverlay.setLoading('Generating cards…');
         await this._srsController.openDeck(this._currentBook.id);
+    }
+
+    // ========== Flashcard Overview ==========
+
+    /**
+     * Lazily instantiate the FlashcardOverview modal on first open.
+     */
+    _initializeFlashcardOverview() {
+        if (this._flashcardOverview) return;
+        const container = document.getElementById('flashcard-overview');
+        if (!container) return;
+        this._flashcardOverview = new FlashcardOverview(
+            { container },
+            {
+                onClose: () => {/* hide() already called by component */},
+                onJumpToPassage: ({ chapterIndex, sentenceIndex }) => {
+                    this._handleOverviewJump(chapterIndex, sentenceIndex);
+                },
+                onCardDeleted: (card) => this._handleCardDeleted(card),
+                onReviewSelection: (cards) => this._handleReviewSelection(cards)
+            }
+        );
+    }
+
+    /**
+     * Open the Flashcard Overview for the current book. Re-fetches
+     * cards + nodes from storage so the modal is always authoritative
+     * after deletes / new generation.
+     *
+     * @param {Object} [opts]
+     * @param {string} [opts.scrollToCardId]   auto-expand + scroll to a card
+     */
+    async _openFlashcardOverview({ scrollToCardId } = {}) {
+        if (!this._currentBook) {
+            this._showToast?.('Open a book first.');
+            return;
+        }
+        this._initializeFlashcardOverview();
+        if (!this._flashcardOverview) return;
+        const bookId = this._currentBook.id;
+        const [cards, nodes] = await Promise.all([
+            storage.getFlashcardsForBook(bookId),
+            storage.getKGNodesForBook(bookId)
+        ]);
+        const nodesById = new Map(nodes.map((n) => [n.id, n]));
+        this._flashcardOverview.show({ cards, nodesById, scrollToCardId });
+    }
+
+    async _refreshFlashcardOverview() {
+        if (!this._flashcardOverview || !this._currentBook) return;
+        const bookId = this._currentBook.id;
+        const [cards, nodes] = await Promise.all([
+            storage.getFlashcardsForBook(bookId),
+            storage.getKGNodesForBook(bookId)
+        ]);
+        const nodesById = new Map(nodes.map((n) => [n.id, n]));
+        this._flashcardOverview.refresh({ cards, nodesById });
+    }
+
+    /**
+     * Overview → "Jump to passage" handler. Closes every SRS surface
+     * (the overview itself plus the explorer, if it was the chain
+     * source) and jumps to the sentence (polish #2).
+     */
+    _handleOverviewJump(chapterIndex, sentenceIndex) {
+        closeAllSRSurfaces({
+            flashcardOverview: this._flashcardOverview,
+            graphExplorer: this._graphExplorer
+        });
+        this._closeSRSOverlay();
+        this._jumpToKGContext(chapterIndex, sentenceIndex);
+    }
+
+    /**
+     * Overview → "Delete" handler. The component already confirmed
+     * with the user and removed the row optimistically; we persist
+     * the delete, invalidate the explorer's flashcard cache (gotcha
+     * #2), trim the live SRS deck if the card was there, and refresh
+     * the overview from storage to stay authoritative.
+     */
+    async _handleCardDeleted(card) {
+        try {
+            await storage.deleteFlashcard(card.id);
+        } catch (err) {
+            this._showToast?.(`Delete failed: ${err?.message || err}`);
+        }
+        // Invalidate the explorer cache so a stale outline doesn't
+        // survive into the next highlight cycle (gotcha #2).
+        this._graphExplorer?.invalidateFlashcardCache?.();
+        // Trim the live SRS deck if it's open and the card is in it.
+        this._srsController?.removeCardFromDeck?.(card.id);
+        // Re-fetch from storage so the modal is authoritative.
+        await this._refreshFlashcardOverview();
+    }
+
+    /**
+     * Overview → "Review Selection" handler. Sorts L1→L2→L3 (polish
+     * #1), closes surfaces (polish #2), opens the SRS overlay, and
+     * hands the filtered + sorted deck to the controller.
+     */
+    async _handleReviewSelection(cards) {
+        if (!Array.isArray(cards) || cards.length === 0) return;
+        const sorted = sortForCustomDeck(cards);
+        closeAllSRSurfaces({
+            flashcardOverview: this._flashcardOverview,
+            graphExplorer: this._graphExplorer
+        });
+        this._initializeSRS();
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+        this._pause();
+        const settings = this._settingsModal?.getSettings() ?? {};
+        this._srsController.setSettings(settings);
+        this._srsOverlay.show();
+        await this._srsController.openCustomDeck(sorted);
     }
 
     // ========== Chapter Overview ==========
