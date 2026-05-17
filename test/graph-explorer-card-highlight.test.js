@@ -334,3 +334,97 @@ describe('GraphExplorer — clearHighlights resets cycle to off', () => {
         expect(label.textContent).toBe('Highlight cards');
     });
 });
+
+// ---------- Phase 5: Node-detail Flashcards section ----------
+
+describe('GraphExplorer — node-detail Flashcards section (Phase 5)', () => {
+    const setupPanelTest = (flashcards) => {
+        document.body.innerHTML =
+            '<div id="graph-explorer" class="graph-explorer hidden"></div>';
+        const container = document.getElementById('graph-explorer');
+        const getFlashcards = vi.fn(async () => flashcards);
+        const onOpenCardOverview = vi.fn();
+        const onReviewConcept = vi.fn();
+        const ge = new GraphExplorer({
+            container,
+            getBook: () => ({ id: 'b1' }),
+            getFlashcards,
+            onOpenCardOverview,
+            onReviewConcept
+        });
+        // The constructor already builds #kg-side-panel as part of the shell.
+        const panel = container.querySelector('#kg-side-panel');
+        return { ge, container, getFlashcards, onOpenCardOverview, onReviewConcept, panel };
+    };
+
+    const sampleNode = (id = 'n1') => ({
+        id,
+        canonicalName: 'Arthur',
+        type: 'PERSON',
+        bloom: 'Remember',
+        aliases: [],
+        contexts: []
+    });
+
+    it('renders an empty state and hides the Review button when no cards target the node', async () => {
+        const { ge, panel } = setupPanelTest([]);
+        ge._showNodeDetails(sampleNode());
+        // Allow the async _renderFlashcardsSection to resolve.
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(panel.querySelector('.kg-flashcard-list').textContent).toMatch(/No flashcards/);
+        expect(panel.querySelector('.kg-review-concept-btn').hidden).toBe(true);
+    });
+
+    it('renders one item per card targeting the node, and reveals the Review button', async () => {
+        const flashcards = [
+            makeCard({ id: 'a', targetNodeIds: ['n1'], cognitiveLevel: 1, srsBox: 0, question: 'Q1' }),
+            makeCard({ id: 'b', targetNodeIds: ['n1'], cognitiveLevel: 2, srsBox: 3, question: 'Q2' }),
+            makeCard({ id: 'c', targetNodeIds: ['n2'], question: 'unrelated' })
+        ];
+        const { ge, panel } = setupPanelTest(flashcards);
+        ge._showNodeDetails(sampleNode('n1'));
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        const items = panel.querySelectorAll('.kg-flashcard-item');
+        expect(items).toHaveLength(2);
+        expect(Array.from(items).map((i) => i.dataset.fcId).sort()).toEqual(['a', 'b']);
+        expect(panel.querySelector('.kg-review-concept-btn').hidden).toBe(false);
+    });
+
+    it('clicking a flashcard item fires onOpenCardOverview with its id', async () => {
+        const flashcards = [makeCard({ id: 'target', targetNodeIds: ['n1'] })];
+        const { ge, panel, onOpenCardOverview } = setupPanelTest(flashcards);
+        ge._showNodeDetails(sampleNode('n1'));
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        panel.querySelector('.kg-flashcard-item').click();
+        expect(onOpenCardOverview).toHaveBeenCalledWith('target');
+    });
+
+    it('clicking Review this concept fires onReviewConcept with the cards targeting that node only', async () => {
+        const flashcards = [
+            makeCard({ id: 'a', targetNodeIds: ['n1'] }),
+            makeCard({ id: 'b', targetNodeIds: ['n1'] }),
+            makeCard({ id: 'c', targetNodeIds: ['n2'] })
+        ];
+        const { ge, panel, onReviewConcept } = setupPanelTest(flashcards);
+        ge._showNodeDetails(sampleNode('n1'));
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        panel.querySelector('.kg-review-concept-btn').click();
+        const cardsFired = onReviewConcept.mock.calls[0][0];
+        expect(cardsFired.map((c) => c.id).sort()).toEqual(['a', 'b']);
+    });
+
+    it('uses the cached deck if it has been populated by the cycle button', async () => {
+        const flashcards = [makeCard({ id: 'cached', targetNodeIds: ['n1'] })];
+        const { ge, getFlashcards, panel } = setupPanelTest(flashcards);
+        ge._flashcardsCache = flashcards;  // simulate cycle button pre-fetch
+        ge._showNodeDetails(sampleNode('n1'));
+        await new Promise((r) => setTimeout(r, 0));
+        await new Promise((r) => setTimeout(r, 0));
+        expect(getFlashcards).not.toHaveBeenCalled();
+        expect(panel.querySelector('.kg-flashcard-item').dataset.fcId).toBe('cached');
+    });
+});

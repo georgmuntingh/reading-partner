@@ -4431,3 +4431,53 @@
     gap: var(--spacing-sm);
     padding: 0 var(--spacing-md) var(--spacing-sm) var(--spacing-md);
 }
+
+/* Node-detail Flashcards section (Phase 5) */
+
+.kg-flashcard-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.kg-flashcard-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    margin-bottom: var(--spacing-xs);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background-color: var(--surface-color);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.kg-flashcard-item:hover {
+    border-color: var(--primary-color);
+    background-color: var(--bg-color);
+}
+
+.kg-flashcard-question {
+    flex: 1;
+    font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.kg-fc-box-band-failing  { background-color: var(--srs-band-failing); }
+.kg-fc-box-band-learning { background-color: var(--srs-band-learning); }
+.kg-fc-box-band-mastered { background-color: var(--srs-band-mastered); }
+
+.kg-empty {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.85em;
+    padding: var(--spacing-xs) 0;
+}
+
+.kg-review-concept-btn {
+    margin-top: var(--spacing-sm);
+    width: 100%;
+}

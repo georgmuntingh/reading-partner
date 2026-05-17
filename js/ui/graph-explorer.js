@@ -1321,6 +1321,11 @@ export class GraphExplorer {
                         </a></li>
                     `).join('')}
             </ul>
+            <h4>Flashcards</h4>
+            <div class="kg-flashcards-section" id="kg-flashcards-section">
+                <ul class="kg-flashcard-list"><li class="kg-empty">Loading…</li></ul>
+                <button type="button" class="btn btn-secondary kg-review-concept-btn" hidden>Review this concept</button>
+            </div>
         `;
         panel.classList.remove('hidden');
 
@@ -1334,6 +1339,71 @@ export class GraphExplorer {
         }
 
         this._populateDefinition(node, panel);
+        // Fire-and-forget flashcards rendering — uses the cached deck
+        // if loaded, otherwise lazy-fetches.
+        this._renderFlashcardsSection(node, panel);
+    }
+
+    /**
+     * Render the per-node Flashcards section inside the side panel.
+     * Cached deck if loaded, otherwise lazy-fetches via getFlashcards.
+     */
+    async _renderFlashcardsSection(node, panel) {
+        const section = panel.querySelector('#kg-flashcards-section');
+        if (!section) return;
+        const list = section.querySelector('.kg-flashcard-list');
+        const reviewBtn = section.querySelector('.kg-review-concept-btn');
+        if (!this._getFlashcards) {
+            list.innerHTML = '<li class="kg-empty">No flashcards for this concept yet.</li>';
+            return;
+        }
+        // Use the cache if it's loaded; otherwise lazy-fetch (don't
+        // populate the cache here — that's the cycle button's job).
+        let cards;
+        if (this._flashcardsCache) {
+            cards = this._flashcardsCache;
+        } else {
+            try {
+                cards = await this._getFlashcards(this._getBook()?.id);
+                this._flashcardsCache = cards ?? [];
+            } catch {
+                cards = [];
+            }
+        }
+        const cardsForNode = (cards ?? []).filter(
+            (c) => Array.isArray(c.targetNodeIds) && c.targetNodeIds.includes(node.id)
+        );
+        const escape = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+            { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+        ));
+        if (cardsForNode.length === 0) {
+            list.innerHTML = '<li class="kg-empty">No flashcards for this concept yet.</li>';
+            reviewBtn.hidden = true;
+            return;
+        }
+        list.innerHTML = cardsForNode.map((c) => {
+            const level = c.cognitiveLevel ?? 1;
+            const box = Number.isFinite(c.srsBox) ? c.srsBox : 0;
+            const band = bandFor(c);
+            // Truncate the question to a single line.
+            return `
+                <li data-fc-id="${escape(c.id)}" class="kg-flashcard-item">
+                    <span class="srs-level-chip srs-level-${level}">L${level}</span>
+                    <span class="fc-box-badge kg-fc-box-band-${band}">Box ${box}</span>
+                    <span class="kg-flashcard-question">${escape(c.question ?? '')}</span>
+                </li>
+            `;
+        }).join('');
+        reviewBtn.hidden = false;
+
+        for (const li of list.querySelectorAll('[data-fc-id]')) {
+            li.addEventListener('click', () => {
+                this._onOpenCardOverview?.(li.dataset.fcId);
+            });
+        }
+        reviewBtn.onclick = () => {
+            this._onReviewConcept?.(cardsForNode.slice());
+        };
     }
 
     _openContextPreview(node, chapterIndex, sentenceIndex) {

@@ -400,7 +400,17 @@ class ReadingPartnerApp {
             // Flashcards section. The explorer caches the result per
             // open session and the app invalidates that cache on delete
             // via graphExplorer.invalidateFlashcardCache().
-            getFlashcards: (bookId) => storage.getFlashcardsForBook(bookId)
+            getFlashcards: (bookId) => storage.getFlashcardsForBook(bookId),
+            // Click a flashcard in the node-detail side panel → open
+            // the Overview modal scrolled to that card. The explorer
+            // stays open underneath; the overview's own Jump-to-passage
+            // / Review Selection paths use closeAllSRSurfaces to clear
+            // both surfaces if/when the user leaves the graph.
+            onOpenCardOverview: (cardId) =>
+                this._openFlashcardOverview({ scrollToCardId: cardId }),
+            // Click "Review this concept" → micro-deck through the
+            // shared _handleReviewSelection helper (sort + close + open).
+            onReviewConcept: (cards) => this._handleReviewSelection(cards)
         });
 
         // Setup KG buttons in the reader controls
