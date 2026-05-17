@@ -381,3 +381,188 @@ describe('SRSController.onChapterFinished', () => {
         expect(callbacks.onError).toHaveBeenCalled();
     });
 });
+
+// ---------- openCustomDeck (micro-review) ----------
+
+describe('SRSController.openCustomDeck (micro-review)', () => {
+    it('throws on empty input', async () => {
+        const { controller } = await makeController();
+        await expect(controller.openCustomDeck([])).rejects.toThrow(/non-empty/);
+        await expect(controller.openCustomDeck(null)).rejects.toThrow(/non-empty/);
+    });
+
+    it('throws when cards do not share a bookId', async () => {
+        const { controller } = await makeController();
+        await expect(controller.openCustomDeck([
+            makeCard({ id: 'a', bookId: 'b1' }),
+            makeCard({ id: 'b', bookId: 'b2' })
+        ])).rejects.toThrow(/same bookId/);
+    });
+
+    it('plays cards in supplied order; head fires onCardReady', async () => {
+        const { controller, callbacks } = await makeController();
+        const cards = [
+            makeCard({ id: 'first', correctIndex: 0 }),
+            makeCard({ id: 'second', correctIndex: 0 }),
+            makeCard({ id: 'third', correctIndex: 0 })
+        ];
+        await controller.openCustomDeck(cards);
+        expect(callbacks.onCardReady.mock.calls[0][0].id).toBe('first');
+        expect(controller.currentCard().id).toBe('first');
+        expect(controller.getDeckSize()).toBe(3);
+    });
+
+    it('SM-2 state still persists on submitAnswer (pass)', async () => {
+        const { storage, controller } = await makeController();
+        const card = makeCard({ id: 'cc', correctIndex: 0, lastResult: 'new' });
+        await storage.saveFlashcard(card);
+        await controller.openCustomDeck([card]);
+        await controller.submitAnswer(0);
+        const saved = await storage.getFlashcard('cc');
+        expect(saved.srsBox).toBe(1);
+        expect(saved.lastResult).toBe('pass');
+    });
+
+    it('diagnostic fallback is OFF by default — failing an L2 does NOT inject L1s', async () => {
+        const { storage, controller } = await makeController();
+        // A failing L1 prereq lives in storage; it MUST stay out of the
+        // micro-deck since fallback is off.
+        await storage.saveFlashcard(makeCard({
+            id: 'l1', cognitiveLevel: 1, targetNodeIds: ['n1'],
+            srsBox: 2, lastResult: 'pass'
+        }));
+        const l2 = makeCard({
+            id: 'l2', cognitiveLevel: 2, targetNodeIds: ['n1'],
+            correctIndex: 0
+        });
+        await storage.saveFlashcard(l2);
+
+        await controller.openCustomDeck([l2]);
+        await controller.submitAnswer(1); // wrong → fail
+        // Deck would have grown if fallback were on; it should be empty.
+        expect(controller.getDeckSize()).toBe(0);
+    });
+
+    it('honors opts.fallbackEnabled=true (fallback fires on fail)', async () => {
+        const { storage, controller } = await makeController();
+        await storage.saveFlashcard(makeCard({
+            id: 'l1', cognitiveLevel: 1, targetNodeIds: ['n1'],
+            srsBox: 2, lastResult: 'pass'
+        }));
+        const l2 = makeCard({
+            id: 'l2', cognitiveLevel: 2, targetNodeIds: ['n1'],
+            correctIndex: 0
+        });
+        await storage.saveFlashcard(l2);
+
+        await controller.openCustomDeck([l2], { fallbackEnabled: true });
+        await controller.submitAnswer(1); // fail → fallback should inject l1
+        const headIds = [];
+        while (controller.currentCard()) {
+            headIds.push(controller.currentCard().id);
+            await controller.submitAnswer(0);
+        }
+        expect(headIds).toContain('l1');
+    });
+
+    it('is NOT blocked by srsEnabled=false (user has explicitly opted in)', async () => {
+        const { controller, callbacks } = await makeController({
+            settings: { srsEnabled: false }
+        });
+        const card = makeCard({ id: 'cc', correctIndex: 0 });
+        await controller.openCustomDeck([card]);
+        expect(callbacks.onCardReady).toHaveBeenCalled();
+        expect(controller.currentCard().id).toBe('cc');
+    });
+
+    it('after a custom-deck session, the next openDeck restores fallback semantics', async () => {
+        const { storage, controller } = await makeController({
+            settings: { srsTriggerLazyOnOpen: false }
+        });
+        // Custom-deck session that runs a single card.
+        const cc = makeCard({ id: 'cc', correctIndex: 0 });
+        await storage.saveFlashcard(cc);
+        await controller.openCustomDeck([cc]);
+        await controller.submitAnswer(0);
+        // Now seed a real failing L2 with a mastered L1 prereq and open
+        // the normal deck. Fallback must be enabled again.
+        await storage.saveFlashcard(makeCard({
+            id: 'l1', cognitiveLevel: 1, targetNodeIds: ['n1'],
+            srsBox: 2, lastResult: 'pass', nextReviewAt: NOW + 100_000
+        }));
+        await storage.saveFlashcard(makeCard({
+            id: 'l2', cognitiveLevel: 2, targetNodeIds: ['n1'],
+            srsBox: 1, lastResult: 'pass',
+            correctIndex: 0, nextReviewAt: NOW - 100
+        }));
+        await controller.openDeck('b1');
+        await controller.submitAnswer(2); // fail → fallback should kick
+        // l1-fail should now be in the deck via the fallback path.
+        const headIds = [];
+        while (controller.currentCard()) {
+            headIds.push(controller.currentCard().id);
+            await controller.submitAnswer(0);
+            if (headIds.length > 5) break;
+        }
+        expect(headIds).toContain('l1');
+    });
+});
+
+// ---------- removeCardFromDeck ----------
+
+describe('SRSController.removeCardFromDeck', () => {
+    it('removes the head and fires onCardReady with the new head', async () => {
+        const { storage, controller, callbacks } = await makeController();
+        await storage.saveFlashcard(makeCard({ id: 'a', lastResult: 'new' }));
+        await storage.saveFlashcard(makeCard({ id: 'b', lastResult: 'new' }));
+        await controller.openDeck('b1');
+        const beforeId = controller.currentCard().id;
+        callbacks.onCardReady.mockClear();
+        controller.removeCardFromDeck(beforeId);
+        const afterCard = callbacks.onCardReady.mock.calls[0][0];
+        expect(afterCard.id).not.toBe(beforeId);
+        expect(controller.currentCard().id).toBe(afterCard.id);
+    });
+
+    it('removes a non-head card silently (no onCardReady re-fire)', async () => {
+        const { storage, controller, callbacks } = await makeController();
+        await storage.saveFlashcard(makeCard({ id: 'a', lastResult: 'new' }));
+        await storage.saveFlashcard(makeCard({ id: 'b', lastResult: 'new' }));
+        await controller.openDeck('b1');
+        const head = controller.currentCard();
+        const other = controller.getDeckSize() === 2
+            ? (head.id === 'a' ? 'b' : 'a')
+            : null;
+        callbacks.onCardReady.mockClear();
+        controller.removeCardFromDeck(other);
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+        expect(controller.currentCard().id).toBe(head.id);
+        expect(controller.getDeckSize()).toBe(1);
+    });
+
+    it('emptying the deck fires onDeckEmpty', async () => {
+        const { storage, controller, callbacks } = await makeController();
+        await storage.saveFlashcard(makeCard({ id: 'only', lastResult: 'new' }));
+        await controller.openDeck('b1');
+        callbacks.onDeckEmpty.mockClear();
+        controller.removeCardFromDeck('only');
+        expect(callbacks.onDeckEmpty).toHaveBeenCalledTimes(1);
+        expect(controller.getState()).toBe(SRSState.EMPTY);
+    });
+
+    it('is a no-op when the card is not in the deck', async () => {
+        const { storage, controller, callbacks } = await makeController();
+        await storage.saveFlashcard(makeCard({ id: 'a', lastResult: 'new' }));
+        await controller.openDeck('b1');
+        callbacks.onCardReady.mockClear();
+        controller.removeCardFromDeck('nonexistent');
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+    });
+
+    it('is a no-op when the controller is IDLE', async () => {
+        const { controller, callbacks } = await makeController();
+        controller.removeCardFromDeck('whatever');
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+        expect(callbacks.onDeckEmpty).not.toHaveBeenCalled();
+    });
+});

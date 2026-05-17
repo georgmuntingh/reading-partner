@@ -74,6 +74,11 @@ export class SRSController {
         this._bookId = null;
         this._deck = [];
         this._lastResultCard = null; // remembered so jumpToBook works post-submission
+        // Whether the diagnostic L1 fallback fires on L2/L3 failure for
+        // the currently-open deck. Normal openDeck enables it; the
+        // micro-review openCustomDeck disables it by default — the user
+        // has explicitly chosen a narrow drill, so we don't widen it.
+        this._fallbackEnabled = true;
     }
 
     // ---------- introspection ----------
@@ -137,6 +142,10 @@ export class SRSController {
 
         this._bookId = bookId;
         this._lastResultCard = null;
+        // Standard open path: full curriculum semantics, including the
+        // diagnostic fallback. (A prior openCustomDeck session may have
+        // left this false.)
+        this._fallbackEnabled = true;
         this._setState(SRSState.LOADING);
         try {
             await this._rebuildDeck();
@@ -188,7 +197,7 @@ export class SRSController {
 
         // Drop the head; we'll re-prepend remediation if needed.
         this._deck.shift();
-        if (result === 'fail') {
+        if (result === 'fail' && this._fallbackEnabled) {
             this._deck = await injectFallbackCards({
                 failedCard: updated,
                 deck: this._deck,
@@ -248,7 +257,73 @@ export class SRSController {
         this._bookId = null;
         this._deck = [];
         this._lastResultCard = null;
+        this._fallbackEnabled = true;
         this._setState(SRSState.IDLE);
+    }
+
+    /**
+     * Open an arbitrary, caller-supplied deck (micro-review). Bypasses
+     * buildActiveDeck — no prerequisite gate, no session caps — but
+     * submitAnswer still flows through applyReviewResult so SM-2 state
+     * persists exactly as in a normal review.
+     *
+     * Played in the supplied order; the caller is responsible for
+     * sorting (e.g. app.js's _sortForCustomDeck applies L1→L2→L3).
+     *
+     * @param {Object[]} cards                            non-empty list
+     * @param {Object} [opts]
+     * @param {boolean} [opts.fallbackEnabled=false]       diagnostic fallback off by default
+     */
+    async openCustomDeck(cards, opts = {}) {
+        if (!Array.isArray(cards) || cards.length === 0) {
+            throw new Error('openCustomDeck: cards must be a non-empty array');
+        }
+        // All cards must share a bookId — otherwise the fallback / save
+        // path has no single book to anchor on.
+        const bookId = cards[0]?.bookId;
+        if (!bookId) throw new Error('openCustomDeck: cards must have a bookId');
+        for (const c of cards) {
+            if (c?.bookId !== bookId) {
+                throw new Error('openCustomDeck: all cards must share the same bookId');
+            }
+        }
+
+        this._bookId = bookId;
+        this._deck = cards.slice();
+        this._lastResultCard = null;
+        this._fallbackEnabled = opts.fallbackEnabled === true;
+
+        this._setState(SRSState.READY);
+        try { this._onCardReady?.(this._deck[0]); }
+        catch (err) { this.logger.warn?.('[srs-controller] onCardReady threw:', err); }
+    }
+
+    /**
+     * Remove a card from the current deck (typically because the user
+     * deleted it elsewhere — overview modal, etc.). If the head is
+     * removed, fires onCardReady with the new head; if the deck
+     * empties, fires onDeckEmpty.
+     *
+     * No-op when the controller is IDLE or the card isn't in the deck.
+     *
+     * @param {string} cardId
+     */
+    removeCardFromDeck(cardId) {
+        if (this._state === SRSState.IDLE) return;
+        const idx = this._deck.findIndex((c) => c.id === cardId);
+        if (idx < 0) return;
+        const wasHead = idx === 0;
+        this._deck.splice(idx, 1);
+        if (!wasHead) return;
+        if (this._deck.length === 0) {
+            this._setState(SRSState.EMPTY);
+            try { this._onDeckEmpty?.(); }
+            catch (err) { this.logger.warn?.('[srs-controller] onDeckEmpty threw:', err); }
+        } else {
+            this._setState(SRSState.READY);
+            try { this._onCardReady?.(this._deck[0]); }
+            catch (err) { this.logger.warn?.('[srs-controller] onCardReady threw:', err); }
+        }
     }
 
     /**
