@@ -43,6 +43,13 @@
 
     --header-height: 56px;
     --controls-height: 120px;
+
+    /* SRS mastery-band color tokens — used by the Flashcard Overview
+       modal's box badges and the KG-explorer card-highlight cycle. */
+    --srs-band-any: #2563eb;       /* blue   — any card present */
+    --srs-band-failing: #dc2626;   /* red    — srsBox === 0 */
+    --srs-band-learning: #f59e0b;  /* amber  — srsBox 1–2 */
+    --srs-band-mastered: #059669;  /* green  — srsBox ≥ 3 */
 }
 
 html {
