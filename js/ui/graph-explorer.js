@@ -1748,59 +1748,57 @@ export class GraphExplorer {
         // in 'failing' mode but cheap enough to always build).
         let degreeMap = null;
         if (mode === 'failing') {
-            const book = this._getBook();
-            const edges = book ? Array.from(this._cy.edges()).map((e) => ({
-                sourceId: e.data('source'),
-                targetId: e.data('target')
-            })) : [];
+            const edges = [];
+            this._cy.edges().forEach((e) => {
+                edges.push({ sourceId: e.data('source'), targetId: e.data('target') });
+            });
             degreeMap = computeNodeDegrees(edges);
         }
 
-        // Walk nodes.
+        // Walk nodes. Real Cytoscape collections aren't reliably
+        // iterable with for-of (they're array-like, not iterables), so
+        // use forEach — matches the rest of this file.
         const fadedNodeIds = new Set();
-        for (const node of this._cy.nodes()) {
+        this._cy.nodes().forEach((node) => {
             const id = node.data('id');
             const cardsForNode = byNode.get(id) ?? [];
             const matching = cardsForNode.filter((c) => cardMatchesBand(c, mode));
             if (matching.length === 0) {
                 fadedNodeIds.add(id);
-                continue;
+                return;
             }
-            // Apply the band class. For 'any' mode use the neutral
-            // class; otherwise the band-specific class.
             if (mode === Band.ANY) {
                 node.addClass('kg-card-has');
             } else {
                 node.addClass(`kg-card-${mode}`);
             }
-            // Bottleneck: failing mode + high degree.
             if (mode === 'failing' && (degreeMap?.get(id) ?? 0) >= BOTTLENECK_DEGREE_MIN) {
                 node.addClass('kg-card-bottleneck');
             }
-        }
+        });
 
         // Walk edges.
-        for (const edge of this._cy.edges()) {
+        this._cy.edges().forEach((edge) => {
             const id = edge.data('id');
             const cardsForEdge = byEdge.get(id) ?? [];
             const matching = cardsForEdge.filter((c) => cardMatchesBand(c, mode));
             if (matching.length === 0) {
-                // Fade the edge too — but only if BOTH endpoints are faded
-                // (otherwise an edge between a matched and a non-matched
-                // node would visually conflict).
+                // Fade the edge too — but only if BOTH endpoints are
+                // faded (an edge between a matched and a non-matched
+                // node would visually conflict if itself faded).
                 const src = edge.data('source');
                 const tgt = edge.data('target');
                 if (fadedNodeIds.has(src) && fadedNodeIds.has(tgt)) {
                     edge.addClass('kg-faded');
                 }
-                continue;
+                return;
             }
             if (mode === Band.ANY) {
                 edge.addClass('kg-card-has');
             } else {
                 edge.addClass(`kg-card-${mode}`);
             }
-        }
+        });
 
         // Fade non-matching nodes.
         for (const id of fadedNodeIds) {
