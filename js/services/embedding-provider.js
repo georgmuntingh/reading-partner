@@ -22,6 +22,8 @@
 export const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
 export const DEFAULT_CLOUD_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 export const DEFAULT_CLOUD_EMBEDDING_ENDPOINT = 'https://openrouter.ai/api/v1/embeddings';
+export const DEFAULT_LMSTUDIO_EMBEDDING_ENDPOINT = 'http://127.0.0.1:1234';
+export const DEFAULT_LMSTUDIO_EMBEDDING_MODEL = 'text-embedding-bge-large-en-v1.5';
 
 /**
  * Max input strings per single call to the underlying backend. Inputs larger
@@ -59,6 +61,9 @@ export class EmbeddingProvider {
         this._cloudModel = DEFAULT_CLOUD_EMBEDDING_MODEL;
         this._cloudEndpoint = DEFAULT_CLOUD_EMBEDDING_ENDPOINT;
 
+        this._lmstudioEndpoint = DEFAULT_LMSTUDIO_EMBEDDING_ENDPOINT;
+        this._lmstudioModel = DEFAULT_LMSTUDIO_EMBEDDING_MODEL;
+
         this._localModel = DEFAULT_LOCAL_EMBEDDING_MODEL;
         this._transformersVersion = '3';
 
@@ -72,7 +77,7 @@ export class EmbeddingProvider {
         this.onProgress = null;
     }
 
-    /** @param {'openrouter'|'local'} source */
+    /** @param {'openrouter'|'local'|'lmstudio'} source */
     setSource(source) {
         if (source && source !== this._source) {
             // If we'd already loaded the local worker, drop it on switch.
@@ -88,6 +93,8 @@ export class EmbeddingProvider {
     setApiKey(key) { this._apiKey = key || null; }
     setCloudModel(id) { if (id) this._cloudModel = id; }
     setCloudEndpoint(url) { if (url) this._cloudEndpoint = url; }
+    setLmstudioEndpoint(url) { if (url) this._lmstudioEndpoint = url; }
+    setLmstudioModel(id) { if (id) this._lmstudioModel = id; }
     setLocalModel(id) { if (id) this._localModel = id; }
     /** @deprecated alias for setLocalModel */
     setModel(id) { this.setLocalModel(id); }
@@ -98,6 +105,7 @@ export class EmbeddingProvider {
      * Local path loads the worker. Idempotent.
      */
     async load() {
+        // Cloud and LM Studio sources require no preloading.
         if (this._source !== 'local') return;
         if (this._readyPromise) return this._readyPromise;
 
@@ -155,7 +163,39 @@ export class EmbeddingProvider {
 
     _embedRaw(texts) {
         if (this._source === 'openrouter') return this._embedCloud(texts);
+        if (this._source === 'lmstudio') return this._embedLmstudio(texts);
         return this._embedLocal(texts);
+    }
+
+    async _embedLmstudio(texts) {
+        if (!Array.isArray(texts) || texts.length === 0) {
+            throw new Error('embed: texts must be a non-empty array');
+        }
+        const base = String(this._lmstudioEndpoint || '').replace(/\/+$/, '');
+        const url = `${base}/v1/embeddings`;
+
+        let res;
+        try {
+            res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: this._lmstudioModel, input: texts })
+            });
+        } catch (err) {
+            throw new Error(`Cannot reach LM Studio at ${this._lmstudioEndpoint}: ${err.message}`);
+        }
+        if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            throw new Error(`LM Studio embedding failed: ${res.status} ${res.statusText} ${errText}`.trim());
+        }
+        const data = await res.json();
+        if (!Array.isArray(data?.data) || data.data.length === 0) {
+            throw new Error('LM Studio embedding returned empty response');
+        }
+        return data.data
+            .slice()
+            .sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+            .map((row) => normalize(Float32Array.from(row.embedding)));
     }
 
     async _embedCloud(texts) {
@@ -208,6 +248,7 @@ export class EmbeddingProvider {
      */
     isReady() {
         if (this._source === 'openrouter') return Boolean(this._apiKey);
+        if (this._source === 'lmstudio') return Boolean(this._lmstudioEndpoint);
         return this._ready;
     }
 

@@ -251,6 +251,7 @@ class ReadingPartnerApp {
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
+                onLmstudioDiscover: (endpoint) => this._discoverLmstudioModels(endpoint),
                 onClearKG: () => this._onClearKGClick(),
                 getBook: () => this._currentBook,
                 onDomainChange: (domain) => this._onKGDomainChange(domain)
@@ -3046,6 +3047,17 @@ class ReadingPartnerApp {
                 await storage.saveSetting('mediapipeLlmHfToken', settings.mediapipeLlmHfToken);
                 llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
             }
+            if (settings.lmstudioEndpoint !== undefined) {
+                await storage.saveSetting('lmstudioEndpoint', settings.lmstudioEndpoint);
+                llmClient.setLmstudioEndpoint(settings.lmstudioEndpoint);
+            }
+            if (settings.lmstudioChatModel !== undefined) {
+                await storage.saveSetting('lmstudioChatModel', settings.lmstudioChatModel);
+                llmClient.setLmstudioModel(settings.lmstudioChatModel);
+            }
+            if (settings.lmstudioEmbeddingModel !== undefined) {
+                await storage.saveSetting('lmstudioEmbeddingModel', settings.lmstudioEmbeddingModel);
+            }
 
             // Save transformers.js version
             if (settings.transformersVersion !== undefined) {
@@ -3122,7 +3134,10 @@ class ReadingPartnerApp {
     _updateAskQuizButtons() {
         if (!this._controls) return;
 
-        const llmAvailable = this._llmBackend === 'local' || this._llmBackend === 'mediapipe' || this._qaSettings.apiKey;
+        const llmAvailable = this._llmBackend === 'local'
+            || this._llmBackend === 'mediapipe'
+            || this._llmBackend === 'lmstudio'
+            || this._qaSettings.apiKey;
         const llmDisabledReason = this._llmBackend === 'openrouter' && !this._qaSettings.apiKey
             ? 'Configure API key in Q&A Settings or switch to Local LLM'
             : null;
@@ -4255,6 +4270,9 @@ class ReadingPartnerApp {
             const localLlmJitLoading = await storage.getSetting('localLlmJitLoading');
             if (localLlmJitLoading !== null) this._localLlmJitLoading = localLlmJitLoading !== false;
             const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
+            const lmstudioEndpoint = await storage.getSetting('lmstudioEndpoint');
+            const lmstudioChatModel = await storage.getSetting('lmstudioChatModel');
+            const lmstudioEmbeddingModel = await storage.getSetting('lmstudioEmbeddingModel');
 
             // Load transformers.js version
             const transformersVersion = await storage.getSetting('transformersVersion');
@@ -4287,6 +4305,11 @@ class ReadingPartnerApp {
                 this._switchToWhisperSTT(whisperModel, whisperDevice, whisperSilenceTimeout, whisperMaxDuration);
             }
 
+            // Always push LM Studio config into the provider so it's ready
+            // whenever the user (or the KG controller) flips to that backend.
+            if (lmstudioEndpoint) llmClient.setLmstudioEndpoint(lmstudioEndpoint);
+            if (lmstudioChatModel) llmClient.setLmstudioModel(lmstudioChatModel);
+
             // Apply LLM backend
             if (this._llmBackend === 'local') {
                 llmClient.setBackend('local');
@@ -4295,6 +4318,8 @@ class ReadingPartnerApp {
             } else if (this._llmBackend === 'mediapipe') {
                 llmClient.setBackend('mediapipe');
                 if (mediapipeLlmHfToken) llmClient.setMediapipeHfToken(mediapipeLlmHfToken);
+            } else if (this._llmBackend === 'lmstudio') {
+                llmClient.setBackend('lmstudio');
             }
 
             // Update Q&A setup UI
@@ -4324,6 +4349,9 @@ class ReadingPartnerApp {
                 localLlmDeferTts: this._localLlmDeferTts,
                 localLlmJitLoading: this._localLlmJitLoading,
                 mediapipeLlmHfToken: mediapipeLlmHfToken || '',
+                lmstudioEndpoint: lmstudioEndpoint || undefined,
+                lmstudioChatModel: lmstudioChatModel || undefined,
+                lmstudioEmbeddingModel: lmstudioEmbeddingModel || undefined,
                 transformersVersion: tfVersion,
                 verboseLogging: verboseLogging === true,
                 kokoroReinitThreshold: reinitVal,
@@ -4339,6 +4367,13 @@ class ReadingPartnerApp {
                 kgCloudEmbeddingModel: kgCloudEmbeddingModel || 'openai/text-embedding-3-small',
                 kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
             });
+
+            // Probe LM Studio in the background so the settings modal's
+            // model dropdowns are pre-populated by the time the user opens
+            // it. Mirrors the Kokoro FastAPI auto-detection above.
+            this._discoverLmstudioModels().then((r) => {
+                appLogger.info(`LM Studio: ${r.available ? `detected (${r.chatModels.length} chat + ${r.embeddingModels.length} embedding)` : 'not detected'} at ${llmClient.getLmstudioEndpoint()}`);
+            }).catch(() => {});
 
         } catch (error) {
             console.error('Failed to load settings:', error);
@@ -4475,6 +4510,30 @@ class ReadingPartnerApp {
      * @param {Object} config
      * @param {string} config.hfToken - HuggingFace access token
      */
+    /**
+     * Probe the configured LM Studio server and push the result into the
+     * settings modal so its model dropdowns reflect what's currently loaded.
+     * Invoked both at startup (so the UI is ready when the user opens
+     * Settings) and from the modal's Test Connection button (which passes
+     * the just-typed endpoint).
+     * @param {string} [endpoint] - Override URL; defaults to the saved one
+     */
+    async _discoverLmstudioModels(endpoint) {
+        if (endpoint) llmClient.setLmstudioEndpoint(endpoint);
+        try {
+            const result = await llmClient.discoverLmstudioModels({ timeoutMs: 2000 });
+            this._settingsModal?.setLmstudioAvailability({
+                available: result.available,
+                chatModels: result.chatModels,
+                embeddingModels: result.embeddingModels
+            });
+            return result;
+        } catch (err) {
+            this._settingsModal?.setLmstudioAvailability({ available: false });
+            return { ok: false, available: false, chatModels: [], embeddingModels: [], error: err?.message || String(err) };
+        }
+    }
+
     async _downloadMediapipeLlmModel(config) {
         if (config.hfToken) {
             llmClient.setMediapipeHfToken(config.hfToken);

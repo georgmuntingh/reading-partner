@@ -7,11 +7,13 @@
 import { OpenRouterProvider, OPENROUTER_MODELS, DEFAULT_MODEL } from './openrouter-provider.js';
 import { LocalLLMProvider, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL } from './local-llm-provider.js';
 import { MediaPipeLLMProvider, MEDIAPIPE_LLM_MODEL } from './mediapipe-llm-provider.js';
+import { LMStudioProvider, DEFAULT_LMSTUDIO_ENDPOINT, DEFAULT_LMSTUDIO_CHAT_MODEL } from './lmstudio-provider.js';
 
 // Re-export for backward compatibility
 export { OPENROUTER_MODELS, DEFAULT_MODEL };
 export { LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL };
 export { MEDIAPIPE_LLM_MODEL };
+export { DEFAULT_LMSTUDIO_ENDPOINT, DEFAULT_LMSTUDIO_CHAT_MODEL };
 
 export class LLMClient {
     constructor(apiKey = null, model = DEFAULT_MODEL) {
@@ -19,8 +21,9 @@ export class LLMClient {
         this._openRouterProvider = new OpenRouterProvider(apiKey, model);
         this._localProvider = new LocalLLMProvider();
         this._mediapipeProvider = new MediaPipeLLMProvider();
+        this._lmstudioProvider = new LMStudioProvider();
 
-        // Active backend: 'openrouter', 'local', or 'mediapipe'
+        // Active backend: 'openrouter', 'local', 'mediapipe', or 'lmstudio'
         this._backend = 'openrouter';
 
         // Callback for model loading progress (local / mediapipe providers)
@@ -52,7 +55,52 @@ export class LLMClient {
     _getProvider() {
         if (this._backend === 'local') return this._localProvider;
         if (this._backend === 'mediapipe') return this._mediapipeProvider;
+        if (this._backend === 'lmstudio') return this._lmstudioProvider;
         return this._openRouterProvider;
+    }
+
+    /**
+     * Get the LM Studio provider directly (for endpoint/model management)
+     * @returns {LMStudioProvider}
+     */
+    getLmstudioProvider() {
+        return this._lmstudioProvider;
+    }
+
+    setLmstudioEndpoint(url) {
+        this._lmstudioProvider.setEndpoint(url);
+    }
+
+    getLmstudioEndpoint() {
+        return this._lmstudioProvider.getEndpoint();
+    }
+
+    setLmstudioModel(model) {
+        this._lmstudioProvider.setModel(model);
+    }
+
+    getLmstudioModel() {
+        return this._lmstudioProvider.getModel();
+    }
+
+    async testLmstudioConnection() {
+        return this._lmstudioProvider.testConnection();
+    }
+
+    async discoverLmstudioModels(options) {
+        return this._lmstudioProvider.discoverModels(options);
+    }
+
+    isLmstudioAvailable() {
+        return this._lmstudioProvider.isAvailableSync();
+    }
+
+    getLmstudioChatModels() {
+        return this._lmstudioProvider.getChatModels();
+    }
+
+    getLmstudioEmbeddingModels() {
+        return this._lmstudioProvider.getEmbeddingModels();
     }
 
     /**
