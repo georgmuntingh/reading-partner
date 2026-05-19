@@ -30,6 +30,9 @@ export class LMStudioProvider extends LLMProvider {
         this._endpoint = endpoint;
         this._model = model;
         this._abortController = null;
+        this._available = false;
+        this._chatModels = [];
+        this._embeddingModels = [];
     }
 
     setEndpoint(url) {
@@ -48,6 +51,21 @@ export class LMStudioProvider extends LLMProvider {
         return this._model;
     }
 
+    /** Whether the most recent discovery attempt succeeded. */
+    isAvailableSync() {
+        return this._available;
+    }
+
+    /** Chat-capable model IDs from the most recent discovery (loaded + downloaded). */
+    getChatModels() {
+        return this._chatModels.slice();
+    }
+
+    /** Embedding-capable model IDs from the most recent discovery. */
+    getEmbeddingModels() {
+        return this._embeddingModels.slice();
+    }
+
     async isAvailable() {
         try {
             const res = await fetch(joinUrl(this._endpoint, '/v1/models'), { method: 'GET' });
@@ -58,22 +76,93 @@ export class LMStudioProvider extends LLMProvider {
     }
 
     /**
+     * Probe the configured server and return a categorised list of models.
+     *
+     * LM Studio's `/api/v0/models` endpoint includes a `type` field
+     * ("llm" / "vlm" / "embeddings") which lets us route models to the
+     * right dropdown. If that endpoint isn't reachable (older LM Studio
+     * builds, or another OpenAI-compatible server) we fall back to the
+     * OpenAI-compatible `/v1/models` and present the full list to both
+     * dropdowns.
+     *
+     * @param {{ timeoutMs?: number }} [options]
+     * @returns {Promise<{ ok: boolean, available: boolean, chatModels: string[], embeddingModels: string[], error?: string }>}
+     */
+    async discoverModels({ timeoutMs = 2000 } = {}) {
+        const result = await this._discover(timeoutMs);
+        this._available = result.ok;
+        this._chatModels = result.chatModels;
+        this._embeddingModels = result.embeddingModels;
+        return result;
+    }
+
+    async _discover(timeoutMs) {
+        const empty = { ok: false, available: false, chatModels: [], embeddingModels: [] };
+
+        // Try LM Studio's typed endpoint first.
+        try {
+            const data = await this._fetchJSON('/api/v0/models', timeoutMs);
+            if (Array.isArray(data?.data) && data.data.length > 0) {
+                const chat = [];
+                const emb = [];
+                for (const m of data.data) {
+                    const id = m?.id;
+                    if (!id) continue;
+                    const type = String(m?.type || '').toLowerCase();
+                    if (type === 'embeddings' || type === 'embedding') {
+                        emb.push(id);
+                    } else {
+                        // 'llm', 'vlm', or unknown — treat as chat-capable
+                        chat.push(id);
+                    }
+                }
+                return { ok: true, available: true, chatModels: chat, embeddingModels: emb };
+            }
+        } catch {
+            // Fall through to /v1/models
+        }
+
+        // OpenAI-compatible fallback. Without `type` we can't categorise, so
+        // the same list goes to both dropdowns and the user picks.
+        try {
+            const data = await this._fetchJSON('/v1/models', timeoutMs);
+            if (!Array.isArray(data?.data)) return empty;
+            const ids = data.data.map((m) => m?.id).filter(Boolean);
+            return { ok: true, available: true, chatModels: ids, embeddingModels: ids };
+        } catch (err) {
+            return { ...empty, error: err?.message || String(err) };
+        }
+    }
+
+    async _fetchJSON(path, timeoutMs) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(joinUrl(this._endpoint, path), {
+                method: 'GET',
+                signal: controller.signal
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            return await res.json();
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    /**
      * Ping the configured server. Used by the settings "Test connection"
      * button. Resolves with { ok, modelCount, error }.
      */
     async testConnection() {
-        try {
-            const res = await fetch(joinUrl(this._endpoint, '/v1/models'), { method: 'GET' });
-            if (!res.ok) return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
-            const data = await res.json().catch(() => ({}));
-            const modelCount = Array.isArray(data?.data) ? data.data.length : 0;
-            const models = Array.isArray(data?.data)
-                ? data.data.map((m) => m.id).filter(Boolean)
-                : [];
-            return { ok: true, modelCount, models };
-        } catch (err) {
-            return { ok: false, error: err?.message || String(err) };
-        }
+        const r = await this.discoverModels();
+        if (!r.ok) return { ok: false, error: r.error || 'Server unreachable' };
+        const modelCount = r.chatModels.length + r.embeddingModels.length;
+        return {
+            ok: true,
+            modelCount,
+            chatModels: r.chatModels,
+            embeddingModels: r.embeddingModels
+        };
     }
 
     abort() {

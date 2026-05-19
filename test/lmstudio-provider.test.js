@@ -90,16 +90,45 @@ describe('LMStudioProvider — testConnection', () => {
     beforeEach(() => { originalFetch = globalThis.fetch; });
     afterEach(() => { globalThis.fetch = originalFetch; });
 
-    it('returns ok with a model count on a healthy server', async () => {
+    it('returns ok with categorised models on a healthy server (typed endpoint)', async () => {
         const p = new LMStudioProvider();
-        globalThis.fetch = vi.fn(async () => ({
-            ok: true,
-            json: async () => ({ data: [{ id: 'qwen/qwen3.5-35b-a3b' }, { id: 'other' }] })
-        }));
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/api/v0/models')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        data: [
+                            { id: 'qwen/qwen3.5-35b-a3b', type: 'llm' },
+                            { id: 'text-embedding-bge-large-en-v1.5', type: 'embeddings' }
+                        ]
+                    })
+                };
+            }
+            return { ok: false, status: 404, statusText: 'Not Found' };
+        });
         const r = await p.testConnection();
         expect(r.ok).toBe(true);
         expect(r.modelCount).toBe(2);
-        expect(r.models).toContain('qwen/qwen3.5-35b-a3b');
+        expect(r.chatModels).toContain('qwen/qwen3.5-35b-a3b');
+        expect(r.embeddingModels).toContain('text-embedding-bge-large-en-v1.5');
+    });
+
+    it('falls back to /v1/models and puts the whole list under chatModels and embeddingModels', async () => {
+        const p = new LMStudioProvider();
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/api/v0/models')) {
+                return { ok: false, status: 404, statusText: 'Not Found' };
+            }
+            // /v1/models response — no type field
+            return {
+                ok: true,
+                json: async () => ({ data: [{ id: 'qwen/qwen3.5-35b-a3b' }, { id: 'other-model' }] })
+            };
+        });
+        const r = await p.testConnection();
+        expect(r.ok).toBe(true);
+        expect(r.chatModels).toEqual(['qwen/qwen3.5-35b-a3b', 'other-model']);
+        expect(r.embeddingModels).toEqual(['qwen/qwen3.5-35b-a3b', 'other-model']);
     });
 
     it('returns ok=false with an error string when fetch rejects', async () => {
@@ -107,7 +136,43 @@ describe('LMStudioProvider — testConnection', () => {
         globalThis.fetch = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
         const r = await p.testConnection();
         expect(r.ok).toBe(false);
-        expect(r.error).toMatch(/ECONNREFUSED/);
+        expect(r.error).toMatch(/ECONNREFUSED|unreachable/i);
+    });
+
+    it('discoverModels caches chat/embedding lists on the provider', async () => {
+        const p = new LMStudioProvider();
+        globalThis.fetch = vi.fn(async (url) => {
+            if (url.endsWith('/api/v0/models')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        data: [
+                            { id: 'qwen/qwen3.5-35b-a3b', type: 'llm' },
+                            { id: 'gemma-2-2b', type: 'vlm' },
+                            { id: 'bge-large', type: 'embeddings' }
+                        ]
+                    })
+                };
+            }
+            return { ok: false };
+        });
+        const r = await p.discoverModels();
+        expect(r.ok).toBe(true);
+        expect(r.available).toBe(true);
+        expect(p.isAvailableSync()).toBe(true);
+        expect(p.getChatModels()).toEqual(['qwen/qwen3.5-35b-a3b', 'gemma-2-2b']);
+        expect(p.getEmbeddingModels()).toEqual(['bge-large']);
+    });
+
+    it('discoverModels marks the provider unavailable on total failure', async () => {
+        const p = new LMStudioProvider();
+        globalThis.fetch = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
+        const r = await p.discoverModels({ timeoutMs: 500 });
+        expect(r.ok).toBe(false);
+        expect(r.available).toBe(false);
+        expect(p.isAvailableSync()).toBe(false);
+        expect(p.getChatModels()).toEqual([]);
+        expect(p.getEmbeddingModels()).toEqual([]);
     });
 });
 

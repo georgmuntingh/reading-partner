@@ -87,6 +87,22 @@ export class LLMClient {
         return this._lmstudioProvider.testConnection();
     }
 
+    async discoverLmstudioModels(options) {
+        return this._lmstudioProvider.discoverModels(options);
+    }
+
+    isLmstudioAvailable() {
+        return this._lmstudioProvider.isAvailableSync();
+    }
+
+    getLmstudioChatModels() {
+        return this._lmstudioProvider.getChatModels();
+    }
+
+    getLmstudioEmbeddingModels() {
+        return this._lmstudioProvider.getEmbeddingModels();
+    }
+
     /**
      * Get the OpenRouter provider directly (for API key management, etc.)
      * @returns {OpenRouterProvider}

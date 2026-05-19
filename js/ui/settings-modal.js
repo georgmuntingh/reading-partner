@@ -22,6 +22,10 @@ export class SettingsModal {
         this._container = options.container;
         this._callbacks = callbacks;
         this._fastApiAvailable = false;
+        // LM Studio discovery cache. Populated by setLmstudioAvailability().
+        this._lmstudioAvailable = false;
+        this._lmstudioChatModels = [];
+        this._lmstudioEmbeddingModels = [];
 
         this._settings = {
             apiKey: '',
@@ -639,9 +643,8 @@ export class SettingsModal {
 
                             <div class="form-group">
                                 <label for="settings-lmstudio-llm-model">Chat Model (API identifier)</label>
-                                <input type="text" id="settings-lmstudio-llm-model" class="form-input"
-                                    placeholder="qwen/qwen3.5-35b-a3b">
-                                <p class="form-hint">The "API Model Identifier" from LM Studio's loaded model.</p>
+                                <select id="settings-lmstudio-llm-model" class="form-select"></select>
+                                <p class="form-hint">Pick from the models currently visible to LM Studio. Use "Refresh" if you just loaded one.</p>
                             </div>
 
                             <div class="form-group">
@@ -934,8 +937,7 @@ export class SettingsModal {
 
                             <div class="form-group">
                                 <label for="settings-kg-lmstudio-chat-model">Chat Model (API identifier)</label>
-                                <input type="text" id="settings-kg-lmstudio-chat-model" class="form-input"
-                                    placeholder="qwen/qwen3.5-35b-a3b">
+                                <select id="settings-kg-lmstudio-chat-model" class="form-select"></select>
                             </div>
 
                             <div class="form-group">
@@ -1046,9 +1048,8 @@ export class SettingsModal {
 
                             <div class="form-group">
                                 <label for="settings-kg-lmstudio-embedding-model">Embedding Model (API identifier)</label>
-                                <input type="text" id="settings-kg-lmstudio-embedding-model" class="form-input"
-                                    placeholder="text-embedding-bge-large-en-v1.5">
-                                <p class="form-hint">Load an embedding model in LM Studio first. Its "API Model Identifier" goes here.</p>
+                                <select id="settings-kg-lmstudio-embedding-model" class="form-select"></select>
+                                <p class="form-hint">Pick from the embedding models currently visible to LM Studio. Use "Refresh" if you just loaded one.</p>
                             </div>
 
                             <div class="form-group">
@@ -1418,7 +1419,7 @@ export class SettingsModal {
             this._updateKGExtractionBackendUI();
         });
 
-        // LM Studio: keep all three URL inputs and both chat-model inputs in
+        // LM Studio: keep all three URL inputs and both chat-model dropdowns in
         // sync so the user can configure from any of the three locations and
         // see the change reflected everywhere immediately.
         const lmstudioEndpointInputs = [
@@ -1431,12 +1432,21 @@ export class SettingsModal {
             for (const input of lmstudioEndpointInputs) {
                 if (input && input !== sourceInput) input.value = v;
             }
+            // A new URL invalidates whatever model list we cached against the
+            // old one — wipe both dropdowns back to "saved-value only" until
+            // the user clicks Test/Refresh.
             this._setLmstudioStatus({ tested: false });
+            this._lmstudioAvailable = false;
+            this._lmstudioChatModels = [];
+            this._lmstudioEmbeddingModels = [];
+            this._populateLmstudioDropdowns();
         };
         for (const input of lmstudioEndpointInputs) {
             input?.addEventListener('input', () => syncLmstudioEndpoint(input));
         }
 
+        // The two chat-model dropdowns (LLM section + KG extraction) are
+        // populated identically; sync their selection on change.
         const lmstudioChatModelInputs = [
             this._elements.lmstudioLlmModel,
             this._elements.kgLmstudioChatModel
@@ -1448,17 +1458,17 @@ export class SettingsModal {
             }
         };
         for (const input of lmstudioChatModelInputs) {
-            input?.addEventListener('input', () => syncLmstudioChatModel(input));
+            input?.addEventListener('change', () => syncLmstudioChatModel(input));
         }
 
         this._elements.lmstudioLlmTestBtn?.addEventListener('click', () => {
-            this._testLmstudioConnection('llm');
+            this._refreshLmstudioModels();
         });
         this._elements.kgLmstudioExtractionTestBtn?.addEventListener('click', () => {
-            this._testLmstudioConnection('kg-extraction');
+            this._refreshLmstudioModels();
         });
         this._elements.kgLmstudioEmbeddingTestBtn?.addEventListener('click', () => {
-            this._testLmstudioConnection('kg-embedding');
+            this._refreshLmstudioModels();
         });
 
         // Clear Knowledge Graph button — delegates to the host app via a
@@ -1712,12 +1722,95 @@ export class SettingsModal {
     }
 
     /**
-     * Ping LM Studio's /v1/models endpoint and update the status badge in
-     * the originating section. The result also propagates to the two sibling
-     * badges so the user sees a single consistent result no matter which
-     * "Test" button they clicked.
+     * Cache discovered LM Studio models and re-populate the dropdowns.
+     * Called by app.js after startup detection, and after the user clicks
+     * "Test Connection" inside settings.
+     *
+     * @param {{ available: boolean, chatModels?: string[], embeddingModels?: string[] }} info
      */
-    async _testLmstudioConnection(_origin) {
+    setLmstudioAvailability(info) {
+        this._lmstudioAvailable = !!info?.available;
+        this._lmstudioChatModels = Array.isArray(info?.chatModels) ? info.chatModels.slice() : [];
+        this._lmstudioEmbeddingModels = Array.isArray(info?.embeddingModels) ? info.embeddingModels.slice() : [];
+        this._populateLmstudioDropdowns();
+
+        if (this._lmstudioAvailable) {
+            const total = this._lmstudioChatModels.length + this._lmstudioEmbeddingModels.length;
+            this._setLmstudioStatus({
+                tested: true,
+                ok: true,
+                text: `Server detected — ${total} model${total === 1 ? '' : 's'} available`
+            });
+        } else {
+            this._setLmstudioStatus({ tested: true, ok: false, text: 'Server not detected' });
+        }
+    }
+
+    /**
+     * Re-populate the three LM Studio selects from the cached model lists,
+     * preserving the user's saved selection if it isn't currently advertised
+     * by the server (so we never silently lose their choice).
+     */
+    _populateLmstudioDropdowns() {
+        const savedChat = String(this._settings?.lmstudioChatModel || DEFAULT_LMSTUDIO_CHAT_MODEL);
+        const savedEmbed = String(this._settings?.lmstudioEmbeddingModel || DEFAULT_LMSTUDIO_EMBEDDING_MODEL);
+
+        // Prefer the value currently shown in the DOM (it may be newer than
+        // _settings if the user just changed it but hasn't saved).
+        const currentChat = String(
+            this._elements.lmstudioLlmModel?.value
+            || this._elements.kgLmstudioChatModel?.value
+            || savedChat
+        );
+        const currentEmbed = String(this._elements.kgLmstudioEmbeddingModel?.value || savedEmbed);
+
+        for (const select of [this._elements.lmstudioLlmModel, this._elements.kgLmstudioChatModel]) {
+            this._fillLmstudioSelect(select, this._lmstudioChatModels || [], currentChat);
+        }
+        this._fillLmstudioSelect(
+            this._elements.kgLmstudioEmbeddingModel,
+            this._lmstudioEmbeddingModels || [],
+            currentEmbed
+        );
+    }
+
+    /**
+     * Replace the options of one LM Studio <select> with the discovered model
+     * list, prepending the user's saved value if it isn't in the list. If no
+     * models are known we still emit one option (the saved value) so the
+     * select isn't visually empty.
+     */
+    _fillLmstudioSelect(select, models, savedValue) {
+        if (!select) return;
+        const ids = new Set(models);
+        const ordered = [];
+        if (savedValue && !ids.has(savedValue)) ordered.push(savedValue);
+        for (const id of models) ordered.push(id);
+        if (ordered.length === 0 && savedValue) ordered.push(savedValue);
+
+        select.innerHTML = ordered.map((id) => {
+            const flag = (savedValue && id === savedValue && !ids.has(id))
+                ? ' (saved, not currently loaded)'
+                : '';
+            return `<option value="${this._escapeAttr(id)}">${this._escapeText(id)}${flag}</option>`;
+        }).join('');
+        if (savedValue) select.value = savedValue;
+    }
+
+    _escapeAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    }
+
+    _escapeText(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    /**
+     * "Test Connection" / refresh: delegate to the host (which knows how to
+     * talk to the LM Studio provider). Falls back to a direct probe so the
+     * button still does something even if no callback is wired.
+     */
+    async _refreshLmstudioModels() {
         const endpoint = String(this._elements.lmstudioLlmEndpoint?.value || '').trim();
         if (!endpoint) {
             this._setLmstudioStatus({ tested: true, ok: false, text: 'Enter a server URL first' });
@@ -1725,18 +1818,43 @@ export class SettingsModal {
         }
         this._setLmstudioStatus({ tested: true, ok: false, text: 'Testing…' });
 
+        let result;
+        if (this._callbacks.onLmstudioDiscover) {
+            try {
+                result = await this._callbacks.onLmstudioDiscover(endpoint);
+            } catch (err) {
+                result = { ok: false, error: err?.message || String(err) };
+            }
+        } else {
+            result = await this._fallbackProbe(endpoint);
+        }
+
+        if (result?.ok) {
+            this.setLmstudioAvailability({
+                available: true,
+                chatModels: result.chatModels || [],
+                embeddingModels: result.embeddingModels || []
+            });
+        } else {
+            this.setLmstudioAvailability({ available: false });
+            this._setLmstudioStatus({
+                tested: true,
+                ok: false,
+                text: result?.error ? `Unreachable: ${result.error}` : 'Server not detected'
+            });
+        }
+    }
+
+    async _fallbackProbe(endpoint) {
         try {
             const base = endpoint.replace(/\/+$/, '');
             const res = await fetch(`${base}/v1/models`, { method: 'GET' });
-            if (!res.ok) {
-                this._setLmstudioStatus({ tested: true, ok: false, text: `HTTP ${res.status}` });
-                return;
-            }
+            if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
             const data = await res.json().catch(() => ({}));
-            const count = Array.isArray(data?.data) ? data.data.length : 0;
-            this._setLmstudioStatus({ tested: true, ok: true, text: `Connected — ${count} model${count === 1 ? '' : 's'} loaded` });
+            const ids = Array.isArray(data?.data) ? data.data.map((m) => m?.id).filter(Boolean) : [];
+            return { ok: true, chatModels: ids, embeddingModels: ids };
         } catch (err) {
-            this._setLmstudioStatus({ tested: true, ok: false, text: `Unreachable: ${err?.message || err}` });
+            return { ok: false, error: err?.message || String(err) };
         }
     }
 
@@ -2274,17 +2392,19 @@ export class SettingsModal {
         this._elements.localLlmJitLoading.checked = this._settings.localLlmJitLoading !== false; // default true
         this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
 
-        // LM Studio inputs (mirrored across three sections; populate all)
+        // LM Studio inputs (mirrored across three sections; populate all).
+        // The model fields are <select>s — _populateLmstudioDropdowns will
+        // emit the current saved value as an option even when the server
+        // hasn't been probed yet, so the dropdown always reflects the
+        // persisted choice on settings open.
         const lmstudioEndpoint = this._settings.lmstudioEndpoint || DEFAULT_LMSTUDIO_ENDPOINT;
-        const lmstudioChatModel = this._settings.lmstudioChatModel || DEFAULT_LMSTUDIO_CHAT_MODEL;
-        const lmstudioEmbeddingModel = this._settings.lmstudioEmbeddingModel || DEFAULT_LMSTUDIO_EMBEDDING_MODEL;
         if (this._elements.lmstudioLlmEndpoint) this._elements.lmstudioLlmEndpoint.value = lmstudioEndpoint;
         if (this._elements.kgLmstudioEndpoint) this._elements.kgLmstudioEndpoint.value = lmstudioEndpoint;
         if (this._elements.kgLmstudioEmbeddingEndpoint) this._elements.kgLmstudioEmbeddingEndpoint.value = lmstudioEndpoint;
-        if (this._elements.lmstudioLlmModel) this._elements.lmstudioLlmModel.value = lmstudioChatModel;
-        if (this._elements.kgLmstudioChatModel) this._elements.kgLmstudioChatModel.value = lmstudioChatModel;
-        if (this._elements.kgLmstudioEmbeddingModel) this._elements.kgLmstudioEmbeddingModel.value = lmstudioEmbeddingModel;
-        this._setLmstudioStatus({ tested: false });
+        this._populateLmstudioDropdowns();
+        if (!this._lmstudioAvailable) {
+            this._setLmstudioStatus({ tested: false });
+        }
 
         this._updateLLMBackendUI();
 

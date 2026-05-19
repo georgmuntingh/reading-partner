@@ -251,6 +251,7 @@ class ReadingPartnerApp {
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
+                onLmstudioDiscover: (endpoint) => this._discoverLmstudioModels(endpoint),
                 onClearKG: () => this._onClearKGClick(),
                 getBook: () => this._currentBook,
                 onDomainChange: (domain) => this._onKGDomainChange(domain)
@@ -4367,6 +4368,13 @@ class ReadingPartnerApp {
                 kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
             });
 
+            // Probe LM Studio in the background so the settings modal's
+            // model dropdowns are pre-populated by the time the user opens
+            // it. Mirrors the Kokoro FastAPI auto-detection above.
+            this._discoverLmstudioModels().then((r) => {
+                appLogger.info(`LM Studio: ${r.available ? `detected (${r.chatModels.length} chat + ${r.embeddingModels.length} embedding)` : 'not detected'} at ${llmClient.getLmstudioEndpoint()}`);
+            }).catch(() => {});
+
         } catch (error) {
             console.error('Failed to load settings:', error);
             appLogger.error('Failed to load settings', error.message);
@@ -4502,6 +4510,30 @@ class ReadingPartnerApp {
      * @param {Object} config
      * @param {string} config.hfToken - HuggingFace access token
      */
+    /**
+     * Probe the configured LM Studio server and push the result into the
+     * settings modal so its model dropdowns reflect what's currently loaded.
+     * Invoked both at startup (so the UI is ready when the user opens
+     * Settings) and from the modal's Test Connection button (which passes
+     * the just-typed endpoint).
+     * @param {string} [endpoint] - Override URL; defaults to the saved one
+     */
+    async _discoverLmstudioModels(endpoint) {
+        if (endpoint) llmClient.setLmstudioEndpoint(endpoint);
+        try {
+            const result = await llmClient.discoverLmstudioModels({ timeoutMs: 2000 });
+            this._settingsModal?.setLmstudioAvailability({
+                available: result.available,
+                chatModels: result.chatModels,
+                embeddingModels: result.embeddingModels
+            });
+            return result;
+        } catch (err) {
+            this._settingsModal?.setLmstudioAvailability({ available: false });
+            return { ok: false, available: false, chatModels: [], embeddingModels: [], error: err?.message || String(err) };
+        }
+    }
+
     async _downloadMediapipeLlmModel(config) {
         if (config.hfToken) {
             llmClient.setMediapipeHfToken(config.hfToken);
