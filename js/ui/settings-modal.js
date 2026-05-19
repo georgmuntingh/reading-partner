@@ -3,7 +3,8 @@
  * Displays settings organized into sections: General, Appearance, TTS, STT, LLM, Quiz, and About
  */
 
-import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL, MEDIAPIPE_LLM_MODEL } from '../services/llm-client.js';
+import { OPENROUTER_MODELS, DEFAULT_MODEL, LOCAL_LLM_MODELS, DEFAULT_LOCAL_MODEL, MEDIAPIPE_LLM_MODEL, DEFAULT_LMSTUDIO_ENDPOINT, DEFAULT_LMSTUDIO_CHAT_MODEL } from '../services/llm-client.js';
+import { DEFAULT_LMSTUDIO_EMBEDDING_MODEL } from '../services/embedding-provider.js';
 import { WHISPER_MODELS, DEFAULT_WHISPER_MODEL } from '../services/whisper-stt-service.js';
 import { mediaSessionManager } from '../services/media-session-manager.js';
 import { appLogger } from '../services/app-logger.js';
@@ -70,6 +71,12 @@ export class SettingsModal {
             localLlmDeferTts: false,
             localLlmJitLoading: true,
             mediapipeLlmHfToken: '',
+            // LM Studio (local OpenAI-compatible server). Shared between the
+            // top-level LLM section and the Knowledge Graph subsections so the
+            // user only has to point at their server once.
+            lmstudioEndpoint: DEFAULT_LMSTUDIO_ENDPOINT,
+            lmstudioChatModel: DEFAULT_LMSTUDIO_CHAT_MODEL,
+            lmstudioEmbeddingModel: DEFAULT_LMSTUDIO_EMBEDDING_MODEL,
             // Lookup settings
             lookupLanguage: 'auto',
             // Reading history
@@ -529,6 +536,7 @@ export class SettingsModal {
                                 <option value="openrouter">OpenRouter (Cloud)</option>
                                 <option value="local">Local/transformers.js (On-Device)</option>
                                 <option value="mediapipe">MediaPipe/Gemma3 (On-Device, WebGPU)</option>
+                                <option value="lmstudio">LM Studio (Local Server)</option>
                             </select>
                             <p class="form-hint" id="settings-llm-backend-hint">
                                 Uses cloud AI models via OpenRouter. Requires an API key and internet connection.
@@ -612,6 +620,34 @@ export class SettingsModal {
                                 <div class="model-status" id="settings-mediapipe-llm-status">
                                     <span class="model-status-text">Model not loaded</span>
                                     <button class="btn btn-secondary btn-sm" id="settings-mediapipe-llm-download-btn">Download &amp; Load Model</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="settings-lmstudio-llm-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="settings-lmstudio-llm-endpoint">LM Studio Server URL</label>
+                                <input type="text" id="settings-lmstudio-llm-endpoint" class="form-input"
+                                    placeholder="http://127.0.0.1:1234">
+                                <p class="form-hint">
+                                    The base URL of your LM Studio server. On desktop the default
+                                    <code>http://127.0.0.1:1234</code> works. On mobile, enter the LAN
+                                    address of the machine running LM Studio (enable
+                                    "Serve on local network" in LM Studio's developer tab).
+                                </p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-lmstudio-llm-model">Chat Model (API identifier)</label>
+                                <input type="text" id="settings-lmstudio-llm-model" class="form-input"
+                                    placeholder="qwen/qwen3.5-35b-a3b">
+                                <p class="form-hint">The "API Model Identifier" from LM Studio's loaded model.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-lmstudio-llm-status">
+                                    <span class="model-status-text">Connection not tested</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-lmstudio-llm-test-btn">Test Connection</button>
                                 </div>
                             </div>
                         </div>
@@ -883,8 +919,31 @@ export class SettingsModal {
                                 <option value="openrouter">OpenRouter (Cloud)</option>
                                 <option value="local">Local (transformers.js)</option>
                                 <option value="mediapipe">Local (MediaPipe)</option>
+                                <option value="lmstudio">LM Studio (Local Server)</option>
                             </select>
                             <p class="form-hint">Which LLM is asked to extract entities and relations from each chunk</p>
+                        </div>
+
+                        <div id="settings-kg-lmstudio-extraction-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="settings-kg-lmstudio-endpoint">LM Studio Server URL</label>
+                                <input type="text" id="settings-kg-lmstudio-endpoint" class="form-input"
+                                    placeholder="http://127.0.0.1:1234">
+                                <p class="form-hint">Shared with the Language Model section &mdash; changes here apply everywhere.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-kg-lmstudio-chat-model">Chat Model (API identifier)</label>
+                                <input type="text" id="settings-kg-lmstudio-chat-model" class="form-input"
+                                    placeholder="qwen/qwen3.5-35b-a3b">
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-kg-lmstudio-extraction-status">
+                                    <span class="model-status-text">Connection not tested</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-kg-lmstudio-extraction-test-btn">Test Connection</button>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -953,8 +1012,9 @@ export class SettingsModal {
                             <select id="settings-kg-embedding-source" class="form-select">
                                 <option value="openrouter">OpenRouter (Cloud)</option>
                                 <option value="local">Local (transformers.js)</option>
+                                <option value="lmstudio">LM Studio (Local Server)</option>
                             </select>
-                            <p class="form-hint">Cloud embeddings reuse the OpenRouter API key from the LLM section. Local embeddings run a small transformers.js model on this device (~25 MB download on first use).</p>
+                            <p class="form-hint">Cloud embeddings reuse the OpenRouter API key from the LLM section. Local embeddings run a small transformers.js model on this device (~25 MB download on first use). LM Studio uses your local server's embedding model.</p>
                         </div>
 
                         <div class="form-group" id="settings-kg-cloud-embedding-options">
@@ -974,6 +1034,29 @@ export class SettingsModal {
                                 <option value="Xenova/bge-small-en-v1.5">BGE-small EN v1.5 (384-d, ~33 MB)</option>
                                 <option value="Xenova/multilingual-e5-small">Multilingual E5 small (384-d, ~118 MB)</option>
                             </select>
+                        </div>
+
+                        <div id="settings-kg-lmstudio-embedding-options" style="display: none;">
+                            <div class="form-group">
+                                <label for="settings-kg-lmstudio-embedding-endpoint">LM Studio Server URL</label>
+                                <input type="text" id="settings-kg-lmstudio-embedding-endpoint" class="form-input"
+                                    placeholder="http://127.0.0.1:1234">
+                                <p class="form-hint">Shared with the Language Model section &mdash; changes here apply everywhere.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="settings-kg-lmstudio-embedding-model">Embedding Model (API identifier)</label>
+                                <input type="text" id="settings-kg-lmstudio-embedding-model" class="form-input"
+                                    placeholder="text-embedding-bge-large-en-v1.5">
+                                <p class="form-hint">Load an embedding model in LM Studio first. Its "API Model Identifier" goes here.</p>
+                            </div>
+
+                            <div class="form-group">
+                                <div class="model-status" id="settings-kg-lmstudio-embedding-status">
+                                    <span class="model-status-text">Connection not tested</span>
+                                    <button class="btn btn-secondary btn-sm" id="settings-kg-lmstudio-embedding-test-btn">Test Connection</button>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="settings-subsection-header">Maintenance</div>
@@ -1077,6 +1160,27 @@ export class SettingsModal {
             mediapipeLlmStatus: this._container.querySelector('#settings-mediapipe-llm-status'),
             mediapipeLlmStatusText: this._container.querySelector('#settings-mediapipe-llm-status .model-status-text'),
             mediapipeLlmDownloadBtn: this._container.querySelector('#settings-mediapipe-llm-download-btn'),
+            // LM Studio backend (LLM section)
+            lmstudioLlmOptions: this._container.querySelector('#settings-lmstudio-llm-options'),
+            lmstudioLlmEndpoint: this._container.querySelector('#settings-lmstudio-llm-endpoint'),
+            lmstudioLlmModel: this._container.querySelector('#settings-lmstudio-llm-model'),
+            lmstudioLlmStatus: this._container.querySelector('#settings-lmstudio-llm-status'),
+            lmstudioLlmStatusText: this._container.querySelector('#settings-lmstudio-llm-status .model-status-text'),
+            lmstudioLlmTestBtn: this._container.querySelector('#settings-lmstudio-llm-test-btn'),
+            // LM Studio backend (KG Extraction)
+            kgLmstudioExtractionOptions: this._container.querySelector('#settings-kg-lmstudio-extraction-options'),
+            kgLmstudioEndpoint: this._container.querySelector('#settings-kg-lmstudio-endpoint'),
+            kgLmstudioChatModel: this._container.querySelector('#settings-kg-lmstudio-chat-model'),
+            kgLmstudioExtractionStatus: this._container.querySelector('#settings-kg-lmstudio-extraction-status'),
+            kgLmstudioExtractionStatusText: this._container.querySelector('#settings-kg-lmstudio-extraction-status .model-status-text'),
+            kgLmstudioExtractionTestBtn: this._container.querySelector('#settings-kg-lmstudio-extraction-test-btn'),
+            // LM Studio backend (KG Embedding)
+            kgLmstudioEmbeddingOptions: this._container.querySelector('#settings-kg-lmstudio-embedding-options'),
+            kgLmstudioEmbeddingEndpoint: this._container.querySelector('#settings-kg-lmstudio-embedding-endpoint'),
+            kgLmstudioEmbeddingModel: this._container.querySelector('#settings-kg-lmstudio-embedding-model'),
+            kgLmstudioEmbeddingStatus: this._container.querySelector('#settings-kg-lmstudio-embedding-status'),
+            kgLmstudioEmbeddingStatusText: this._container.querySelector('#settings-kg-lmstudio-embedding-status .model-status-text'),
+            kgLmstudioEmbeddingTestBtn: this._container.querySelector('#settings-kg-lmstudio-embedding-test-btn'),
             apiKey: this._container.querySelector('#settings-api-key'),
             model: this._container.querySelector('#settings-model'),
             fullChapterContext: this._container.querySelector('#settings-full-chapter-context'),
@@ -1309,6 +1413,54 @@ export class SettingsModal {
             this._updateKGEmbeddingSourceUI();
         });
 
+        // KG extraction backend — show LM Studio sub-options when selected
+        this._elements.kgBackend.addEventListener('change', () => {
+            this._updateKGExtractionBackendUI();
+        });
+
+        // LM Studio: keep all three URL inputs and both chat-model inputs in
+        // sync so the user can configure from any of the three locations and
+        // see the change reflected everywhere immediately.
+        const lmstudioEndpointInputs = [
+            this._elements.lmstudioLlmEndpoint,
+            this._elements.kgLmstudioEndpoint,
+            this._elements.kgLmstudioEmbeddingEndpoint
+        ];
+        const syncLmstudioEndpoint = (sourceInput) => {
+            const v = sourceInput.value;
+            for (const input of lmstudioEndpointInputs) {
+                if (input && input !== sourceInput) input.value = v;
+            }
+            this._setLmstudioStatus({ tested: false });
+        };
+        for (const input of lmstudioEndpointInputs) {
+            input?.addEventListener('input', () => syncLmstudioEndpoint(input));
+        }
+
+        const lmstudioChatModelInputs = [
+            this._elements.lmstudioLlmModel,
+            this._elements.kgLmstudioChatModel
+        ];
+        const syncLmstudioChatModel = (sourceInput) => {
+            const v = sourceInput.value;
+            for (const input of lmstudioChatModelInputs) {
+                if (input && input !== sourceInput) input.value = v;
+            }
+        };
+        for (const input of lmstudioChatModelInputs) {
+            input?.addEventListener('input', () => syncLmstudioChatModel(input));
+        }
+
+        this._elements.lmstudioLlmTestBtn?.addEventListener('click', () => {
+            this._testLmstudioConnection('llm');
+        });
+        this._elements.kgLmstudioExtractionTestBtn?.addEventListener('click', () => {
+            this._testLmstudioConnection('kg-extraction');
+        });
+        this._elements.kgLmstudioEmbeddingTestBtn?.addEventListener('click', () => {
+            this._testLmstudioConnection('kg-embedding');
+        });
+
         // Clear Knowledge Graph button — delegates to the host app via a
         // callback so the modal stays UI-only. The host is responsible for
         // confirming, deleting, and refreshing the reader UI.
@@ -1504,16 +1656,19 @@ export class SettingsModal {
         const showOpenRouter = backend === 'openrouter';
         const showLocal = backend === 'local';
         const showMediapipe = backend === 'mediapipe';
+        const showLmstudio = backend === 'lmstudio';
 
         this._elements.openrouterOptions.style.display = showOpenRouter ? '' : 'none';
         this._elements.localLlmOptions.style.display = showLocal ? '' : 'none';
         this._elements.mediapipeLlmOptions.style.display = showMediapipe ? '' : 'none';
+        this._elements.lmstudioLlmOptions.style.display = showLmstudio ? '' : 'none';
         this._elements.localBackendsShared.style.display = (showLocal || showMediapipe) ? '' : 'none';
 
         const hints = {
             'openrouter': 'Uses cloud AI models via OpenRouter. Requires an API key and internet connection.',
             'local': 'Runs a small language model locally on your device via transformers.js. Works offline but produces simpler responses.',
-            'mediapipe': 'Runs Gemma3-1B-IT on-device using MediaPipe + WebGPU. Requires a Chromium browser with WebGPU. ~600 MB download on first use.'
+            'mediapipe': 'Runs Gemma3-1B-IT on-device using MediaPipe + WebGPU. Requires a Chromium browser with WebGPU. ~600 MB download on first use.',
+            'lmstudio': 'Connects to a local LM Studio server (or any OpenAI-compatible endpoint). Default URL: http://127.0.0.1:1234. On mobile, enter the LAN address of the machine running LM Studio.'
         };
         this._elements.llmBackendHint.textContent = hints[backend] || '';
     }
@@ -1522,6 +1677,67 @@ export class SettingsModal {
         const source = this._elements.kgEmbeddingSource.value;
         this._elements.kgCloudEmbeddingOptions.style.display = source === 'openrouter' ? '' : 'none';
         this._elements.kgLocalEmbeddingOptions.style.display = source === 'local' ? '' : 'none';
+        if (this._elements.kgLmstudioEmbeddingOptions) {
+            this._elements.kgLmstudioEmbeddingOptions.style.display = source === 'lmstudio' ? '' : 'none';
+        }
+    }
+
+    _updateKGExtractionBackendUI() {
+        const backend = this._elements.kgBackend.value;
+        if (this._elements.kgLmstudioExtractionOptions) {
+            this._elements.kgLmstudioExtractionOptions.style.display = backend === 'lmstudio' ? '' : 'none';
+        }
+    }
+
+    /**
+     * Reset all three LM Studio status badges. Called whenever the URL
+     * changes, since a previous "Connected" result no longer applies.
+     */
+    _setLmstudioStatus({ tested = false, ok = false, text = '' } = {}) {
+        const badges = [
+            this._elements.lmstudioLlmStatusText,
+            this._elements.kgLmstudioExtractionStatusText,
+            this._elements.kgLmstudioEmbeddingStatusText
+        ];
+        for (const badge of badges) {
+            if (!badge) continue;
+            if (!tested) {
+                badge.textContent = 'Connection not tested';
+                badge.style.color = '';
+            } else {
+                badge.textContent = text;
+                badge.style.color = ok ? '#059669' : '#dc2626';
+            }
+        }
+    }
+
+    /**
+     * Ping LM Studio's /v1/models endpoint and update the status badge in
+     * the originating section. The result also propagates to the two sibling
+     * badges so the user sees a single consistent result no matter which
+     * "Test" button they clicked.
+     */
+    async _testLmstudioConnection(_origin) {
+        const endpoint = String(this._elements.lmstudioLlmEndpoint?.value || '').trim();
+        if (!endpoint) {
+            this._setLmstudioStatus({ tested: true, ok: false, text: 'Enter a server URL first' });
+            return;
+        }
+        this._setLmstudioStatus({ tested: true, ok: false, text: 'Testing…' });
+
+        try {
+            const base = endpoint.replace(/\/+$/, '');
+            const res = await fetch(`${base}/v1/models`, { method: 'GET' });
+            if (!res.ok) {
+                this._setLmstudioStatus({ tested: true, ok: false, text: `HTTP ${res.status}` });
+                return;
+            }
+            const data = await res.json().catch(() => ({}));
+            const count = Array.isArray(data?.data) ? data.data.length : 0;
+            this._setLmstudioStatus({ tested: true, ok: true, text: `Connected — ${count} model${count === 1 ? '' : 's'} loaded` });
+        } catch (err) {
+            this._setLmstudioStatus({ tested: true, ok: false, text: `Unreachable: ${err?.message || err}` });
+        }
     }
 
     /**
@@ -1760,6 +1976,14 @@ export class SettingsModal {
             localLlmDeferTts: this._elements.localLlmDeferTts.checked,
             localLlmJitLoading: this._elements.localLlmJitLoading.checked,
             mediapipeLlmHfToken: this._elements.mediapipeLlmHfToken.value.trim(),
+            // LM Studio settings — endpoint and chat model are synced across
+            // three inputs by the change handler, so any of them is the truth.
+            lmstudioEndpoint: (this._elements.lmstudioLlmEndpoint?.value || '').trim()
+                || DEFAULT_LMSTUDIO_ENDPOINT,
+            lmstudioChatModel: (this._elements.lmstudioLlmModel?.value || '').trim()
+                || DEFAULT_LMSTUDIO_CHAT_MODEL,
+            lmstudioEmbeddingModel: (this._elements.kgLmstudioEmbeddingModel?.value || '').trim()
+                || DEFAULT_LMSTUDIO_EMBEDDING_MODEL,
             // Lookup settings
             lookupLanguage: this._elements.lookupLanguage.value,
             // Quiz settings
@@ -2049,6 +2273,19 @@ export class SettingsModal {
         this._elements.localLlmDeferTts.checked = this._settings.localLlmDeferTts === true; // default false
         this._elements.localLlmJitLoading.checked = this._settings.localLlmJitLoading !== false; // default true
         this._elements.mediapipeLlmHfToken.value = this._settings.mediapipeLlmHfToken || '';
+
+        // LM Studio inputs (mirrored across three sections; populate all)
+        const lmstudioEndpoint = this._settings.lmstudioEndpoint || DEFAULT_LMSTUDIO_ENDPOINT;
+        const lmstudioChatModel = this._settings.lmstudioChatModel || DEFAULT_LMSTUDIO_CHAT_MODEL;
+        const lmstudioEmbeddingModel = this._settings.lmstudioEmbeddingModel || DEFAULT_LMSTUDIO_EMBEDDING_MODEL;
+        if (this._elements.lmstudioLlmEndpoint) this._elements.lmstudioLlmEndpoint.value = lmstudioEndpoint;
+        if (this._elements.kgLmstudioEndpoint) this._elements.kgLmstudioEndpoint.value = lmstudioEndpoint;
+        if (this._elements.kgLmstudioEmbeddingEndpoint) this._elements.kgLmstudioEmbeddingEndpoint.value = lmstudioEndpoint;
+        if (this._elements.lmstudioLlmModel) this._elements.lmstudioLlmModel.value = lmstudioChatModel;
+        if (this._elements.kgLmstudioChatModel) this._elements.kgLmstudioChatModel.value = lmstudioChatModel;
+        if (this._elements.kgLmstudioEmbeddingModel) this._elements.kgLmstudioEmbeddingModel.value = lmstudioEmbeddingModel;
+        this._setLmstudioStatus({ tested: false });
+
         this._updateLLMBackendUI();
 
         // Load lookup settings
@@ -2115,6 +2352,7 @@ export class SettingsModal {
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
         this._updateKGEmbeddingSourceUI();
+        this._updateKGExtractionBackendUI();
 
         // Load Spaced Review (Grounded SRS) settings
         this._elements.srsEnabled.checked = this._settings.srsEnabled !== false;

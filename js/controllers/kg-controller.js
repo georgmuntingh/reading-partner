@@ -127,6 +127,13 @@ export class KGController {
         if (targetBackend && targetBackend !== prevBackend) {
             llmClient.setBackend(targetBackend);
         }
+        // LM Studio chat config is independent of the LLM-section backend
+        // selection, so push the latest endpoint/model into the provider every
+        // build regardless of whether the active backend changed.
+        if (targetBackend === 'lmstudio') {
+            if (settings.lmstudioEndpoint) llmClient.setLmstudioEndpoint(settings.lmstudioEndpoint);
+            if (settings.lmstudioChatModel) llmClient.setLmstudioModel(settings.lmstudioChatModel);
+        }
 
         try {
             // 1) Configure the embedding backend before each build so settings
@@ -136,6 +143,9 @@ export class KGController {
             if (embeddingSource === 'openrouter') {
                 if (settings.kgCloudEmbeddingModel) embeddingProvider.setCloudModel(settings.kgCloudEmbeddingModel);
                 if (settings.apiKey) embeddingProvider.setApiKey(settings.apiKey);
+            } else if (embeddingSource === 'lmstudio') {
+                if (settings.lmstudioEndpoint) embeddingProvider.setLmstudioEndpoint(settings.lmstudioEndpoint);
+                if (settings.lmstudioEmbeddingModel) embeddingProvider.setLmstudioModel(settings.lmstudioEmbeddingModel);
             } else {
                 if (settings.kgLocalEmbeddingModel) embeddingProvider.setLocalModel(settings.kgLocalEmbeddingModel);
             }

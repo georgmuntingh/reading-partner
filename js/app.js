@@ -3046,6 +3046,17 @@ class ReadingPartnerApp {
                 await storage.saveSetting('mediapipeLlmHfToken', settings.mediapipeLlmHfToken);
                 llmClient.setMediapipeHfToken(settings.mediapipeLlmHfToken);
             }
+            if (settings.lmstudioEndpoint !== undefined) {
+                await storage.saveSetting('lmstudioEndpoint', settings.lmstudioEndpoint);
+                llmClient.setLmstudioEndpoint(settings.lmstudioEndpoint);
+            }
+            if (settings.lmstudioChatModel !== undefined) {
+                await storage.saveSetting('lmstudioChatModel', settings.lmstudioChatModel);
+                llmClient.setLmstudioModel(settings.lmstudioChatModel);
+            }
+            if (settings.lmstudioEmbeddingModel !== undefined) {
+                await storage.saveSetting('lmstudioEmbeddingModel', settings.lmstudioEmbeddingModel);
+            }
 
             // Save transformers.js version
             if (settings.transformersVersion !== undefined) {
@@ -3122,7 +3133,10 @@ class ReadingPartnerApp {
     _updateAskQuizButtons() {
         if (!this._controls) return;
 
-        const llmAvailable = this._llmBackend === 'local' || this._llmBackend === 'mediapipe' || this._qaSettings.apiKey;
+        const llmAvailable = this._llmBackend === 'local'
+            || this._llmBackend === 'mediapipe'
+            || this._llmBackend === 'lmstudio'
+            || this._qaSettings.apiKey;
         const llmDisabledReason = this._llmBackend === 'openrouter' && !this._qaSettings.apiKey
             ? 'Configure API key in Q&A Settings or switch to Local LLM'
             : null;
@@ -4255,6 +4269,9 @@ class ReadingPartnerApp {
             const localLlmJitLoading = await storage.getSetting('localLlmJitLoading');
             if (localLlmJitLoading !== null) this._localLlmJitLoading = localLlmJitLoading !== false;
             const mediapipeLlmHfToken = await storage.getSetting('mediapipeLlmHfToken');
+            const lmstudioEndpoint = await storage.getSetting('lmstudioEndpoint');
+            const lmstudioChatModel = await storage.getSetting('lmstudioChatModel');
+            const lmstudioEmbeddingModel = await storage.getSetting('lmstudioEmbeddingModel');
 
             // Load transformers.js version
             const transformersVersion = await storage.getSetting('transformersVersion');
@@ -4287,6 +4304,11 @@ class ReadingPartnerApp {
                 this._switchToWhisperSTT(whisperModel, whisperDevice, whisperSilenceTimeout, whisperMaxDuration);
             }
 
+            // Always push LM Studio config into the provider so it's ready
+            // whenever the user (or the KG controller) flips to that backend.
+            if (lmstudioEndpoint) llmClient.setLmstudioEndpoint(lmstudioEndpoint);
+            if (lmstudioChatModel) llmClient.setLmstudioModel(lmstudioChatModel);
+
             // Apply LLM backend
             if (this._llmBackend === 'local') {
                 llmClient.setBackend('local');
@@ -4295,6 +4317,8 @@ class ReadingPartnerApp {
             } else if (this._llmBackend === 'mediapipe') {
                 llmClient.setBackend('mediapipe');
                 if (mediapipeLlmHfToken) llmClient.setMediapipeHfToken(mediapipeLlmHfToken);
+            } else if (this._llmBackend === 'lmstudio') {
+                llmClient.setBackend('lmstudio');
             }
 
             // Update Q&A setup UI
@@ -4324,6 +4348,9 @@ class ReadingPartnerApp {
                 localLlmDeferTts: this._localLlmDeferTts,
                 localLlmJitLoading: this._localLlmJitLoading,
                 mediapipeLlmHfToken: mediapipeLlmHfToken || '',
+                lmstudioEndpoint: lmstudioEndpoint || undefined,
+                lmstudioChatModel: lmstudioChatModel || undefined,
+                lmstudioEmbeddingModel: lmstudioEmbeddingModel || undefined,
                 transformersVersion: tfVersion,
                 verboseLogging: verboseLogging === true,
                 kokoroReinitThreshold: reinitVal,
