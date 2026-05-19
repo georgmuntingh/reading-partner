@@ -71,10 +71,10 @@ export class KGController {
      * short-circuits as defense in depth.
      *
      * @param {number} chapterIndex
-     * @param {{ force?: boolean }} [opts]
+     * @param {{ force?: boolean, chunkSize?: number, chunkOverlap?: number }} [opts]
      */
     async buildChapterGraph(chapterIndex, opts = {}) {
-        const { force = false } = opts;
+        const { force = false, chunkSize: chunkSizeOverride, chunkOverlap: chunkOverlapOverride } = opts;
         if (this.state === KG_STATE.RUNNING) {
             throw new Error('KG build already in progress');
         }
@@ -95,8 +95,8 @@ export class KGController {
         }
 
         const settings = this.getSettings() || {};
-        const chunkSize = settings.kgChunkSize ?? 6;
-        const chunkOverlap = settings.kgChunkOverlap ?? 2;
+        const chunkSize = Number.isFinite(chunkSizeOverride) ? chunkSizeOverride : (settings.kgChunkSize ?? 6);
+        const chunkOverlap = Number.isFinite(chunkOverlapOverride) ? chunkOverlapOverride : (settings.kgChunkOverlap ?? 2);
         const similarityThreshold = settings.kgSimilarityThreshold ?? 0.88;
         const relevanceThreshold = Number.isFinite(settings.kgRelevanceThreshold)
             ? settings.kgRelevanceThreshold

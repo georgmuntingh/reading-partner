@@ -33,6 +33,7 @@ import { QuizController, QuizState } from './controllers/quiz-controller.js';
 import { SRSController } from './controllers/srs-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { promptForDomain } from './ui/kg-domain-modal.js';
+import { promptForKGBuild } from './ui/kg-build-modal.js';
 import { confirmAction } from './ui/confirm-modal.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
@@ -3709,14 +3710,27 @@ class ReadingPartnerApp {
             this._showToast('Knowledge graph build already in progress');
             return;
         }
-        // Idempotent: if this chapter has already been processed, do not
-        // recompute. The button would normally be disabled, but guard here
-        // too in case state drifts.
-        const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
-        if (chapter?.kgProcessed === true) {
-            this._showToast('Knowledge graph already built for this chapter — open it instead.');
+
+        const totalChapters = this._currentBook.chapters?.length ?? 0;
+        if (totalChapters === 0) {
+            this._showToast('Book has no chapters to extract');
             return;
         }
+
+        const settings = this._settingsModal?.getSettings() || {};
+        const config = await promptForKGBuild({
+            totalChapters,
+            currentChapterIndex: this._currentChapterIndex,
+            defaultChunkSize: settings.kgChunkSize ?? 6,
+            defaultChunkOverlap: settings.kgChunkOverlap ?? 2
+        });
+        if (!config) return;
+
+        const { fromChapter, toChapter, chunkSize, chunkOverlap, force } = config;
+        const fromIndex = fromChapter - 1;
+        const toIndex = toChapter - 1;
+        const rangeCount = toIndex - fromIndex + 1;
+
         try {
             this._elements.kgBuildBtn?.setAttribute('disabled', 'true');
             // Auto-open the explorer so the user can watch nodes/edges
@@ -3725,11 +3739,22 @@ class ReadingPartnerApp {
             // is visually distinct.
             await this._graphExplorer?.open();
             await this._graphExplorer?.beginLiveBuild();
-            await this._kgController.buildChapterGraph(this._currentChapterIndex);
+
+            for (let i = fromIndex; i <= toIndex; i++) {
+                const chapter = this._currentBook?.chapters?.[i];
+                if (!chapter) continue;
+                if (!force && chapter.kgProcessed === true) continue;
+
+                this._kgRangeContext = rangeCount > 1
+                    ? { current: i - fromIndex + 1, total: rangeCount, chapterNumber: i + 1 }
+                    : null;
+                await this._kgController.buildChapterGraph(i, { force, chunkSize, chunkOverlap });
+            }
         } catch (error) {
             console.error('KG build failed:', error);
             this._showToast(`KG build failed: ${error.message}`);
         } finally {
+            this._kgRangeContext = null;
             this._graphExplorer?.endLiveBuild();
             // Re-evaluate the button: stays disabled if processed succeeded,
             // re-enabled if the build failed (so the user can retry).
@@ -3746,12 +3771,11 @@ class ReadingPartnerApp {
         const btn = this._elements.kgBuildBtn;
         if (!btn) return;
         const chapter = this._currentBook?.chapters?.[this._currentChapterIndex];
+        btn.removeAttribute('disabled');
         if (chapter?.kgProcessed === true) {
-            btn.setAttribute('disabled', 'true');
-            btn.title = 'Knowledge graph already built for this chapter';
+            btn.title = 'Build knowledge graph… (this chapter already processed)';
         } else {
-            btn.removeAttribute('disabled');
-            btn.title = 'Build knowledge graph for this chapter';
+            btn.title = 'Build knowledge graph…';
         }
     }
 
@@ -3828,26 +3852,29 @@ class ReadingPartnerApp {
         const text = this._elements.kgStatusText;
         if (!el || !text) return;
 
+        const ctx = this._kgRangeContext;
+        const prefix = ctx ? `Chapter ${ctx.chapterNumber} (${ctx.current}/${ctx.total}) · ` : '';
+
         if (p.stage === 'embed-load') {
             const pct = typeof p.progress === 'number' ? ` (${Math.round(p.progress)}%)` : '';
             const file = p.file ? ` ${p.file}` : '';
-            text.textContent = `Downloading embedding model${file}${pct}…`;
+            text.textContent = `${prefix}Downloading embedding model${file}${pct}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'extract') {
             const span = p.batchSize && p.batchSize > 1
                 ? `${p.current}-${Math.min(p.current + p.batchSize - 1, p.total)}`
                 : `${p.current}`;
             const label = p.batchSize && p.batchSize > 1 ? 'chunks' : 'chunk';
-            text.textContent = `Extracting ${label} ${span}/${p.total}…`;
+            text.textContent = `${prefix}Extracting ${label} ${span}/${p.total}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'embed') {
-            text.textContent = `Embedding ${p.count} entit${p.count === 1 ? 'y' : 'ies'}…`;
+            text.textContent = `${prefix}Embedding ${p.count} entit${p.count === 1 ? 'y' : 'ies'}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'resolve') {
-            text.textContent = `Resolving chunk ${p.current}/${p.total}…`;
+            text.textContent = `${prefix}Resolving chunk ${p.current}/${p.total}…`;
             el.classList.remove('hidden');
         } else if (p.stage === 'done') {
-            text.textContent = 'Knowledge graph updated.';
+            text.textContent = ctx ? `${prefix}done.` : 'Knowledge graph updated.';
             el.classList.remove('hidden');
             // Workflow 1 trigger: kick off grounded card generation for
             // this chapter's new nodes. Fire-and-forget — the toast on
