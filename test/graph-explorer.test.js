@@ -1042,18 +1042,24 @@ describe('GraphExplorer', () => {
         const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
         const removed = [];
         ge._cy = {
-            elements: () => ({
-                removeClass: (c) => {
-                    removed.push(c);
-                    return { removeClass: (c2) => removed.push(c2) };
-                }
-            })
+            elements: () => {
+                // Chainable mock: every removeClass returns the same
+                // self-referential object so clearHighlights can drop
+                // an arbitrary number of classes in one chain.
+                const chain = {
+                    removeClass: (c) => { removed.push(c); return chain; }
+                };
+                return chain;
+            }
         };
         const filterSpy = vi.fn();
         ge._applyDetailFilter = filterSpy;
         ge._highlightingActive = true;
         ge.clearHighlights();
-        expect(removed).toEqual(['kg-faded', 'kg-newly-added']);
+        // clearHighlights now drops a richer class set (the kg-card-*
+        // family added in Phase 4). Assert the OG pair is still in the
+        // list rather than locking the test to a specific count.
+        expect(removed).toEqual(expect.arrayContaining(['kg-faded', 'kg-newly-added']));
         expect(filterSpy).toHaveBeenCalled();
         expect(container.querySelector('.graph-clear-highlights-btn')
             .classList.contains('hidden')).toBe(true);

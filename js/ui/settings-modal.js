@@ -113,7 +113,33 @@ export class SettingsModal {
             // local model download.
             kgEmbeddingSource: 'openrouter',
             kgCloudEmbeddingModel: 'openai/text-embedding-3-small',
-            kgLocalEmbeddingModel: 'Xenova/all-MiniLM-L6-v2'
+            kgLocalEmbeddingModel: 'Xenova/all-MiniLM-L6-v2',
+            // Spaced Review (Grounded SRS) — decoupled flashcards. See
+            // docs in js/services/srs-*.js. Defaults are tuned for SM-2.
+            srsEnabled: true,
+            // 'padding' = fetch ±N sentences around each context hit;
+            // 'whole-chapter' = pass the full chapter (more tokens, more
+            // narrative context). 'padding' keeps prompts small.
+            srsPaddingMode: 'padding',
+            srsPaddingSentences: 3,
+            // Generation triggers (both can be on; whichever fires first wins).
+            srsTriggerOnChapterFinish: true,
+            srsTriggerLazyOnOpen: true,
+            // SM-2 scheduling knobs. `srsFailIntervalMinutes` is the
+            // re-test delay after an incorrect answer — the only "interval"
+            // a user normally needs to tune. The rest are SM-2 internals
+            // exposed for power users.
+            srsFailIntervalMinutes: 10,
+            srsEaseDefault: 2.5,
+            srsEaseMin: 1.3,
+            srsEaseStepFail: 0.2,
+            // Session limits keep a review session from being overwhelming
+            // when a chapter dump produces dozens of new cards.
+            srsMaxNewPerSession: 10,
+            srsMaxReviewsPerSession: 30,
+            // Generation knobs.
+            srsDistractorCount: 3,
+            srsLLMTemperature: 0.4
         };
 
         this._buildUI();
@@ -730,6 +756,113 @@ export class SettingsModal {
                         </div>
                     </details>
 
+                    <!-- ===== Spaced Review (Grounded SRS) ===== -->
+                    <details class="settings-section">
+                        <summary class="settings-section-header">
+                            <span>Spaced Review</span>
+                            <svg class="settings-section-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                        </summary>
+
+                        <p class="form-hint" style="margin-top: 0; margin-bottom: var(--spacing-md);">
+                            Decoupled spaced-repetition flashcards generated from the knowledge graph. Questions and distractors are grounded in the author's actual phrasing. SM-2 schedules reviews; failed cards reset to the fail interval below.
+                        </p>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
+                                <input type="checkbox" id="settings-srs-enabled" checked>
+                                Enable Spaced Review
+                            </label>
+                            <p class="form-hint">When off, no flashcards are generated and the SRS deck is hidden from the reader.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Grounding</div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-padding-mode">Context source</label>
+                            <select id="settings-srs-padding-mode" class="form-select">
+                                <option value="padding">Padding window around each mention</option>
+                                <option value="whole-chapter">Whole chapter</option>
+                            </select>
+                            <p class="form-hint">Padding mode fetches a small window of sentences around each node's mention — cheap and focused. Whole-chapter mode sends the entire chapter to the LLM — richer narrative context but many more tokens.</p>
+                        </div>
+
+                        <div class="form-group" id="settings-srs-padding-row">
+                            <label for="settings-srs-padding-n">Padding size: <span id="settings-srs-padding-n-value">3</span> sentences</label>
+                            <input type="range" id="settings-srs-padding-n" class="form-input" min="0" max="10" step="1" value="3">
+                            <p class="form-hint">Number of sentences before and after each mention. 0 = just the matching sentence.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-distractor-count">Distractor count: <span id="settings-srs-distractor-count-value">3</span></label>
+                            <input type="range" id="settings-srs-distractor-count" class="form-input" min="2" max="5" step="1" value="3">
+                            <p class="form-hint">How many wrong options accompany the correct answer. In padding mode these are drawn from related KG nodes so the question requires real discrimination.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-temperature">LLM temperature: <span id="settings-srs-temperature-value">0.40</span></label>
+                            <input type="range" id="settings-srs-temperature" class="form-input" min="0" max="1" step="0.05" value="0.4">
+                            <p class="form-hint">Lower values produce more deterministic questions that stick close to the source text; higher values produce more creative phrasing but risk drift.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Generation Triggers</div>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-srs-trigger-chapter-finish" checked>
+                                Generate when a chapter is finished
+                            </label>
+                            <p class="form-hint">Fire-and-forget background generation when the reader reaches the end of a chapter that has a knowledge graph.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer; font-weight: normal;">
+                                <input type="checkbox" id="settings-srs-trigger-lazy" checked>
+                                Top up the deck when opened
+                            </label>
+                            <p class="form-hint">If the active deck is empty when you open Spaced Review, generate just enough cards to fill it.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Scheduling</div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-fail-interval">Fail interval: <span id="settings-srs-fail-interval-value">10</span> minutes</label>
+                            <input type="range" id="settings-srs-fail-interval" class="form-input" min="1" max="240" step="1" value="10">
+                            <p class="form-hint">How long to wait before a failed card reappears. Short values (5–15 min) drill foundational concepts hard; longer values feel less punishing.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-ease-default">Starting ease: <span id="settings-srs-ease-default-value">2.50</span></label>
+                            <input type="range" id="settings-srs-ease-default" class="form-input" min="1.3" max="3.0" step="0.05" value="2.5">
+                            <p class="form-hint">SM-2 ease factor for brand-new cards. 2.5 is the classic Anki default.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-ease-min">Minimum ease: <span id="settings-srs-ease-min-value">1.30</span></label>
+                            <input type="range" id="settings-srs-ease-min" class="form-input" min="1.0" max="2.0" step="0.05" value="1.3">
+                            <p class="form-hint">Floor below which ease cannot drop, no matter how many failures.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-ease-step-fail">Ease penalty on fail: <span id="settings-srs-ease-step-fail-value">0.20</span></label>
+                            <input type="range" id="settings-srs-ease-step-fail" class="form-input" min="0" max="0.5" step="0.05" value="0.2">
+                            <p class="form-hint">How much ease drops on each incorrect answer.</p>
+                        </div>
+
+                        <div class="settings-subsection-header">Session Limits</div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-max-new">Max new cards per session: <span id="settings-srs-max-new-value">10</span></label>
+                            <input type="range" id="settings-srs-max-new" class="form-input" min="0" max="50" step="1" value="10">
+                            <p class="form-hint">Caps the number of unseen cards introduced in one sitting. New cards are sorted by centrality, so the most important concepts go first.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-srs-max-reviews">Max reviews per session: <span id="settings-srs-max-reviews-value">30</span></label>
+                            <input type="range" id="settings-srs-max-reviews" class="form-input" min="0" max="200" step="5" value="30">
+                            <p class="form-hint">Caps the number of due cards reviewed in one sitting. Oldest-due-first.</p>
+                        </div>
+                    </details>
+
                     <!-- ===== Knowledge Graph ===== -->
                     <details class="settings-section">
                         <summary class="settings-section-header">
@@ -998,7 +1131,31 @@ export class SettingsModal {
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
             kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
             kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model'),
-            kgClearBtn: this._container.querySelector('#settings-kg-clear-btn')
+            kgClearBtn: this._container.querySelector('#settings-kg-clear-btn'),
+            // Spaced Review (Grounded SRS)
+            srsEnabled: this._container.querySelector('#settings-srs-enabled'),
+            srsPaddingMode: this._container.querySelector('#settings-srs-padding-mode'),
+            srsPaddingRow: this._container.querySelector('#settings-srs-padding-row'),
+            srsPaddingN: this._container.querySelector('#settings-srs-padding-n'),
+            srsPaddingNValue: this._container.querySelector('#settings-srs-padding-n-value'),
+            srsDistractorCount: this._container.querySelector('#settings-srs-distractor-count'),
+            srsDistractorCountValue: this._container.querySelector('#settings-srs-distractor-count-value'),
+            srsTemperature: this._container.querySelector('#settings-srs-temperature'),
+            srsTemperatureValue: this._container.querySelector('#settings-srs-temperature-value'),
+            srsTriggerChapterFinish: this._container.querySelector('#settings-srs-trigger-chapter-finish'),
+            srsTriggerLazy: this._container.querySelector('#settings-srs-trigger-lazy'),
+            srsFailInterval: this._container.querySelector('#settings-srs-fail-interval'),
+            srsFailIntervalValue: this._container.querySelector('#settings-srs-fail-interval-value'),
+            srsEaseDefault: this._container.querySelector('#settings-srs-ease-default'),
+            srsEaseDefaultValue: this._container.querySelector('#settings-srs-ease-default-value'),
+            srsEaseMin: this._container.querySelector('#settings-srs-ease-min'),
+            srsEaseMinValue: this._container.querySelector('#settings-srs-ease-min-value'),
+            srsEaseStepFail: this._container.querySelector('#settings-srs-ease-step-fail'),
+            srsEaseStepFailValue: this._container.querySelector('#settings-srs-ease-step-fail-value'),
+            srsMaxNew: this._container.querySelector('#settings-srs-max-new'),
+            srsMaxNewValue: this._container.querySelector('#settings-srs-max-new-value'),
+            srsMaxReviews: this._container.querySelector('#settings-srs-max-reviews'),
+            srsMaxReviewsValue: this._container.querySelector('#settings-srs-max-reviews-value')
         };
     }
 
@@ -1157,6 +1314,44 @@ export class SettingsModal {
         // confirming, deleting, and refreshing the reader UI.
         this._elements.kgClearBtn?.addEventListener('click', () => {
             this._callbacks.onClearKG?.();
+        });
+
+        // ---------- Spaced Review (Grounded SRS) ----------
+
+        // Hide the padding-N slider when whole-chapter mode is selected —
+        // mirrors the kg-semantic-threshold pattern.
+        const refreshSrsPaddingRow = () => {
+            const isPadding = this._elements.srsPaddingMode.value === 'padding';
+            this._elements.srsPaddingRow?.classList.toggle('hidden', !isPadding);
+        };
+        this._elements.srsPaddingMode.addEventListener('change', refreshSrsPaddingRow);
+
+        this._elements.srsPaddingN.addEventListener('input', () => {
+            this._elements.srsPaddingNValue.textContent = parseInt(this._elements.srsPaddingN.value);
+        });
+        this._elements.srsDistractorCount.addEventListener('input', () => {
+            this._elements.srsDistractorCountValue.textContent = parseInt(this._elements.srsDistractorCount.value);
+        });
+        this._elements.srsTemperature.addEventListener('input', () => {
+            this._elements.srsTemperatureValue.textContent = parseFloat(this._elements.srsTemperature.value).toFixed(2);
+        });
+        this._elements.srsFailInterval.addEventListener('input', () => {
+            this._elements.srsFailIntervalValue.textContent = parseInt(this._elements.srsFailInterval.value);
+        });
+        this._elements.srsEaseDefault.addEventListener('input', () => {
+            this._elements.srsEaseDefaultValue.textContent = parseFloat(this._elements.srsEaseDefault.value).toFixed(2);
+        });
+        this._elements.srsEaseMin.addEventListener('input', () => {
+            this._elements.srsEaseMinValue.textContent = parseFloat(this._elements.srsEaseMin.value).toFixed(2);
+        });
+        this._elements.srsEaseStepFail.addEventListener('input', () => {
+            this._elements.srsEaseStepFailValue.textContent = parseFloat(this._elements.srsEaseStepFail.value).toFixed(2);
+        });
+        this._elements.srsMaxNew.addEventListener('input', () => {
+            this._elements.srsMaxNewValue.textContent = parseInt(this._elements.srsMaxNew.value);
+        });
+        this._elements.srsMaxReviews.addEventListener('input', () => {
+            this._elements.srsMaxReviewsValue.textContent = parseInt(this._elements.srsMaxReviews.value);
         });
 
         // Max sentence length slider
@@ -1611,7 +1806,34 @@ export class SettingsModal {
             kgSemanticSearchThreshold: (() => {
                 const v = parseFloat(this._elements.kgSemanticThreshold.value);
                 return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.5;
-            })()
+            })(),
+            // Spaced Review (Grounded SRS) settings
+            srsEnabled: this._elements.srsEnabled.checked,
+            srsPaddingMode: this._elements.srsPaddingMode.value === 'whole-chapter'
+                ? 'whole-chapter' : 'padding',
+            srsPaddingSentences: parseInt(this._elements.srsPaddingN.value) || 0,
+            srsDistractorCount: parseInt(this._elements.srsDistractorCount.value) || 3,
+            srsLLMTemperature: (() => {
+                const v = parseFloat(this._elements.srsTemperature.value);
+                return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.4;
+            })(),
+            srsTriggerOnChapterFinish: this._elements.srsTriggerChapterFinish.checked,
+            srsTriggerLazyOnOpen: this._elements.srsTriggerLazy.checked,
+            srsFailIntervalMinutes: parseInt(this._elements.srsFailInterval.value) || 10,
+            srsEaseDefault: (() => {
+                const v = parseFloat(this._elements.srsEaseDefault.value);
+                return Number.isFinite(v) ? v : 2.5;
+            })(),
+            srsEaseMin: (() => {
+                const v = parseFloat(this._elements.srsEaseMin.value);
+                return Number.isFinite(v) ? v : 1.3;
+            })(),
+            srsEaseStepFail: (() => {
+                const v = parseFloat(this._elements.srsEaseStepFail.value);
+                return Number.isFinite(v) ? v : 0.2;
+            })(),
+            srsMaxNewPerSession: parseInt(this._elements.srsMaxNew.value) || 0,
+            srsMaxReviewsPerSession: parseInt(this._elements.srsMaxReviews.value) || 0
         };
 
         // Validate
@@ -1893,6 +2115,41 @@ export class SettingsModal {
         this._elements.kgCloudEmbeddingModel.value = this._settings.kgCloudEmbeddingModel || 'openai/text-embedding-3-small';
         this._elements.kgLocalEmbeddingModel.value = this._settings.kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2';
         this._updateKGEmbeddingSourceUI();
+
+        // Load Spaced Review (Grounded SRS) settings
+        this._elements.srsEnabled.checked = this._settings.srsEnabled !== false;
+        const srsPaddingMode = this._settings.srsPaddingMode === 'whole-chapter' ? 'whole-chapter' : 'padding';
+        this._elements.srsPaddingMode.value = srsPaddingMode;
+        this._elements.srsPaddingRow?.classList.toggle('hidden', srsPaddingMode !== 'padding');
+        const srsPaddingN = this._settings.srsPaddingSentences ?? 3;
+        this._elements.srsPaddingN.value = srsPaddingN;
+        this._elements.srsPaddingNValue.textContent = srsPaddingN;
+        const srsDistractorCount = this._settings.srsDistractorCount ?? 3;
+        this._elements.srsDistractorCount.value = srsDistractorCount;
+        this._elements.srsDistractorCountValue.textContent = srsDistractorCount;
+        const srsTemperature = Number.isFinite(this._settings.srsLLMTemperature) ? this._settings.srsLLMTemperature : 0.4;
+        this._elements.srsTemperature.value = srsTemperature;
+        this._elements.srsTemperatureValue.textContent = srsTemperature.toFixed(2);
+        this._elements.srsTriggerChapterFinish.checked = this._settings.srsTriggerOnChapterFinish !== false;
+        this._elements.srsTriggerLazy.checked = this._settings.srsTriggerLazyOnOpen !== false;
+        const srsFailInterval = this._settings.srsFailIntervalMinutes ?? 10;
+        this._elements.srsFailInterval.value = srsFailInterval;
+        this._elements.srsFailIntervalValue.textContent = srsFailInterval;
+        const srsEaseDefault = Number.isFinite(this._settings.srsEaseDefault) ? this._settings.srsEaseDefault : 2.5;
+        this._elements.srsEaseDefault.value = srsEaseDefault;
+        this._elements.srsEaseDefaultValue.textContent = srsEaseDefault.toFixed(2);
+        const srsEaseMin = Number.isFinite(this._settings.srsEaseMin) ? this._settings.srsEaseMin : 1.3;
+        this._elements.srsEaseMin.value = srsEaseMin;
+        this._elements.srsEaseMinValue.textContent = srsEaseMin.toFixed(2);
+        const srsEaseStepFail = Number.isFinite(this._settings.srsEaseStepFail) ? this._settings.srsEaseStepFail : 0.2;
+        this._elements.srsEaseStepFail.value = srsEaseStepFail;
+        this._elements.srsEaseStepFailValue.textContent = srsEaseStepFail.toFixed(2);
+        const srsMaxNew = this._settings.srsMaxNewPerSession ?? 10;
+        this._elements.srsMaxNew.value = srsMaxNew;
+        this._elements.srsMaxNewValue.textContent = srsMaxNew;
+        const srsMaxReviews = this._settings.srsMaxReviewsPerSession ?? 30;
+        this._elements.srsMaxReviews.value = srsMaxReviews;
+        this._elements.srsMaxReviewsValue.textContent = srsMaxReviews;
 
         this._updateBackendUI();
     }

@@ -30,6 +30,7 @@ import { mediaSessionManager } from './services/media-session-manager.js';
 import { AudioController } from './controllers/audio-controller.js';
 import { QAController, QAState } from './controllers/qa-controller.js';
 import { QuizController, QuizState } from './controllers/quiz-controller.js';
+import { SRSController } from './controllers/srs-controller.js';
 import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { promptForDomain } from './ui/kg-domain-modal.js';
 import { confirmAction } from './ui/confirm-modal.js';
@@ -39,6 +40,9 @@ import { PlaybackControls } from './ui/controls.js';
 import { NavigationPanel } from './ui/navigation.js';
 import { QAOverlay } from './ui/qa-overlay.js';
 import { QuizOverlay } from './ui/quiz-overlay.js';
+import { SRSOverlay } from './ui/srs-overlay.js';
+import { FlashcardOverview } from './ui/flashcard-overview.js';
+import { sortForCustomDeck, closeAllSRSurfaces } from './utils/srs-app-helpers.js';
 import { SettingsModal } from './ui/settings-modal.js';
 import { ImageViewerModal } from './ui/image-viewer-modal.js';
 import { BookLoaderModal } from './ui/book-loader-modal.js';
@@ -119,6 +123,14 @@ class ReadingPartnerApp {
         this._qaOverlay = null;
         this._quizController = null;
         this._quizOverlay = null;
+        // Spaced Review (Grounded SRS) — lazily instantiated on first
+        // open. Re-uses the same llmClient + readingState + storage.
+        this._srsController = null;
+        this._srsOverlay = null;
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+        // Flashcard Overview modal — lazily instantiated on first open.
+        this._flashcardOverview = null;
         this._settingsModal = null;
         this._imageViewerModal = null;
         this._bookLoaderModal = null;
@@ -383,7 +395,22 @@ class ReadingPartnerApp {
             // _handleInternalLink (file → chapter index + fragment scroll).
             onInternalLink: (href) => this._handleInternalLink(href),
             onJumpToSentence: (chapterIndex, sentenceIndex) =>
-                this._jumpToKGContext(chapterIndex, sentenceIndex)
+                this._jumpToKGContext(chapterIndex, sentenceIndex),
+            // Source for the card-highlight cycle button + node-detail
+            // Flashcards section. The explorer caches the result per
+            // open session and the app invalidates that cache on delete
+            // via graphExplorer.invalidateFlashcardCache().
+            getFlashcards: (bookId) => storage.getFlashcardsForBook(bookId),
+            // Click a flashcard in the node-detail side panel → open
+            // the Overview modal scrolled to that card. The explorer
+            // stays open underneath; the overview's own Jump-to-passage
+            // / Review Selection paths use closeAllSRSurfaces to clear
+            // both surfaces if/when the user leaves the graph.
+            onOpenCardOverview: (cardId) =>
+                this._openFlashcardOverview({ scrollToCardId: cardId }),
+            // Click "Review this concept" → micro-deck through the
+            // shared _handleReviewSelection helper (sort + close + open).
+            onReviewConcept: (cards) => this._handleReviewSelection(cards)
         });
 
         // Setup KG buttons in the reader controls
@@ -624,6 +651,7 @@ class ReadingPartnerApp {
             nextChapterBtn: document.getElementById('next-chapter-btn'),
             askBtn: document.getElementById('ask-btn'),
             quizBtn: document.getElementById('quiz-btn'),
+            srsBtn: document.getElementById('srs-btn'),
             kgBuildBtn: document.getElementById('kg-build-btn'),
             kgOpenBtn: document.getElementById('kg-open-btn'),
             fullscreenBtn: document.getElementById('fullscreen-btn'),
@@ -1542,7 +1570,8 @@ class ReadingPartnerApp {
                 prevChapterBtn: this._elements.prevChapterBtn,
                 nextChapterBtn: this._elements.nextChapterBtn,
                 askBtn: this._elements.askBtn,
-                quizBtn: this._elements.quizBtn
+                quizBtn: this._elements.quizBtn,
+                srsBtn: this._elements.srsBtn
             },
             {
                 onPlay: () => this._play(),
@@ -1552,7 +1581,8 @@ class ReadingPartnerApp {
                 onPrevChapter: () => this._navigateToPrevChapter(),
                 onNextChapter: () => this._navigateToNextChapter(),
                 onAsk: () => this._startQA(),
-                onQuiz: () => this._startQuiz()
+                onQuiz: () => this._startQuiz(),
+                onSRS: () => this._openSRSOverlay()
             }
         );
 
@@ -2317,6 +2347,254 @@ class ReadingPartnerApp {
         this._loadQuizHistory();
     }
 
+    // ========== Spaced Review (SRS) ==========
+
+    /**
+     * Lazily instantiate the SRS controller + overlay on first open.
+     * Settings are pushed in on every settings save via setSettings.
+     */
+    _initializeSRS() {
+        if (this._srsController) return;
+
+        const container = document.getElementById('srs-overlay');
+        if (!container) return;
+
+        const settings = this._settingsModal?.getSettings() ?? {};
+
+        this._srsOverlay = new SRSOverlay(
+            { container },
+            {
+                onClose: () => this._closeSRSOverlay(),
+                onAnswer: (idx) => this._onSRSAnswer(idx),
+                onContinue: () => { this._srsIsRevealing = false; },
+                onJump: () => this._srsController?.jumpToBook(),
+                onGenerateMore: () => this._onSRSGenerateMore(),
+                onCardOverview: () => this._openFlashcardOverview()
+            }
+        );
+
+        this._srsController = new SRSController(
+            {
+                storage,
+                readingState: this._readingState,
+                llmClient,
+                settings
+            },
+            {
+                onStateChange: (state) => {
+                    if (state === 'loading') this._srsOverlay?.setLoading();
+                },
+                onCardReady: (card) => {
+                    if (this._srsIsRevealing) {
+                        // Buffer the next card so the user can finish reading
+                        // the explanation before advancing.
+                        this._srsOverlay?.setNextCard(card);
+                    } else {
+                        this._srsOverlay?.showCard(card);
+                    }
+                },
+                onResult: ({ card, result }) => {
+                    this._srsIsRevealing = true;
+                    this._srsOverlay?.revealAnswer({
+                        card,
+                        result,
+                        selectedIndex: this._srsLastSelectedIndex
+                    });
+                },
+                onDeckEmpty: () => {
+                    if (!this._srsIsRevealing) this._srsOverlay?.setEmpty();
+                    // else: overlay is showing the explanation; the Continue
+                    // button click will flip to empty state via the overlay's
+                    // own fallback.
+                },
+                onJump: ({ chapterIndex, sentenceIndex }) => {
+                    // Close every SRS-related surface so the reader is
+                    // unblocked before we scroll (handles the explorer →
+                    // node-detail → flashcard → overview chain).
+                    closeAllSRSurfaces({
+                        flashcardOverview: this._flashcardOverview,
+                        graphExplorer: this._graphExplorer
+                    });
+                    this._closeSRSOverlay();
+                    this._jumpToKGContext(chapterIndex, sentenceIndex);
+                },
+                onGenerationComplete: (count) => {
+                    if (count > 0) this._showToast?.(`Generated ${count} new card${count === 1 ? '' : 's'}.`);
+                },
+                onError: (err) => {
+                    this._showToast?.(`Spaced Review: ${err?.message || err}`);
+                }
+            }
+        );
+    }
+
+    /**
+     * Open the Spaced Review overlay for the current book.
+     */
+    async _openSRSOverlay() {
+        if (!this._currentBook) {
+            this._showToast?.('Open a book first.');
+            return;
+        }
+        this._initializeSRS();
+        // Push the latest settings every open in case the user tweaked
+        // them while the overlay was closed.
+        const settings = this._settingsModal?.getSettings() ?? {};
+        this._srsController.setSettings(settings);
+
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+        this._pause();
+        this._srsOverlay.setLoading();
+        this._srsOverlay.show();
+        await this._srsController.openDeck(this._currentBook.id);
+    }
+
+    /**
+     * Close the SRS overlay. Returns the controller to IDLE.
+     */
+    _closeSRSOverlay() {
+        this._srsController?.closeDeck();
+        this._srsOverlay?.hide();
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+    }
+
+    /**
+     * Track the user's selection so it can be passed to revealAnswer
+     * (the controller doesn't echo it back in onResult).
+     */
+    _onSRSAnswer(selectedIndex) {
+        this._srsLastSelectedIndex = selectedIndex;
+        this._srsController?.submitAnswer(selectedIndex).catch((err) => {
+            this._showToast?.(`Spaced Review: ${err?.message || err}`);
+        });
+    }
+
+    /**
+     * Manual "Generate more cards" button in the empty state.
+     */
+    async _onSRSGenerateMore() {
+        if (!this._currentBook || !this._srsController) return;
+        this._srsOverlay.setLoading('Generating cards…');
+        await this._srsController.openDeck(this._currentBook.id);
+    }
+
+    // ========== Flashcard Overview ==========
+
+    /**
+     * Lazily instantiate the FlashcardOverview modal on first open.
+     */
+    _initializeFlashcardOverview() {
+        if (this._flashcardOverview) return;
+        const container = document.getElementById('flashcard-overview');
+        if (!container) return;
+        this._flashcardOverview = new FlashcardOverview(
+            { container },
+            {
+                onClose: () => {/* hide() already called by component */},
+                onJumpToPassage: ({ chapterIndex, sentenceIndex }) => {
+                    this._handleOverviewJump(chapterIndex, sentenceIndex);
+                },
+                onCardDeleted: (card) => this._handleCardDeleted(card),
+                onReviewSelection: (cards) => this._handleReviewSelection(cards)
+            }
+        );
+    }
+
+    /**
+     * Open the Flashcard Overview for the current book. Re-fetches
+     * cards + nodes from storage so the modal is always authoritative
+     * after deletes / new generation.
+     *
+     * @param {Object} [opts]
+     * @param {string} [opts.scrollToCardId]   auto-expand + scroll to a card
+     */
+    async _openFlashcardOverview({ scrollToCardId } = {}) {
+        if (!this._currentBook) {
+            this._showToast?.('Open a book first.');
+            return;
+        }
+        this._initializeFlashcardOverview();
+        if (!this._flashcardOverview) return;
+        const bookId = this._currentBook.id;
+        const [cards, nodes] = await Promise.all([
+            storage.getFlashcardsForBook(bookId),
+            storage.getKGNodesForBook(bookId)
+        ]);
+        const nodesById = new Map(nodes.map((n) => [n.id, n]));
+        this._flashcardOverview.show({ cards, nodesById, scrollToCardId });
+    }
+
+    async _refreshFlashcardOverview() {
+        if (!this._flashcardOverview || !this._currentBook) return;
+        const bookId = this._currentBook.id;
+        const [cards, nodes] = await Promise.all([
+            storage.getFlashcardsForBook(bookId),
+            storage.getKGNodesForBook(bookId)
+        ]);
+        const nodesById = new Map(nodes.map((n) => [n.id, n]));
+        this._flashcardOverview.refresh({ cards, nodesById });
+    }
+
+    /**
+     * Overview → "Jump to passage" handler. Closes every SRS surface
+     * (the overview itself plus the explorer, if it was the chain
+     * source) and jumps to the sentence (polish #2).
+     */
+    _handleOverviewJump(chapterIndex, sentenceIndex) {
+        closeAllSRSurfaces({
+            flashcardOverview: this._flashcardOverview,
+            graphExplorer: this._graphExplorer
+        });
+        this._closeSRSOverlay();
+        this._jumpToKGContext(chapterIndex, sentenceIndex);
+    }
+
+    /**
+     * Overview → "Delete" handler. The component already confirmed
+     * with the user and removed the row optimistically; we persist
+     * the delete, invalidate the explorer's flashcard cache (gotcha
+     * #2), trim the live SRS deck if the card was there, and refresh
+     * the overview from storage to stay authoritative.
+     */
+    async _handleCardDeleted(card) {
+        try {
+            await storage.deleteFlashcard(card.id);
+        } catch (err) {
+            this._showToast?.(`Delete failed: ${err?.message || err}`);
+        }
+        // Invalidate the explorer cache so a stale outline doesn't
+        // survive into the next highlight cycle (gotcha #2).
+        this._graphExplorer?.invalidateFlashcardCache?.();
+        // Trim the live SRS deck if it's open and the card is in it.
+        this._srsController?.removeCardFromDeck?.(card.id);
+        // Re-fetch from storage so the modal is authoritative.
+        await this._refreshFlashcardOverview();
+    }
+
+    /**
+     * Overview → "Review Selection" handler. Sorts L1→L2→L3 (polish
+     * #1), closes surfaces (polish #2), opens the SRS overlay, and
+     * hands the filtered + sorted deck to the controller.
+     */
+    async _handleReviewSelection(cards) {
+        if (!Array.isArray(cards) || cards.length === 0) return;
+        const sorted = sortForCustomDeck(cards);
+        closeAllSRSurfaces({
+            flashcardOverview: this._flashcardOverview,
+            graphExplorer: this._graphExplorer
+        });
+        this._initializeSRS();
+        this._srsIsRevealing = false;
+        this._srsLastSelectedIndex = -1;
+        this._pause();
+        const settings = this._settingsModal?.getSettings() ?? {};
+        this._srsController.setSettings(settings);
+        this._srsOverlay.show();
+        await this._srsController.openCustomDeck(sorted);
+    }
+
     // ========== Chapter Overview ==========
 
     /**
@@ -2563,6 +2841,10 @@ class ReadingPartnerApp {
         // Update LLM client
         llmClient.setApiKey(this._qaSettings.apiKey);
         llmClient.setModel(this._qaSettings.model);
+
+        // Push fresh settings to the SRS controller if it's been
+        // initialized. No-op when SRS hasn't been opened yet.
+        this._srsController?.setSettings(settings);
 
         // Update Q&A controller if it exists
         if (this._qaController) {
@@ -3552,6 +3834,16 @@ class ReadingPartnerApp {
         } else if (p.stage === 'done') {
             text.textContent = 'Knowledge graph updated.';
             el.classList.remove('hidden');
+            // Workflow 1 trigger: kick off grounded card generation for
+            // this chapter's new nodes. Fire-and-forget — the toast on
+            // completion is handled by the controller's
+            // onGenerationComplete callback. Guarded by settings.
+            if (this._currentBook && typeof p.chapterIndex === 'number') {
+                this._initializeSRS();
+                this._srsController
+                    ?.onChapterFinished(this._currentBook.id, p.chapterIndex)
+                    .catch(() => {});
+            }
         } else if (p.stage === 'error') {
             text.textContent = `Error: ${p.error || 'unknown'}`;
             el.classList.remove('hidden');

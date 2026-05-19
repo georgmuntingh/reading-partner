@@ -4,7 +4,7 @@
  */
 
 const DB_NAME = 'reading-partner-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 // Store names
 const STORES = {
@@ -15,7 +15,8 @@ const STORES = {
     HIGHLIGHTS: 'highlights',
     LOOKUPS: 'lookups',
     KG_NODES: 'kg_nodes',
-    KG_EDGES: 'kg_edges'
+    KG_EDGES: 'kg_edges',
+    KG_FLASHCARDS: 'kg_flashcards'
 };
 
 /**
@@ -166,6 +167,18 @@ export class StorageService {
                     kgEdgeStore.createIndex('bookId', 'bookId', { unique: false });
                     kgEdgeStore.createIndex('source', 'sourceId', { unique: false });
                     kgEdgeStore.createIndex('target', 'targetId', { unique: false });
+                }
+
+                // Knowledge Graph flashcards (decoupled SRS state; v5+).
+                // Cards reference nodes/edges by id and own all SRS state
+                // (srsBox, SM-2 fields, nextReviewAt) so kg_nodes / kg_edges
+                // stay immutable from the scheduler's perspective.
+                if (!db.objectStoreNames.contains(STORES.KG_FLASHCARDS)) {
+                    const fcStore = db.createObjectStore(STORES.KG_FLASHCARDS, { keyPath: 'id' });
+                    fcStore.createIndex('bookId', 'bookId', { unique: false });
+                    fcStore.createIndex('nextReviewAt', 'nextReviewAt', { unique: false });
+                    fcStore.createIndex('bookDue', ['bookId', 'nextReviewAt'], { unique: false });
+                    fcStore.createIndex('cognitiveLevel', 'cognitiveLevel', { unique: false });
                 }
 
                 console.log('Database schema created/upgraded to version', DB_VERSION);
@@ -863,6 +876,143 @@ export class StorageService {
             for (const e of savedEdges) edges.put(e);
             for (const id of deletedEdgeIds) edges.delete(id);
             for (const id of deletedNodeIds) nodes.delete(id);
+        });
+    }
+
+    // ========== KG Flashcards (decoupled SRS) ==========
+
+    /**
+     * Save a single flashcard.
+     * @param {Object} card
+     * @returns {Promise<void>}
+     */
+    async saveFlashcard(card) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        return new Promise((resolve, reject) => {
+            const request = store.put(card);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Bulk-insert/update flashcards inside a single transaction.
+     * Used by the grounded generator to land a batch atomically.
+     * @param {Object[]} cards
+     * @returns {Promise<void>}
+     */
+    async bulkPutFlashcards(cards) {
+        if (!Array.isArray(cards) || cards.length === 0) return;
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        return new Promise((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error);
+            transaction.onabort = () => reject(transaction.error || new Error('transaction aborted'));
+            for (const c of cards) store.put(c);
+        });
+    }
+
+    /**
+     * Get a flashcard by id.
+     * @param {string} id
+     * @returns {Promise<Object|null>}
+     */
+    async getFlashcard(id) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readonly');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        return new Promise((resolve, reject) => {
+            const request = store.get(id);
+            request.onsuccess = () => resolve(request.result || null);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get all flashcards for a book.
+     * @param {string} bookId
+     * @returns {Promise<Object[]>}
+     */
+    async getFlashcardsForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readonly');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        const index = store.index('bookId');
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(bookId);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get flashcards due for review (nextReviewAt <= nowMs) for a book.
+     * Uses the composite [bookId, nextReviewAt] index for a range scan.
+     * @param {string} bookId
+     * @param {number} nowMs
+     * @returns {Promise<Object[]>}
+     */
+    async getDueFlashcards(bookId, nowMs) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readonly');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        const index = store.index('bookDue');
+        const range = IDBKeyRange.bound([bookId, -Infinity], [bookId, nowMs]);
+        return new Promise((resolve, reject) => {
+            const request = index.getAll(range);
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Get flashcards whose targetNodeIds include the given nodeId.
+     * No native index covers array membership, so this scans the bookId
+     * index and filters in JS. Card counts per book are bounded.
+     * @param {string} bookId
+     * @param {string} nodeId
+     * @returns {Promise<Object[]>}
+     */
+    async getFlashcardsByNodeId(bookId, nodeId) {
+        const all = await this.getFlashcardsForBook(bookId);
+        return all.filter((c) => Array.isArray(c.targetNodeIds) && c.targetNodeIds.includes(nodeId));
+    }
+
+    /**
+     * Delete a flashcard by id.
+     * @param {string} id
+     * @returns {Promise<void>}
+     */
+    async deleteFlashcard(id) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        return new Promise((resolve, reject) => {
+            const request = store.delete(id);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Delete all flashcards for a book.
+     * @param {string} bookId
+     * @returns {Promise<void>}
+     */
+    async deleteFlashcardsForBook(bookId) {
+        const transaction = this._db.transaction([STORES.KG_FLASHCARDS], 'readwrite');
+        const store = transaction.objectStore(STORES.KG_FLASHCARDS);
+        const index = store.index('bookId');
+        return new Promise((resolve, reject) => {
+            const request = index.openCursor(IDBKeyRange.only(bookId));
+            request.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    cursor.delete();
+                    cursor.continue();
+                } else {
+                    resolve();
+                }
+            };
+            request.onerror = () => reject(request.error);
         });
     }
 

@@ -4000,3 +4000,484 @@
     color: var(--text-secondary);
     min-width: 0;
 }
+
+/* ============================================================
+ * Spaced Review (SRS) Overlay
+ * Distinct from .quiz-overlay so the two systems can evolve
+ * independently. Visual language is intentionally close — same
+ * dialog dimensions, same option layout — to feel related.
+ * ============================================================ */
+
+.srs-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 300;
+    padding: var(--spacing-lg);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.srs-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.srs-dialog {
+    width: 100%;
+    max-width: 560px;
+    max-height: 90vh;
+    background-color: var(--surface-color);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.srs-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.srs-header-titles {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.srs-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0;
+}
+
+.srs-level-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: #fff;
+    background-color: var(--primary-color);
+}
+
+.srs-level-chip.srs-level-1 { background-color: #2563eb; }
+.srs-level-chip.srs-level-2 { background-color: #7c3aed; }
+.srs-level-chip.srs-level-3 { background-color: #c026d3; }
+
+.srs-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: background-color 0.2s ease;
+}
+
+.srs-close-btn:hover {
+    background-color: var(--bg-color);
+}
+
+.srs-content {
+    flex: 1;
+    padding: var(--spacing-lg);
+    overflow-y: auto;
+}
+
+/* ---- Status (loading / empty / error) ---- */
+.srs-status-section {
+    text-align: center;
+    padding: var(--spacing-xl) var(--spacing-md);
+}
+
+.srs-status-text {
+    font-size: var(--font-size-lg);
+    font-weight: 500;
+    color: var(--text-color);
+    margin-bottom: var(--spacing-md);
+}
+
+/* ---- Card body ---- */
+.srs-card-section { /* container */ }
+
+.srs-question {
+    font-size: var(--font-size-base);
+    font-weight: 500;
+    color: var(--text-color);
+    line-height: 1.6;
+    padding: var(--spacing-md);
+    background-color: var(--bg-color);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--primary-color);
+    margin-bottom: var(--spacing-lg);
+}
+
+.srs-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+}
+
+.srs-option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    background-color: var(--surface-color);
+    border: 2px solid var(--border-color);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    text-align: left;
+    font-size: var(--font-size-base);
+    color: var(--text-color);
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+    line-height: 1.5;
+}
+
+.srs-option:hover:not(:disabled) {
+    border-color: var(--primary-color);
+    background-color: rgba(79, 70, 229, 0.05);
+}
+
+.srs-option:disabled {
+    cursor: not-allowed;
+    opacity: 0.85;
+}
+
+.srs-option-label {
+    font-weight: 600;
+    color: var(--primary-color);
+    flex-shrink: 0;
+}
+
+.srs-option-correct {
+    border-color: #059669;
+    background-color: rgba(5, 150, 105, 0.1);
+}
+
+.srs-option-correct .srs-option-label { color: #059669; }
+
+.srs-option-incorrect {
+    border-color: #dc2626;
+    background-color: rgba(220, 38, 38, 0.1);
+}
+
+.srs-option-incorrect .srs-option-label { color: #dc2626; }
+
+/* ---- Explanation after answer ---- */
+.srs-explanation {
+    padding: var(--spacing-md);
+    background-color: var(--bg-color);
+    border-radius: var(--radius-md);
+    border-left: 4px solid #059669;
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    line-height: 1.5;
+    margin-bottom: var(--spacing-md);
+}
+
+/* ---- Action row ---- */
+.srs-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-md);
+}
+
+.srs-jump-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+}
+
+/* ---- Footer / progress strip ---- */
+.srs-footer {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.srs-progress {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+/* ============================================================
+ * Flashcard Overview (wider full-screen overlay)
+ * Mirrors .srs-overlay's positioning but with a wider dialog
+ * (900px) to accommodate the row layout.
+ * ============================================================ */
+
+.flashcard-overview-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.7);
+    z-index: 300;
+    padding: var(--spacing-lg);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.flashcard-overview-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.fc-dialog {
+    width: 100%;
+    max-width: 900px;
+    max-height: 90vh;
+    background-color: var(--surface-color);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.fc-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding: var(--spacing-md) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.fc-title {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.fc-header-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    flex: 1;
+    min-width: 0;
+}
+
+.fc-search {
+    flex: 1;
+    min-width: 0;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+}
+
+.fc-sort {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: var(--font-size-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    color: var(--text-color);
+}
+
+.fc-review-btn { font-size: var(--font-size-sm); }
+.fc-review-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.fc-close-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: background-color 0.2s ease;
+    flex-shrink: 0;
+}
+
+.fc-close-btn:hover { background-color: var(--bg-color); }
+
+.fc-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--spacing-md) var(--spacing-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.fc-footer {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-top: 1px solid var(--border-color);
+    background-color: var(--bg-color);
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.fc-empty {
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
+    padding: var(--spacing-xl);
+}
+
+.fc-row {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--surface-color);
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.fc-row:hover { border-color: var(--primary-color); }
+
+.fc-row.expanded {
+    border-color: var(--primary-color);
+    background-color: var(--bg-color);
+}
+
+.fc-row-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm) var(--spacing-md);
+    cursor: pointer;
+    flex-wrap: wrap;
+}
+
+.fc-box-badge {
+    color: #fff;
+    font-size: 0.75em;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+
+.fc-due {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+    min-width: 60px;
+}
+
+.fc-question {
+    flex: 1;
+    min-width: 200px;
+    font-weight: 500;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.fc-nodes {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.fc-nodes-empty { opacity: 0.6; }
+
+.fc-options {
+    margin: 0 var(--spacing-md) var(--spacing-sm) var(--spacing-md);
+    padding-left: var(--spacing-lg);
+}
+
+.fc-opt {
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-color);
+}
+
+.fc-opt-correct {
+    color: #059669;
+    font-weight: 600;
+}
+
+.fc-explanation {
+    margin: 0 var(--spacing-md) var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-sm);
+    background-color: var(--surface-color);
+    border-left: 4px solid #059669;
+    border-radius: var(--radius-sm);
+    color: var(--text-color);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+}
+
+.fc-row-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-sm);
+    padding: 0 var(--spacing-md) var(--spacing-sm) var(--spacing-md);
+}
+
+/* Node-detail Flashcards section (Phase 5) */
+
+.kg-flashcard-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.kg-flashcard-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    margin-bottom: var(--spacing-xs);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    background-color: var(--surface-color);
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.kg-flashcard-item:hover {
+    border-color: var(--primary-color);
+    background-color: var(--bg-color);
+}
+
+.kg-flashcard-question {
+    flex: 1;
+    font-size: 0.85em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.kg-fc-box-band-failing  { background-color: var(--srs-band-failing); }
+.kg-fc-box-band-learning { background-color: var(--srs-band-learning); }
+.kg-fc-box-band-mastered { background-color: var(--srs-band-mastered); }
+
+.kg-empty {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.85em;
+    padding: var(--spacing-xs) 0;
+}
+
+.kg-review-concept-btn {
+    margin-top: var(--spacing-sm);
+    width: 100%;
+}
