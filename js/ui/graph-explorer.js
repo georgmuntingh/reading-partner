@@ -245,10 +245,21 @@ export class GraphExplorer {
             <div id="graph-empty-state" class="graph-empty-state hidden">
                 <p>No knowledge graph yet. Open a chapter and click "Build graph" in the reader controls to extract entities and relations.</p>
             </div>
+            <div id="graph-load-error-state" class="graph-empty-state hidden">
+                <p>The knowledge graph engine couldn't be loaded. This tab is running an older build of the app than what's currently deployed — the chunk it needs has been replaced by a newer one.</p>
+                <p>Reload to fetch the latest version. Your books, graph, and settings are stored locally and will survive the reload.</p>
+                <button type="button" class="btn btn-primary graph-reload-btn">Reload</button>
+            </div>
         `;
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
         this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
+        this._container.querySelector('.graph-reload-btn').addEventListener('click', () => {
+            // Stale-chunk recovery: the user is on an older index.html than
+            // what's currently deployed. A reload picks up the fresh entry
+            // chunk and matching asset hashes. IndexedDB state survives.
+            window.location.reload();
+        });
         this._container.querySelector('.graph-card-highlight-btn').addEventListener('click', () => this._advanceCardHighlightMode());
 
         const degSlider = this._container.querySelector('#kg-min-degree');
@@ -455,16 +466,10 @@ export class GraphExplorer {
         const ws = Number(this._getWheelSensitivity());
         this._wheelSensitivity = Number.isFinite(ws) && ws > 0 ? ws : 1.0;
 
-        if (!this._cytoscape) {
-            const [cyMod, fcoseMod] = await Promise.all([
-                import('cytoscape'),
-                import('cytoscape-fcose')
-            ]);
-            this._cytoscape = cyMod.default ?? cyMod;
-            const fcose = fcoseMod.default ?? fcoseMod;
-            if (typeof this._cytoscape.use === 'function') {
-                this._cytoscape.use(fcose);
-            }
+        const loaded = await this._loadCytoscape();
+        if (!loaded) {
+            this._showLoadErrorState();
+            return;
         }
         const cytoscape = this._cytoscape;
 
@@ -1332,8 +1337,47 @@ export class GraphExplorer {
         this._container.querySelector('.graph-body').classList.add('hidden');
     }
 
+    /**
+     * Shown when the dynamic import of cytoscape (or its fcose extension)
+     * 404s — typically because GitHub Pages redeployed this PR preview and
+     * the tab is holding a cached entry chunk that references the previous
+     * asset hashes. The UI offers a Reload button; nothing reloads
+     * automatically so the rest of the app stays put until the user opts in.
+     */
+    _showLoadErrorState() {
+        this._container.querySelector('#graph-empty-state').classList.add('hidden');
+        this._container.querySelector('#graph-load-error-state').classList.remove('hidden');
+        this._container.querySelector('.graph-body').classList.add('hidden');
+    }
+
+    /**
+     * Lazy-load cytoscape + the fcose layout extension and register the
+     * extension once. Returns true on success, false if either dynamic
+     * import fails — callers surface a Reload UI on false instead of
+     * letting the unhandled rejection crash the open() flow.
+     */
+    async _loadCytoscape() {
+        if (this._cytoscape) return true;
+        try {
+            const [cyMod, fcoseMod] = await Promise.all([
+                import('cytoscape'),
+                import('cytoscape-fcose')
+            ]);
+            this._cytoscape = cyMod.default ?? cyMod;
+            const fcose = fcoseMod.default ?? fcoseMod;
+            if (typeof this._cytoscape.use === 'function') {
+                this._cytoscape.use(fcose);
+            }
+            return true;
+        } catch (err) {
+            console.warn('Knowledge graph engine failed to load (likely a stale cached build):', err);
+            return false;
+        }
+    }
+
     _hideEmptyState() {
         this._container.querySelector('#graph-empty-state').classList.add('hidden');
+        this._container.querySelector('#graph-load-error-state').classList.add('hidden');
         this._container.querySelector('.graph-body').classList.remove('hidden');
     }
 
@@ -1597,16 +1641,10 @@ export class GraphExplorer {
      */
     async _bootstrapEmptyCytoscape() {
         if (this._cy) return;
-        if (!this._cytoscape) {
-            const [cyMod, fcoseMod] = await Promise.all([
-                import('cytoscape'),
-                import('cytoscape-fcose')
-            ]);
-            this._cytoscape = cyMod.default ?? cyMod;
-            const fcose = fcoseMod.default ?? fcoseMod;
-            if (typeof this._cytoscape.use === 'function') {
-                this._cytoscape.use(fcose);
-            }
+        const loaded = await this._loadCytoscape();
+        if (!loaded) {
+            this._showLoadErrorState();
+            return;
         }
         const book = this._getBook();
         if (book) this._configureChapterSlider(book);
