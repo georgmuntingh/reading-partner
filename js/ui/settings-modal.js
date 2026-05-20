@@ -112,6 +112,16 @@ export class SettingsModal {
             // high-resolution wheels can dial it down and trackpad users
             // can dial it up.
             kgWheelSensitivity: 1.0,
+            // Force-directed layout (fcose) tuning. Higher repulsion / edge
+            // length / separation spread dense graphs further apart so nodes
+            // stop overlapping; more iterations let the layout settle better
+            // at the cost of a slower Re-layout pass. Gravity pulls every
+            // node toward the centre — lower values let clusters drift out.
+            kgFcoseNodeRepulsion: 8000,
+            kgFcoseIdealEdgeLength: 80,
+            kgFcoseNodeSeparation: 100,
+            kgFcoseGravity: 0.25,
+            kgFcoseNumIter: 2500,
             // Search mode used by the explorer's search box. 'text' is a
             // plain case-insensitive substring match against canonicalName
             // and aliases; 'semantic' embeds the query and ranks every
@@ -992,6 +1002,38 @@ export class SettingsModal {
                             <p class="form-hint">Controls how aggressively the mouse wheel zooms the knowledge graph. 1.0 is the cytoscape default; lower is gentler, higher is snappier.</p>
                         </div>
 
+                        <div class="settings-subsection-header">Force-directed layout (fcose)</div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-fcose-node-repulsion">Node repulsion: <span id="settings-kg-fcose-node-repulsion-value">8000</span></label>
+                            <input type="range" id="settings-kg-fcose-node-repulsion" class="form-input" min="1000" max="30000" step="500" value="8000">
+                            <p class="form-hint">How strongly nodes push each other apart. Raise this to spread an overlapping graph; lower it to pack nodes closer together. Takes effect on the next Re-layout.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-fcose-ideal-edge-length">Ideal edge length: <span id="settings-kg-fcose-ideal-edge-length-value">80</span></label>
+                            <input type="range" id="settings-kg-fcose-ideal-edge-length" class="form-input" min="30" max="300" step="5" value="80">
+                            <p class="form-hint">Resting length the layout tries to keep edges at. Higher = neighbours sit further apart.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-fcose-node-separation">Node separation: <span id="settings-kg-fcose-node-separation-value">100</span></label>
+                            <input type="range" id="settings-kg-fcose-node-separation" class="form-input" min="25" max="300" step="5" value="100">
+                            <p class="form-hint">Minimum spacing maintained between nodes during tiling. Raise this to enforce wider gutters around each node.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-fcose-gravity">Gravity: <span id="settings-kg-fcose-gravity-value">0.25</span></label>
+                            <input type="range" id="settings-kg-fcose-gravity" class="form-input" min="0" max="1" step="0.05" value="0.25">
+                            <p class="form-hint">Pull toward the canvas centre. Lower values let disconnected clusters drift further out; higher values keep everything tightly grouped.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-fcose-num-iter">Number of iterations: <span id="settings-kg-fcose-num-iter-value">2500</span></label>
+                            <input type="range" id="settings-kg-fcose-num-iter" class="form-input" min="500" max="10000" step="250" value="2500">
+                            <p class="form-hint">How many simulation steps the layout runs before stopping. More iterations produce a better-settled graph but slow down the Re-layout pass.</p>
+                        </div>
+
                         <div class="form-group">
                             <label for="settings-kg-search-mode">Graph search mode</label>
                             <select id="settings-kg-search-mode" class="form-select">
@@ -1227,6 +1269,16 @@ export class SettingsModal {
             kgRelevanceThresholdValue: this._container.querySelector('#settings-kg-relevance-threshold-value'),
             kgWheelSensitivity: this._container.querySelector('#settings-kg-wheel-sensitivity'),
             kgWheelSensitivityValue: this._container.querySelector('#settings-kg-wheel-sensitivity-value'),
+            kgFcoseNodeRepulsion: this._container.querySelector('#settings-kg-fcose-node-repulsion'),
+            kgFcoseNodeRepulsionValue: this._container.querySelector('#settings-kg-fcose-node-repulsion-value'),
+            kgFcoseIdealEdgeLength: this._container.querySelector('#settings-kg-fcose-ideal-edge-length'),
+            kgFcoseIdealEdgeLengthValue: this._container.querySelector('#settings-kg-fcose-ideal-edge-length-value'),
+            kgFcoseNodeSeparation: this._container.querySelector('#settings-kg-fcose-node-separation'),
+            kgFcoseNodeSeparationValue: this._container.querySelector('#settings-kg-fcose-node-separation-value'),
+            kgFcoseGravity: this._container.querySelector('#settings-kg-fcose-gravity'),
+            kgFcoseGravityValue: this._container.querySelector('#settings-kg-fcose-gravity-value'),
+            kgFcoseNumIter: this._container.querySelector('#settings-kg-fcose-num-iter'),
+            kgFcoseNumIterValue: this._container.querySelector('#settings-kg-fcose-num-iter-value'),
             kgSearchMode: this._container.querySelector('#settings-kg-search-mode'),
             kgSemanticThreshold: this._container.querySelector('#settings-kg-semantic-threshold'),
             kgSemanticThresholdValue: this._container.querySelector('#settings-kg-semantic-threshold-value'),
@@ -1379,6 +1431,21 @@ export class SettingsModal {
         });
         this._elements.kgWheelSensitivity.addEventListener('input', () => {
             this._elements.kgWheelSensitivityValue.textContent = parseFloat(this._elements.kgWheelSensitivity.value).toFixed(2);
+        });
+        this._elements.kgFcoseNodeRepulsion.addEventListener('input', () => {
+            this._elements.kgFcoseNodeRepulsionValue.textContent = String(parseInt(this._elements.kgFcoseNodeRepulsion.value, 10));
+        });
+        this._elements.kgFcoseIdealEdgeLength.addEventListener('input', () => {
+            this._elements.kgFcoseIdealEdgeLengthValue.textContent = String(parseInt(this._elements.kgFcoseIdealEdgeLength.value, 10));
+        });
+        this._elements.kgFcoseNodeSeparation.addEventListener('input', () => {
+            this._elements.kgFcoseNodeSeparationValue.textContent = String(parseInt(this._elements.kgFcoseNodeSeparation.value, 10));
+        });
+        this._elements.kgFcoseGravity.addEventListener('input', () => {
+            this._elements.kgFcoseGravityValue.textContent = parseFloat(this._elements.kgFcoseGravity.value).toFixed(2);
+        });
+        this._elements.kgFcoseNumIter.addEventListener('input', () => {
+            this._elements.kgFcoseNumIterValue.textContent = String(parseInt(this._elements.kgFcoseNumIter.value, 10));
         });
         // Per-book domain — committed on blur or Enter. Not included in
         // the getSettings() return because it lives on the book record,
@@ -2141,6 +2208,26 @@ export class SettingsModal {
                 const v = parseFloat(this._elements.kgWheelSensitivity.value);
                 return Number.isFinite(v) && v > 0 ? v : 1.0;
             })(),
+            kgFcoseNodeRepulsion: (() => {
+                const v = parseInt(this._elements.kgFcoseNodeRepulsion.value, 10);
+                return Number.isFinite(v) && v > 0 ? v : 8000;
+            })(),
+            kgFcoseIdealEdgeLength: (() => {
+                const v = parseInt(this._elements.kgFcoseIdealEdgeLength.value, 10);
+                return Number.isFinite(v) && v > 0 ? v : 80;
+            })(),
+            kgFcoseNodeSeparation: (() => {
+                const v = parseInt(this._elements.kgFcoseNodeSeparation.value, 10);
+                return Number.isFinite(v) && v > 0 ? v : 100;
+            })(),
+            kgFcoseGravity: (() => {
+                const v = parseFloat(this._elements.kgFcoseGravity.value);
+                return Number.isFinite(v) && v >= 0 ? v : 0.25;
+            })(),
+            kgFcoseNumIter: (() => {
+                const v = parseInt(this._elements.kgFcoseNumIter.value, 10);
+                return Number.isFinite(v) && v > 0 ? v : 2500;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
             kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value,
@@ -2460,6 +2547,21 @@ export class SettingsModal {
         const kgWheelSensitivity = this._settings.kgWheelSensitivity ?? 1.0;
         this._elements.kgWheelSensitivity.value = kgWheelSensitivity;
         this._elements.kgWheelSensitivityValue.textContent = parseFloat(kgWheelSensitivity).toFixed(2);
+        const kgFcoseNodeRepulsion = this._settings.kgFcoseNodeRepulsion ?? 8000;
+        this._elements.kgFcoseNodeRepulsion.value = kgFcoseNodeRepulsion;
+        this._elements.kgFcoseNodeRepulsionValue.textContent = String(kgFcoseNodeRepulsion);
+        const kgFcoseIdealEdgeLength = this._settings.kgFcoseIdealEdgeLength ?? 80;
+        this._elements.kgFcoseIdealEdgeLength.value = kgFcoseIdealEdgeLength;
+        this._elements.kgFcoseIdealEdgeLengthValue.textContent = String(kgFcoseIdealEdgeLength);
+        const kgFcoseNodeSeparation = this._settings.kgFcoseNodeSeparation ?? 100;
+        this._elements.kgFcoseNodeSeparation.value = kgFcoseNodeSeparation;
+        this._elements.kgFcoseNodeSeparationValue.textContent = String(kgFcoseNodeSeparation);
+        const kgFcoseGravity = this._settings.kgFcoseGravity ?? 0.25;
+        this._elements.kgFcoseGravity.value = kgFcoseGravity;
+        this._elements.kgFcoseGravityValue.textContent = parseFloat(kgFcoseGravity).toFixed(2);
+        const kgFcoseNumIter = this._settings.kgFcoseNumIter ?? 2500;
+        this._elements.kgFcoseNumIter.value = kgFcoseNumIter;
+        this._elements.kgFcoseNumIterValue.textContent = String(kgFcoseNumIter);
         const kgSearchMode = this._settings.kgSearchMode === 'semantic' ? 'semantic' : 'text';
         this._elements.kgSearchMode.value = kgSearchMode;
         const kgSemanticThreshold = Number.isFinite(this._settings.kgSemanticSearchThreshold)

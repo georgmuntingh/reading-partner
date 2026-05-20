@@ -382,6 +382,19 @@ class ReadingPartnerApp {
             lookupDefinition,
             getWheelSensitivity: () =>
                 this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
+            // fcose tuning. Read on every layout pass so changes in
+            // Settings take effect on the next Re-layout without re-opening
+            // the explorer.
+            getFcoseOptions: () => {
+                const s = this._settingsModal?.getSettings() || {};
+                return {
+                    nodeRepulsion: s.kgFcoseNodeRepulsion,
+                    idealEdgeLength: s.kgFcoseIdealEdgeLength,
+                    nodeSeparation: s.kgFcoseNodeSeparation,
+                    gravity: s.kgFcoseGravity,
+                    numIter: s.kgFcoseNumIter
+                };
+            },
             // Read on every keystroke so toggling the mode (or threshold)
             // in Settings takes effect without re-opening the explorer.
             getSearchSettings: () => {

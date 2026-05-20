@@ -122,7 +122,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -135,6 +135,13 @@ export class GraphExplorer {
             ? getWheelSensitivity
             : () => 1.0;
         this._wheelSensitivity = 1.0;
+        // Returns user-tuned fcose layout overrides ({ nodeRepulsion,
+        // idealEdgeLength, nodeSeparation, gravity, numIter }). Read on
+        // every layout pass so changes in Settings take effect on the next
+        // Re-layout without re-opening the explorer.
+        this._getFcoseOptions = typeof getFcoseOptions === 'function'
+            ? getFcoseOptions
+            : () => ({});
         this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
         // Returns `{ mode: 'text'|'semantic', threshold: number }`. Read on
         // every keystroke so a setting change takes effect immediately
@@ -544,7 +551,7 @@ export class GraphExplorer {
         }
         const layout = allPositioned
             ? { name: 'preset' }
-            : { ...FCOSE_BASE, randomize: true };
+            : this._fcoseOptions({ randomize: true });
 
         this._cy = cytoscape({
             container: this._container.querySelector('#cy-canvas'),
@@ -1726,11 +1733,10 @@ export class GraphExplorer {
         const others = this._cy.nodes().difference(newNodes);
         try {
             if (typeof others.lock === 'function') others.lock();
-            const layout = newSubgraph.layout({
-                ...FCOSE_BASE,
+            const layout = newSubgraph.layout(this._fcoseOptions({
                 fit: false,
                 randomize: false
-            });
+            }));
             // cytoscape's layout API is synchronous in our test mocks but
             // real cose runs asynchronously. Don't await — we want the
             // controller to move on to the next batch immediately.
@@ -1939,10 +1945,9 @@ export class GraphExplorer {
         // truly starts from scratch.
         const bookId = this._getBook()?.id;
         if (bookId) this._positionCache.delete(bookId);
-        const layout = this._cy.layout({
-            ...FCOSE_BASE,
+        const layout = this._cy.layout(this._fcoseOptions({
             randomize: true
-        });
+        }));
         if (layout && typeof layout.run === 'function') {
             layout.run();
             // After the layout settles, refresh the cache so the next
@@ -1958,6 +1963,33 @@ export class GraphExplorer {
      * the next open() can use `preset` and skip the cose pass. Called
      * from close() and after a relayout() finishes.
      */
+    /**
+     * Merge the user's fcose tuning from settings on top of FCOSE_BASE.
+     * Each setting is validated independently — a bad value falls back to
+     * the base, so a partially-empty settings payload still produces a
+     * usable layout config.
+     */
+    _fcoseOptions(extra = {}) {
+        const user = this._getFcoseOptions() || {};
+        const out = { ...FCOSE_BASE };
+        if (Number.isFinite(user.nodeRepulsion) && user.nodeRepulsion > 0) {
+            out.nodeRepulsion = user.nodeRepulsion;
+        }
+        if (Number.isFinite(user.idealEdgeLength) && user.idealEdgeLength > 0) {
+            out.idealEdgeLength = user.idealEdgeLength;
+        }
+        if (Number.isFinite(user.nodeSeparation) && user.nodeSeparation > 0) {
+            out.nodeSeparation = user.nodeSeparation;
+        }
+        if (Number.isFinite(user.gravity) && user.gravity >= 0) {
+            out.gravity = user.gravity;
+        }
+        if (Number.isFinite(user.numIter) && user.numIter > 0) {
+            out.numIter = user.numIter;
+        }
+        return { ...out, ...extra };
+    }
+
     _savePositionsToCache() {
         if (!this._cy) return;
         const bookId = this._getBook()?.id;
