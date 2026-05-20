@@ -122,7 +122,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, getNodeSizeScale, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, getNodeSizeScale, getNeighborhoodHops, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -148,6 +148,12 @@ export class GraphExplorer {
         this._getNodeSizeScale = typeof getNodeSizeScale === 'function'
             ? getNodeSizeScale
             : () => 1.0;
+        // How many hops of neighbours stay in focus on a node tap. Read on
+        // every tap so a Settings change takes effect immediately, without
+        // needing to re-open the explorer.
+        this._getNeighborhoodHops = typeof getNeighborhoodHops === 'function'
+            ? getNeighborhoodHops
+            : () => 1;
         this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
         // Returns `{ mode: 'text'|'semantic', threshold: number }`. Read on
         // every keystroke so a setting change takes effect immediately
@@ -622,6 +628,24 @@ export class GraphExplorer {
                     selector: '.kg-faded',
                     style: { 'opacity': 0.22 }
                 },
+                // Click-focus dim: applied to nodes/edges outside the N-hop
+                // neighbourhood of the most-recently-tapped node. Slightly
+                // dimmer than .kg-faded so the two states are visually
+                // distinct when a live build's fade overlaps with a focus.
+                {
+                    selector: '.kg-out-of-focus',
+                    style: { 'opacity': 0.1 }
+                },
+                // Click-focus raise: the focused subgraph renders above
+                // the dimmed rest. Cytoscape's default z-index-compare
+                // sorts within groups, so this lifts focused nodes above
+                // unfocused nodes and focused edges above unfocused edges,
+                // which together with the opacity dim gives a clean
+                // "subgraph in the foreground" look.
+                {
+                    selector: '.kg-in-focus',
+                    style: { 'z-index': 10 }
+                },
                 {
                     // Same yellow-ring treatment for nodes that landed in
                     // the current LLM build OR that match the active
@@ -753,6 +777,7 @@ export class GraphExplorer {
             lastTapAt = now;
             lastTapId = id;
             this._showNodeDetails(node);
+            this._focusNeighborhood(evt.target);
         });
         // Long press on touch enters selection mode.
         this._cy.on('tapstart', 'node', (evt) => {
@@ -795,8 +820,10 @@ export class GraphExplorer {
             if (evt.target === this._cy) {
                 this._hideSide();
                 // Plain background tap clears the selection (per design).
-                // In selection mode this also exits selection mode.
+                // In selection mode this also exits selection mode. Also
+                // drops the click-focus dim so the full graph comes back.
                 this._cy.elements().unselect();
+                this._clearFocus();
                 if (this._selectionMode) this._exitSelectionMode();
             }
         });
@@ -1265,6 +1292,48 @@ export class GraphExplorer {
      * Cytoscape's native selectors (no per-edge iteration) so this stays
      * snappy on dense graphs.
      */
+    /**
+     * Click-focus: dim everything outside the N-hop neighbourhood of the
+     * tapped node and raise the in-focus subgraph (nodes + connecting
+     * edges) to the foreground. N is configurable via the "Click focus
+     * depth" setting. A background tap clears it (see _clearFocus).
+     */
+    _focusNeighborhood(node) {
+        if (!this._cy || !node) return;
+        const hops = Math.max(0, this._getNeighborhoodHops() | 0);
+
+        // BFS outward from the clicked node, collecting nodes by hop
+        // depth. We then ask cytoscape for the induced edge set so that
+        // every edge between any two focused nodes is included in focus —
+        // not only the spanning edges that BFS traverses.
+        const visited = new Set([node.id()]);
+        let focusedNodes = node;
+        let frontier = node;
+        for (let depth = 0; depth < hops; depth++) {
+            const next = frontier.neighborhood('node');
+            const fresh = (typeof next?.filter === 'function')
+                ? next.filter((n) => !visited.has(n.id()))
+                : null;
+            if (!fresh || fresh.length === 0) break;
+            fresh.forEach((n) => visited.add(n.id()));
+            focusedNodes = focusedNodes.union(fresh);
+            frontier = fresh;
+        }
+        const focusedEdges = focusedNodes.edgesWith(focusedNodes);
+        const focused = focusedNodes.union(focusedEdges);
+
+        const all = this._cy.elements();
+        all.removeClass('kg-in-focus').addClass('kg-out-of-focus');
+        focused.removeClass('kg-out-of-focus').addClass('kg-in-focus');
+    }
+
+    _clearFocus() {
+        if (!this._cy) return;
+        const all = this._cy.elements();
+        if (!all || typeof all.removeClass !== 'function') return;
+        all.removeClass('kg-out-of-focus').removeClass('kg-in-focus');
+    }
+
     _applyDetailFilter() {
         if (!this._cy || typeof this._cy.batch !== 'function') return;
         const degEl = this._container.querySelector('#kg-min-degree');

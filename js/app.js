@@ -400,6 +400,10 @@ class ReadingPartnerApp {
                 const v = this._settingsModal?.getSettings()?.kgNodeSizeScale;
                 return Number.isFinite(v) ? v : 1.0;
             },
+            getNeighborhoodHops: () => {
+                const v = this._settingsModal?.getSettings()?.kgNeighborhoodHops;
+                return Number.isFinite(v) && v >= 0 ? v : 1;
+            },
             // Read on every keystroke so toggling the mode (or threshold)
             // in Settings takes effect without re-opening the explorer.
             getSearchSettings: () => {
@@ -3159,6 +3163,9 @@ class ReadingPartnerApp {
             if (settings.kgNodeSizeScale !== undefined) {
                 await storage.saveSetting('kgNodeSizeScale', settings.kgNodeSizeScale);
             }
+            if (settings.kgNeighborhoodHops !== undefined) {
+                await storage.saveSetting('kgNeighborhoodHops', settings.kgNeighborhoodHops);
+            }
 
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
@@ -4386,6 +4393,7 @@ class ReadingPartnerApp {
             const kgFcoseNumIter = await storage.getSetting('kgFcoseNumIter');
             const kgFcoseFit = await storage.getSetting('kgFcoseFit');
             const kgNodeSizeScale = await storage.getSetting('kgNodeSizeScale');
+            const kgNeighborhoodHops = await storage.getSetting('kgNeighborhoodHops');
 
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
@@ -4465,7 +4473,8 @@ class ReadingPartnerApp {
                 kgFcoseGravity: Number.isFinite(kgFcoseGravity) && kgFcoseGravity >= 0 ? kgFcoseGravity : 0.25,
                 kgFcoseNumIter: Number.isFinite(kgFcoseNumIter) && kgFcoseNumIter > 0 ? kgFcoseNumIter : 2500,
                 kgFcoseFit: kgFcoseFit === null ? true : kgFcoseFit !== false,
-                kgNodeSizeScale: Number.isFinite(kgNodeSizeScale) && kgNodeSizeScale >= 0 ? kgNodeSizeScale : 1.0
+                kgNodeSizeScale: Number.isFinite(kgNodeSizeScale) && kgNodeSizeScale >= 0 ? kgNodeSizeScale : 1.0,
+                kgNeighborhoodHops: Number.isFinite(kgNeighborhoodHops) && kgNeighborhoodHops >= 0 ? kgNeighborhoodHops : 1
             });
 
             // Probe LM Studio in the background so the settings modal's

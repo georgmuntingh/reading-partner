@@ -130,6 +130,10 @@ export class SettingsModal {
             // How strongly node size grows with degree. 0 = uniform,
             // 1 = default (30–70 px), higher exaggerates hubs.
             kgNodeSizeScale: 1.0,
+            // How many hops of neighbours stay in focus when a node is
+            // clicked. 0 = highlight only the clicked node; 1 = direct
+            // neighbours; etc. Background tap clears the focus.
+            kgNeighborhoodHops: 1,
             // Search mode used by the explorer's search box. 'text' is a
             // plain case-insensitive substring match against canonicalName
             // and aliases; 'semantic' embeds the query and ranks every
@@ -1010,6 +1014,12 @@ export class SettingsModal {
                             <p class="form-hint">Controls how aggressively the mouse wheel zooms the knowledge graph. 1.0 is the cytoscape default; lower is gentler, higher is snappier.</p>
                         </div>
 
+                        <div class="form-group">
+                            <label for="settings-kg-neighborhood-hops">Click focus depth: <span id="settings-kg-neighborhood-hops-value">1</span></label>
+                            <input type="range" id="settings-kg-neighborhood-hops" class="form-input" min="0" max="5" step="1" value="1">
+                            <p class="form-hint">When you click a node, this many hops of neighbours stay in focus while the rest of the graph greys out and recedes. 0 = highlight only the clicked node; 1 = direct neighbours; 2 = neighbours-of-neighbours; and so on. Tap the background to clear the focus.</p>
+                        </div>
+
                         <div class="settings-subsection-header">Force-directed layout (fcose)</div>
 
                         <div class="form-group">
@@ -1304,6 +1314,8 @@ export class SettingsModal {
             kgFcoseFit: this._container.querySelector('#settings-kg-fcose-fit'),
             kgNodeSizeScale: this._container.querySelector('#settings-kg-node-size-scale'),
             kgNodeSizeScaleValue: this._container.querySelector('#settings-kg-node-size-scale-value'),
+            kgNeighborhoodHops: this._container.querySelector('#settings-kg-neighborhood-hops'),
+            kgNeighborhoodHopsValue: this._container.querySelector('#settings-kg-neighborhood-hops-value'),
             kgSearchMode: this._container.querySelector('#settings-kg-search-mode'),
             kgSemanticThreshold: this._container.querySelector('#settings-kg-semantic-threshold'),
             kgSemanticThresholdValue: this._container.querySelector('#settings-kg-semantic-threshold-value'),
@@ -1474,6 +1486,9 @@ export class SettingsModal {
         });
         this._elements.kgNodeSizeScale.addEventListener('input', () => {
             this._elements.kgNodeSizeScaleValue.textContent = parseFloat(this._elements.kgNodeSizeScale.value).toFixed(2);
+        });
+        this._elements.kgNeighborhoodHops.addEventListener('input', () => {
+            this._elements.kgNeighborhoodHopsValue.textContent = String(parseInt(this._elements.kgNeighborhoodHops.value, 10));
         });
         // Per-book domain — committed on blur or Enter. Not included in
         // the getSettings() return because it lives on the book record,
@@ -2261,6 +2276,10 @@ export class SettingsModal {
                 const v = parseFloat(this._elements.kgNodeSizeScale.value);
                 return Number.isFinite(v) && v >= 0 ? v : 1.0;
             })(),
+            kgNeighborhoodHops: (() => {
+                const v = parseInt(this._elements.kgNeighborhoodHops.value, 10);
+                return Number.isFinite(v) && v >= 0 ? v : 1;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
             kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value,
@@ -2600,6 +2619,10 @@ export class SettingsModal {
             ? this._settings.kgNodeSizeScale : 1.0;
         this._elements.kgNodeSizeScale.value = kgNodeSizeScale;
         this._elements.kgNodeSizeScaleValue.textContent = parseFloat(kgNodeSizeScale).toFixed(2);
+        const kgNeighborhoodHops = Number.isFinite(this._settings.kgNeighborhoodHops)
+            ? this._settings.kgNeighborhoodHops : 1;
+        this._elements.kgNeighborhoodHops.value = kgNeighborhoodHops;
+        this._elements.kgNeighborhoodHopsValue.textContent = String(kgNeighborhoodHops);
         const kgSearchMode = this._settings.kgSearchMode === 'semantic' ? 'semantic' : 'text';
         this._elements.kgSearchMode.value = kgSearchMode;
         const kgSemanticThreshold = Number.isFinite(this._settings.kgSemanticSearchThreshold)
