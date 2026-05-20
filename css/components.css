@@ -1383,8 +1383,50 @@
    (z-index: 1000) need to render above it, not behind it. */
 .kg-context-preview-overlay,
 .kg-domain-modal-overlay,
+.kg-build-modal-overlay,
 .confirm-modal-overlay {
     z-index: 1100;
+}
+
+.kg-build-modal .kg-build-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--spacing-md);
+    row-gap: var(--spacing-xs);
+    align-items: center;
+    margin-bottom: var(--spacing-md);
+}
+
+.kg-build-modal .kg-build-row label {
+    grid-column: 1 / -1;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary, var(--text-color));
+}
+
+.kg-build-modal .kg-build-row input[type="range"] {
+    width: 100%;
+}
+
+.kg-build-modal .kg-build-row input.kg-build-value {
+    width: 5em;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background: var(--surface-color);
+    color: inherit;
+    text-align: right;
+}
+
+.kg-build-modal .kg-build-row:has(input[type="number"]:only-of-type) {
+    grid-template-columns: 1fr auto;
+}
+
+.kg-build-modal .kg-build-check {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-sm);
 }
 
 .modal {
