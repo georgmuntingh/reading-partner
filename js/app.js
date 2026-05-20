@@ -3803,6 +3803,17 @@ class ReadingPartnerApp {
                 if (!chapter) continue;
                 if (!force && chapter.kgProcessed === true) continue;
 
+                // Sentences are populated lazily by _readingState.loadChapter.
+                // Without this call, every chapter the user hasn't visited
+                // yet has chapter.sentences === null, and the controller
+                // silently no-ops in its empty-sentences guard — which is
+                // why ranges spanning unread chapters appeared to skip.
+                await this._readingState.loadChapter(i);
+                if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
+                    appLogger.warn?.(`[kg] chapter ${i + 1} has no extractable sentences, skipping`);
+                    continue;
+                }
+
                 this._kgRangeContext = rangeCount > 1
                     ? { current: i - fromIndex + 1, total: rangeCount, chapterNumber: i + 1 }
                     : null;

@@ -24,7 +24,8 @@ import {
     KG_BATCH_EXTRACTION_SYSTEM_PROMPT,
     isStructuralNoise,
     sanitizeExtraction,
-    buildExtractionSystemPrompt
+    buildExtractionSystemPrompt,
+    salvageTruncatedJSON
 } from '../js/services/kg-extractor.js';
 import { llmClient } from '../js/services/llm-client.js';
 
@@ -103,7 +104,7 @@ describe('extractFromChunk', () => {
         const args = llmClient.complete.mock.calls[0][0];
         expect(args.system).toBe(KG_EXTRACTION_SYSTEM_PROMPT);
         expect(args.prompt).toContain('hello world');
-        expect(args.maxTokens).toBe(800);
+        expect(args.maxTokens).toBe(1500);
         expect(args.temperature).toBe(0.1);
     });
 
@@ -315,6 +316,40 @@ describe('extractFromChunk — kgDomain plumbing', () => {
         const sys = llmClient.complete.mock.calls[0][0].system;
         expect(sys).toContain('Roman History');
         expect(sys).not.toBe(KG_EXTRACTION_SYSTEM_PROMPT);
+    });
+});
+
+describe('salvageTruncatedJSON', () => {
+    it('returns null on non-string / no opening brace', () => {
+        expect(salvageTruncatedJSON(null)).toBeNull();
+        expect(salvageTruncatedJSON('not json')).toBeNull();
+    });
+
+    it('returns the parse result unchanged when the input is already valid', () => {
+        const out = salvageTruncatedJSON('{"entities":[{"name":"A"}]}');
+        expect(out).toEqual({ entities: [{ name: 'A' }] });
+    });
+
+    it('recovers complete entities when the response is truncated mid-string', () => {
+        // The model finished one entity and started a second whose
+        // definition got chopped off when maxTokens ran out.
+        const truncated = `{
+  "entities": [
+    { "name": "A", "type": "CONCEPT", "aliases": [] },
+    { "name": "B", "definition": "Thin lipid bilayers that separate cellular com`;
+        const out = salvageTruncatedJSON(truncated);
+        expect(out).toBeTruthy();
+        expect(Array.isArray(out.entities)).toBe(true);
+        expect(out.entities.length).toBeGreaterThanOrEqual(1);
+        // The complete first entity must survive.
+        const a = out.entities.find((e) => e?.name === 'A');
+        expect(a).toBeTruthy();
+        expect(a.type).toBe('CONCEPT');
+    });
+
+    it('returns null when no closing bracket was ever reached', () => {
+        const noProgress = '{ "entities": [ { "name": "no closing quote until end';
+        expect(salvageTruncatedJSON(noProgress)).toBeNull();
     });
 });
 
