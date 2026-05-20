@@ -392,8 +392,13 @@ class ReadingPartnerApp {
                     idealEdgeLength: s.kgFcoseIdealEdgeLength,
                     nodeSeparation: s.kgFcoseNodeSeparation,
                     gravity: s.kgFcoseGravity,
-                    numIter: s.kgFcoseNumIter
+                    numIter: s.kgFcoseNumIter,
+                    fit: s.kgFcoseFit !== false
                 };
+            },
+            getNodeSizeScale: () => {
+                const v = this._settingsModal?.getSettings()?.kgNodeSizeScale;
+                return Number.isFinite(v) ? v : 1.0;
             },
             // Read on every keystroke so toggling the mode (or threshold)
             // in Settings takes effect without re-opening the explorer.

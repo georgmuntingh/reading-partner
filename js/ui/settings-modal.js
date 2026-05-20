@@ -122,6 +122,14 @@ export class SettingsModal {
             kgFcoseNodeSeparation: 100,
             kgFcoseGravity: 0.25,
             kgFcoseNumIter: 2500,
+            // Whether each layout pass zooms/pans to bring the whole graph
+            // into view. Off lets the user keep their manual viewport across
+            // Re-layouts — handy with high idealEdgeLength when the graph
+            // extends past the viewport on purpose.
+            kgFcoseFit: true,
+            // How strongly node size grows with degree. 0 = uniform,
+            // 1 = default (30–70 px), higher exaggerates hubs.
+            kgNodeSizeScale: 1.0,
             // Search mode used by the explorer's search box. 'text' is a
             // plain case-insensitive substring match against canonicalName
             // and aliases; 'semantic' embeds the query and ranks every
@@ -1006,7 +1014,7 @@ export class SettingsModal {
 
                         <div class="form-group">
                             <label for="settings-kg-fcose-node-repulsion">Node repulsion: <span id="settings-kg-fcose-node-repulsion-value">8000</span></label>
-                            <input type="range" id="settings-kg-fcose-node-repulsion" class="form-input" min="1000" max="30000" step="500" value="8000">
+                            <input type="range" id="settings-kg-fcose-node-repulsion" class="form-input" min="1000" max="100000" step="500" value="8000">
                             <p class="form-hint">How strongly nodes push each other apart. Raise this to spread an overlapping graph; lower it to pack nodes closer together. Takes effect on the next Re-layout.</p>
                         </div>
 
@@ -1032,6 +1040,20 @@ export class SettingsModal {
                             <label for="settings-kg-fcose-num-iter">Number of iterations: <span id="settings-kg-fcose-num-iter-value">2500</span></label>
                             <input type="range" id="settings-kg-fcose-num-iter" class="form-input" min="500" max="10000" step="250" value="2500">
                             <p class="form-hint">How many simulation steps the layout runs before stopping. More iterations produce a better-settled graph but slow down the Re-layout pass.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="settings-kg-fcose-fit" checked>
+                                <span>Fit graph to screen after layout</span>
+                            </label>
+                            <p class="form-hint">When on, every layout pass zooms and pans so the whole graph fits the viewport. Turn off to keep your manual pan/zoom across Re-layouts — useful when ideal edge length is high and the graph is meant to extend past the screen.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="settings-kg-node-size-scale">Node size by degree: <span id="settings-kg-node-size-scale-value">1.00</span></label>
+                            <input type="range" id="settings-kg-node-size-scale" class="form-input" min="0" max="3" step="0.05" value="1.0">
+                            <p class="form-hint">How strongly node size grows with the number of connections. 0 = every node the same size; 1 = default (30–70 px range); higher exaggerates hubs.</p>
                         </div>
 
                         <div class="form-group">
@@ -1279,6 +1301,9 @@ export class SettingsModal {
             kgFcoseGravityValue: this._container.querySelector('#settings-kg-fcose-gravity-value'),
             kgFcoseNumIter: this._container.querySelector('#settings-kg-fcose-num-iter'),
             kgFcoseNumIterValue: this._container.querySelector('#settings-kg-fcose-num-iter-value'),
+            kgFcoseFit: this._container.querySelector('#settings-kg-fcose-fit'),
+            kgNodeSizeScale: this._container.querySelector('#settings-kg-node-size-scale'),
+            kgNodeSizeScaleValue: this._container.querySelector('#settings-kg-node-size-scale-value'),
             kgSearchMode: this._container.querySelector('#settings-kg-search-mode'),
             kgSemanticThreshold: this._container.querySelector('#settings-kg-semantic-threshold'),
             kgSemanticThresholdValue: this._container.querySelector('#settings-kg-semantic-threshold-value'),
@@ -1446,6 +1471,9 @@ export class SettingsModal {
         });
         this._elements.kgFcoseNumIter.addEventListener('input', () => {
             this._elements.kgFcoseNumIterValue.textContent = String(parseInt(this._elements.kgFcoseNumIter.value, 10));
+        });
+        this._elements.kgNodeSizeScale.addEventListener('input', () => {
+            this._elements.kgNodeSizeScaleValue.textContent = parseFloat(this._elements.kgNodeSizeScale.value).toFixed(2);
         });
         // Per-book domain — committed on blur or Enter. Not included in
         // the getSettings() return because it lives on the book record,
@@ -2228,6 +2256,11 @@ export class SettingsModal {
                 const v = parseInt(this._elements.kgFcoseNumIter.value, 10);
                 return Number.isFinite(v) && v > 0 ? v : 2500;
             })(),
+            kgFcoseFit: !!this._elements.kgFcoseFit.checked,
+            kgNodeSizeScale: (() => {
+                const v = parseFloat(this._elements.kgNodeSizeScale.value);
+                return Number.isFinite(v) && v >= 0 ? v : 1.0;
+            })(),
             kgEmbeddingSource: this._elements.kgEmbeddingSource.value,
             kgCloudEmbeddingModel: this._elements.kgCloudEmbeddingModel.value,
             kgLocalEmbeddingModel: this._elements.kgLocalEmbeddingModel.value,
@@ -2562,6 +2595,11 @@ export class SettingsModal {
         const kgFcoseNumIter = this._settings.kgFcoseNumIter ?? 2500;
         this._elements.kgFcoseNumIter.value = kgFcoseNumIter;
         this._elements.kgFcoseNumIterValue.textContent = String(kgFcoseNumIter);
+        this._elements.kgFcoseFit.checked = this._settings.kgFcoseFit !== false;
+        const kgNodeSizeScale = Number.isFinite(this._settings.kgNodeSizeScale)
+            ? this._settings.kgNodeSizeScale : 1.0;
+        this._elements.kgNodeSizeScale.value = kgNodeSizeScale;
+        this._elements.kgNodeSizeScaleValue.textContent = parseFloat(kgNodeSizeScale).toFixed(2);
         const kgSearchMode = this._settings.kgSearchMode === 'semantic' ? 'semantic' : 'text';
         this._elements.kgSearchMode.value = kgSearchMode;
         const kgSemanticThreshold = Number.isFinite(this._settings.kgSemanticSearchThreshold)

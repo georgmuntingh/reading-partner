@@ -122,7 +122,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, getNodeSizeScale, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -142,6 +142,12 @@ export class GraphExplorer {
         this._getFcoseOptions = typeof getFcoseOptions === 'function'
             ? getFcoseOptions
             : () => ({});
+        // How aggressively node size grows with degree. Read live by the
+        // node-size style function so changes take effect on the next
+        // cy.style().update() (called from setNodeSizeScale()).
+        this._getNodeSizeScale = typeof getNodeSizeScale === 'function'
+            ? getNodeSizeScale
+            : () => 1.0;
         this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
         // Returns `{ mode: 'text'|'semantic', threshold: number }`. Read on
         // every keystroke so a setting change takes effect immediately
@@ -574,8 +580,8 @@ export class GraphExplorer {
                         'text-outline-color': '#222',
                         'background-color': (ele) => BLOOM_COLOR[ele.data('bloom')] || '#888',
                         'shape': (ele) => NODE_TYPE_SHAPE[ele.data('type')] || 'ellipse',
-                        'width': 'mapData(degree, 0, 20, 30, 70)',
-                        'height': 'mapData(degree, 0, 20, 30, 70)'
+                        'width': (ele) => this._nodeSizeFor(ele.degree()),
+                        'height': (ele) => this._nodeSizeFor(ele.degree())
                     }
                 },
                 {
@@ -1983,6 +1989,13 @@ export class GraphExplorer {
         // truly starts from scratch.
         const bookId = this._getBook()?.id;
         if (bookId) this._positionCache.delete(bookId);
+        // Force the size style function to re-evaluate against the current
+        // "Node size by degree" setting, so the same Re-layout button users
+        // already press also picks up that slider's value.
+        if (typeof this._cy.style === 'function') {
+            const style = this._cy.style();
+            if (style && typeof style.update === 'function') style.update();
+        }
         const layout = this._cy.layout(this._fcoseOptions({
             randomize: true
         }));
@@ -2025,7 +2038,26 @@ export class GraphExplorer {
         if (Number.isFinite(user.numIter) && user.numIter > 0) {
             out.numIter = user.numIter;
         }
+        if (typeof user.fit === 'boolean') {
+            out.fit = user.fit;
+        }
         return { ...out, ...extra };
+    }
+
+    /**
+     * Map a node's connection count to a pixel size, scaled by the user's
+     * "Node size by degree" setting. 0 → uniform; 1 → the classic 30–70
+     * range; higher exaggerates hubs. Clamped to a minimum so a high
+     * scale doesn't make low-degree nodes invisible.
+     */
+    _nodeSizeFor(degree) {
+        const scale = Number.isFinite(this._getNodeSizeScale())
+            ? this._getNodeSizeScale() : 1.0;
+        const t = Math.min(Math.max(degree, 0), 20) / 20;
+        const base = 50;
+        const halfRange = 20;
+        const size = base + (t - 0.5) * 2 * halfRange * scale;
+        return Math.max(8, size);
     }
 
     _savePositionsToCache() {
