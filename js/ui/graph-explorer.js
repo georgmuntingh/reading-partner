@@ -599,9 +599,27 @@ export class GraphExplorer {
                         'target-arrow-shape': 'triangle',
                         'line-color': '#888',
                         'target-arrow-color': '#888',
-                        'color': '#444',
+                        // Edge relation text: black for strong contrast
+                        // against the grey edge line, with a translucent
+                        // white pill so it stays readable wherever the
+                        // label sits over the canvas.
+                        'color': '#000',
+                        'text-background-color': '#fff',
+                        'text-background-opacity': 0.85,
+                        'text-background-padding': 2,
+                        'text-background-shape': 'roundrectangle',
                         'text-rotation': 'autorotate',
-                        'text-margin-y': -8
+                        'text-margin-y': -8,
+                        // Render edges above node bodies so the relation
+                        // labels are visible when an edge passes a node.
+                        // Cytoscape can't z-index the edge label
+                        // independently of the line — both rise together —
+                        // and there's no way to render the label between
+                        // the node body and the node text. Node labels
+                        // (and their text outlines) still stand out fine
+                        // thanks to the outline + larger font size.
+                        'z-index-compare': 'manual',
+                        'z-index': 1
                     }
                 },
                 {
@@ -1035,6 +1053,14 @@ export class GraphExplorer {
             //    was absorbed under a different id pair) — remove the old
             //    representation if any and re-add fresh.
             for (const edge of savedEdges) {
+                // Belt-and-braces: kg-merge already drops self-loops, but a
+                // stray one (legacy data, future code path) should never end
+                // up rendered as a node looping to itself.
+                if (edge.sourceId === edge.targetId) {
+                    const stray = this._cy.getElementById(edge.id);
+                    if (stray && !stray.empty()) this._cy.remove(stray);
+                    continue;
+                }
                 const chSet = new Set();
                 for (const c of edge.contexts || []) {
                     if (Number.isInteger(c.chapterIndex)) chSet.add(c.chapterIndex);

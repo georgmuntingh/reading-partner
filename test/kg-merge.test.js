@@ -123,6 +123,23 @@ describe('redirectAndDedupeEdges', () => {
         expect(saves).toEqual([]);
     });
 
+    it('drops pre-existing self-loops (source === target) even when not touched by the rewrite', () => {
+        const edges = [
+            edge({ id: 'e1', sourceId: 'P', targetId: 'P', relation: 'self' }),
+            edge({ id: 'e2', sourceId: 'X', targetId: 'X', relation: 'orphan' }),
+            edge({ id: 'e3', sourceId: 'S', targetId: 'B', relation: 'real' })
+        ];
+        const { saves, deletes } = redirectAndDedupeEdges(
+            edges, 'P', new Set(['S']));
+        // e1 + e2 are pre-existing self-loops → deleted on sight.
+        // e3 is a legitimate redirect (S→B becomes P→B) → saved.
+        expect(deletes.sort()).toEqual(['e1', 'e2']);
+        expect(saves).toHaveLength(1);
+        expect(saves[0].id).toBe('e3');
+        expect(saves[0].sourceId).toBe('P');
+        expect(saves[0].targetId).toBe('B');
+    });
+
     it('dedupes by (source, target, relation): keeps lowest-id, merges contexts, deletes the rest', () => {
         const edges = [
             edge({

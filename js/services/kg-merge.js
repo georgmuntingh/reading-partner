@@ -141,6 +141,15 @@ export function redirectAndDedupeEdges(edges, primaryId, secondaryIdSet) {
 
     for (const original of edges) {
         if (!original || typeof original !== 'object') continue;
+        // Pre-existing self-loops (source === target on the same node) are
+        // meaningless data — for the merge case the user expects every
+        // self-loop on the survivor cleaned up, not just the freshly-
+        // collapsed ones. Drop any self-loop we encounter, regardless of
+        // whether the merge created it.
+        if (original.sourceId === original.targetId) {
+            deletes.push(original.id);
+            continue;
+        }
         const involvesSecondary = secondaries.has(original.sourceId)
             || secondaries.has(original.targetId);
         if (!involvesSecondary) {
@@ -150,8 +159,10 @@ export function redirectAndDedupeEdges(edges, primaryId, secondaryIdSet) {
         const next = { ...original };
         if (secondaries.has(next.sourceId)) next.sourceId = primaryId;
         if (secondaries.has(next.targetId)) next.targetId = primaryId;
-        // Self-loop on Primary is meaningless; drop.
-        if (next.sourceId === primaryId && next.targetId === primaryId) {
+        // Self-loop on Primary is meaningless; drop. (Redundant with the
+        // top-of-loop guard for edges that were already a self-loop, but
+        // still needed for edges that only become one after the rewrite.)
+        if (next.sourceId === next.targetId) {
             deletes.push(original.id);
             continue;
         }
