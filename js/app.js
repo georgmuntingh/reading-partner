@@ -382,6 +382,28 @@ class ReadingPartnerApp {
             lookupDefinition,
             getWheelSensitivity: () =>
                 this._settingsModal?.getSettings()?.kgWheelSensitivity ?? 1.0,
+            // fcose tuning. Read on every layout pass so changes in
+            // Settings take effect on the next Re-layout without re-opening
+            // the explorer.
+            getFcoseOptions: () => {
+                const s = this._settingsModal?.getSettings() || {};
+                return {
+                    nodeRepulsion: s.kgFcoseNodeRepulsion,
+                    idealEdgeLength: s.kgFcoseIdealEdgeLength,
+                    nodeSeparation: s.kgFcoseNodeSeparation,
+                    gravity: s.kgFcoseGravity,
+                    numIter: s.kgFcoseNumIter,
+                    fit: s.kgFcoseFit !== false
+                };
+            },
+            getNodeSizeScale: () => {
+                const v = this._settingsModal?.getSettings()?.kgNodeSizeScale;
+                return Number.isFinite(v) ? v : 1.0;
+            },
+            getNeighborhoodHops: () => {
+                const v = this._settingsModal?.getSettings()?.kgNeighborhoodHops;
+                return Number.isFinite(v) && v >= 0 ? v : 1;
+            },
             // Read on every keystroke so toggling the mode (or threshold)
             // in Settings takes effect without re-opening the explorer.
             getSearchSettings: () => {
@@ -3108,6 +3130,42 @@ class ReadingPartnerApp {
             if (settings.kgLocalEmbeddingModel !== undefined) {
                 await storage.saveSetting('kgLocalEmbeddingModel', settings.kgLocalEmbeddingModel);
             }
+            if (settings.kgRelevanceThreshold !== undefined) {
+                await storage.saveSetting('kgRelevanceThreshold', settings.kgRelevanceThreshold);
+            }
+            if (settings.kgWheelSensitivity !== undefined) {
+                await storage.saveSetting('kgWheelSensitivity', settings.kgWheelSensitivity);
+            }
+            if (settings.kgSearchMode !== undefined) {
+                await storage.saveSetting('kgSearchMode', settings.kgSearchMode);
+            }
+            if (settings.kgSemanticSearchThreshold !== undefined) {
+                await storage.saveSetting('kgSemanticSearchThreshold', settings.kgSemanticSearchThreshold);
+            }
+            if (settings.kgFcoseNodeRepulsion !== undefined) {
+                await storage.saveSetting('kgFcoseNodeRepulsion', settings.kgFcoseNodeRepulsion);
+            }
+            if (settings.kgFcoseIdealEdgeLength !== undefined) {
+                await storage.saveSetting('kgFcoseIdealEdgeLength', settings.kgFcoseIdealEdgeLength);
+            }
+            if (settings.kgFcoseNodeSeparation !== undefined) {
+                await storage.saveSetting('kgFcoseNodeSeparation', settings.kgFcoseNodeSeparation);
+            }
+            if (settings.kgFcoseGravity !== undefined) {
+                await storage.saveSetting('kgFcoseGravity', settings.kgFcoseGravity);
+            }
+            if (settings.kgFcoseNumIter !== undefined) {
+                await storage.saveSetting('kgFcoseNumIter', settings.kgFcoseNumIter);
+            }
+            if (settings.kgFcoseFit !== undefined) {
+                await storage.saveSetting('kgFcoseFit', settings.kgFcoseFit);
+            }
+            if (settings.kgNodeSizeScale !== undefined) {
+                await storage.saveSetting('kgNodeSizeScale', settings.kgNodeSizeScale);
+            }
+            if (settings.kgNeighborhoodHops !== undefined) {
+                await storage.saveSetting('kgNeighborhoodHops', settings.kgNeighborhoodHops);
+            }
 
             // Re-evaluate defer-TTS and JIT loading whenever backend or the setting changes
             this._applyDeferTtsSetting();
@@ -3742,13 +3800,54 @@ class ReadingPartnerApp {
 
             for (let i = fromIndex; i <= toIndex; i++) {
                 const chapter = this._currentBook?.chapters?.[i];
-                if (!chapter) continue;
-                if (!force && chapter.kgProcessed === true) continue;
+                if (!chapter) {
+                    console.warn(`[kg] chapter ${i + 1}: no chapter object on the book; skipping`);
+                    continue;
+                }
+                if (!force && chapter.kgProcessed === true) {
+                    console.log(`[kg] chapter ${i + 1}: already processed; skipping (uncheck "Re-extract" to override)`);
+                    continue;
+                }
+
+                // Sentences are populated lazily — every chapter the user
+                // hasn't navigated to has chapter.sentences === undefined.
+                // We route through the same path the reader uses, then
+                // belt-and-braces assign the return value back onto the
+                // chapter in case a parser ever stops mutating in-place.
+                let sentencesLoaded = null;
+                try {
+                    sentencesLoaded = await this._readingState.loadChapter(i);
+                } catch (loadErr) {
+                    console.warn(`[kg] chapter ${i + 1}: loadChapter threw —`, loadErr);
+                }
+                if (
+                    Array.isArray(sentencesLoaded)
+                    && sentencesLoaded.length > 0
+                    && (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0)
+                ) {
+                    chapter.sentences = sentencesLoaded;
+                }
+                if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
+                    const msg = `[kg] chapter ${i + 1}: no extractable sentences; skipping`;
+                    console.warn(msg);
+                    appLogger.warn?.(msg);
+                    this._showToast(`Chapter ${i + 1}: no extractable text, skipped`);
+                    continue;
+                }
+                console.log(`[kg] chapter ${i + 1}: starting extraction (${chapter.sentences.length} sentences)`);
 
                 this._kgRangeContext = rangeCount > 1
                     ? { current: i - fromIndex + 1, total: rangeCount, chapterNumber: i + 1 }
                     : null;
-                await this._kgController.buildChapterGraph(i, { force, chunkSize, chunkOverlap });
+                // Wrap each chapter so a single failure doesn't abort the
+                // whole range. The outer try/catch is reserved for setup
+                // errors (open(), beginLiveBuild()).
+                try {
+                    await this._kgController.buildChapterGraph(i, { force, chunkSize, chunkOverlap });
+                } catch (chErr) {
+                    console.error(`[kg] chapter ${i + 1}: build failed —`, chErr);
+                    this._showToast(`Chapter ${i + 1}: ${chErr.message}`);
+                }
             }
         } catch (error) {
             console.error('KG build failed:', error);
@@ -4324,6 +4423,18 @@ class ReadingPartnerApp {
             const kgEmbeddingSource = await storage.getSetting('kgEmbeddingSource');
             const kgCloudEmbeddingModel = await storage.getSetting('kgCloudEmbeddingModel');
             const kgLocalEmbeddingModel = await storage.getSetting('kgLocalEmbeddingModel');
+            const kgRelevanceThreshold = await storage.getSetting('kgRelevanceThreshold');
+            const kgWheelSensitivity = await storage.getSetting('kgWheelSensitivity');
+            const kgSearchMode = await storage.getSetting('kgSearchMode');
+            const kgSemanticSearchThreshold = await storage.getSetting('kgSemanticSearchThreshold');
+            const kgFcoseNodeRepulsion = await storage.getSetting('kgFcoseNodeRepulsion');
+            const kgFcoseIdealEdgeLength = await storage.getSetting('kgFcoseIdealEdgeLength');
+            const kgFcoseNodeSeparation = await storage.getSetting('kgFcoseNodeSeparation');
+            const kgFcoseGravity = await storage.getSetting('kgFcoseGravity');
+            const kgFcoseNumIter = await storage.getSetting('kgFcoseNumIter');
+            const kgFcoseFit = await storage.getSetting('kgFcoseFit');
+            const kgNodeSizeScale = await storage.getSetting('kgNodeSizeScale');
+            const kgNeighborhoodHops = await storage.getSetting('kgNeighborhoodHops');
 
             appLogger.info(`Settings loaded (transformers.js v${tfVersion})`);
 
@@ -4392,7 +4503,19 @@ class ReadingPartnerApp {
                 kgSimilarityThreshold: kgSimilarityThreshold !== null ? kgSimilarityThreshold : 0.88,
                 kgEmbeddingSource: kgEmbeddingSource || 'openrouter',
                 kgCloudEmbeddingModel: kgCloudEmbeddingModel || 'openai/text-embedding-3-small',
-                kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2'
+                kgLocalEmbeddingModel: kgLocalEmbeddingModel || 'Xenova/all-MiniLM-L6-v2',
+                kgRelevanceThreshold: Number.isFinite(kgRelevanceThreshold) ? kgRelevanceThreshold : 0.15,
+                kgWheelSensitivity: Number.isFinite(kgWheelSensitivity) && kgWheelSensitivity > 0 ? kgWheelSensitivity : 1.0,
+                kgSearchMode: kgSearchMode === 'semantic' ? 'semantic' : 'text',
+                kgSemanticSearchThreshold: Number.isFinite(kgSemanticSearchThreshold) ? kgSemanticSearchThreshold : 0.5,
+                kgFcoseNodeRepulsion: Number.isFinite(kgFcoseNodeRepulsion) && kgFcoseNodeRepulsion > 0 ? kgFcoseNodeRepulsion : 8000,
+                kgFcoseIdealEdgeLength: Number.isFinite(kgFcoseIdealEdgeLength) && kgFcoseIdealEdgeLength > 0 ? kgFcoseIdealEdgeLength : 80,
+                kgFcoseNodeSeparation: Number.isFinite(kgFcoseNodeSeparation) && kgFcoseNodeSeparation > 0 ? kgFcoseNodeSeparation : 100,
+                kgFcoseGravity: Number.isFinite(kgFcoseGravity) && kgFcoseGravity >= 0 ? kgFcoseGravity : 0.25,
+                kgFcoseNumIter: Number.isFinite(kgFcoseNumIter) && kgFcoseNumIter > 0 ? kgFcoseNumIter : 2500,
+                kgFcoseFit: kgFcoseFit === null ? true : kgFcoseFit !== false,
+                kgNodeSizeScale: Number.isFinite(kgNodeSizeScale) && kgNodeSizeScale >= 0 ? kgNodeSizeScale : 1.0,
+                kgNeighborhoodHops: Number.isFinite(kgNeighborhoodHops) && kgNeighborhoodHops >= 0 ? kgNeighborhoodHops : 1
             });
 
             // Probe LM Studio in the background so the settings modal's
