@@ -3800,24 +3800,54 @@ class ReadingPartnerApp {
 
             for (let i = fromIndex; i <= toIndex; i++) {
                 const chapter = this._currentBook?.chapters?.[i];
-                if (!chapter) continue;
-                if (!force && chapter.kgProcessed === true) continue;
-
-                // Sentences are populated lazily by _readingState.loadChapter.
-                // Without this call, every chapter the user hasn't visited
-                // yet has chapter.sentences === null, and the controller
-                // silently no-ops in its empty-sentences guard — which is
-                // why ranges spanning unread chapters appeared to skip.
-                await this._readingState.loadChapter(i);
-                if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
-                    appLogger.warn?.(`[kg] chapter ${i + 1} has no extractable sentences, skipping`);
+                if (!chapter) {
+                    console.warn(`[kg] chapter ${i + 1}: no chapter object on the book; skipping`);
                     continue;
                 }
+                if (!force && chapter.kgProcessed === true) {
+                    console.log(`[kg] chapter ${i + 1}: already processed; skipping (uncheck "Re-extract" to override)`);
+                    continue;
+                }
+
+                // Sentences are populated lazily — every chapter the user
+                // hasn't navigated to has chapter.sentences === undefined.
+                // We route through the same path the reader uses, then
+                // belt-and-braces assign the return value back onto the
+                // chapter in case a parser ever stops mutating in-place.
+                let sentencesLoaded = null;
+                try {
+                    sentencesLoaded = await this._readingState.loadChapter(i);
+                } catch (loadErr) {
+                    console.warn(`[kg] chapter ${i + 1}: loadChapter threw —`, loadErr);
+                }
+                if (
+                    Array.isArray(sentencesLoaded)
+                    && sentencesLoaded.length > 0
+                    && (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0)
+                ) {
+                    chapter.sentences = sentencesLoaded;
+                }
+                if (!Array.isArray(chapter.sentences) || chapter.sentences.length === 0) {
+                    const msg = `[kg] chapter ${i + 1}: no extractable sentences; skipping`;
+                    console.warn(msg);
+                    appLogger.warn?.(msg);
+                    this._showToast(`Chapter ${i + 1}: no extractable text, skipped`);
+                    continue;
+                }
+                console.log(`[kg] chapter ${i + 1}: starting extraction (${chapter.sentences.length} sentences)`);
 
                 this._kgRangeContext = rangeCount > 1
                     ? { current: i - fromIndex + 1, total: rangeCount, chapterNumber: i + 1 }
                     : null;
-                await this._kgController.buildChapterGraph(i, { force, chunkSize, chunkOverlap });
+                // Wrap each chapter so a single failure doesn't abort the
+                // whole range. The outer try/catch is reserved for setup
+                // errors (open(), beginLiveBuild()).
+                try {
+                    await this._kgController.buildChapterGraph(i, { force, chunkSize, chunkOverlap });
+                } catch (chErr) {
+                    console.error(`[kg] chapter ${i + 1}: build failed —`, chErr);
+                    this._showToast(`Chapter ${i + 1}: ${chErr.message}`);
+                }
             }
         } catch (error) {
             console.error('KG build failed:', error);
