@@ -65,6 +65,33 @@ const NODE_TYPE_SHAPE = {
     OTHER: 'ellipse'
 };
 
+// Tuned fcose options. fcose is the modern successor to cose-bilkent and
+// keeps nodes from overlapping on larger graphs (which plain cose does not).
+// Repulsion + ideal edge length + separation are turned up from the defaults
+// so dense graphs spread out instead of collapsing into a clump.
+const FCOSE_BASE = Object.freeze({
+    name: 'fcose',
+    quality: 'default',
+    animate: false,
+    fit: true,
+    padding: 30,
+    nodeRepulsion: 8000,
+    idealEdgeLength: 80,
+    nodeSeparation: 100,
+    gravity: 0.25,
+    gravityRange: 3.8,
+    numIter: 2500,
+    tile: true,
+    tilingPaddingVertical: 20,
+    tilingPaddingHorizontal: 20
+});
+
+// Cluster drag: a grabbed node pulls its N-hop neighbours along with
+// exponential falloff (1.0x, 0.5x, 0.25x, ...). Three hops is enough to
+// drag a tightly-knit subgraph as a unit without nudging the entire
+// connected component.
+const CLUSTER_DRAG_DEPTH = 3;
+
 export class GraphExplorer {
     /**
      * @param {Object} options
@@ -422,8 +449,15 @@ export class GraphExplorer {
         this._wheelSensitivity = Number.isFinite(ws) && ws > 0 ? ws : 1.0;
 
         if (!this._cytoscape) {
-            const mod = await import('cytoscape');
-            this._cytoscape = mod.default ?? mod;
+            const [cyMod, fcoseMod] = await Promise.all([
+                import('cytoscape'),
+                import('cytoscape-fcose')
+            ]);
+            this._cytoscape = cyMod.default ?? cyMod;
+            const fcose = fcoseMod.default ?? fcoseMod;
+            if (typeof this._cytoscape.use === 'function') {
+                this._cytoscape.use(fcose);
+            }
         }
         const cytoscape = this._cytoscape;
 
@@ -510,7 +544,7 @@ export class GraphExplorer {
         }
         const layout = allPositioned
             ? { name: 'preset' }
-            : { name: 'cose', animate: false, padding: 30 };
+            : { ...FCOSE_BASE, randomize: true };
 
         this._cy = cytoscape({
             container: this._container.querySelector('#cy-canvas'),
@@ -747,6 +781,58 @@ export class GraphExplorer {
                 this._cy.elements().unselect();
                 if (this._selectionMode) this._exitSelectionMode();
             }
+        });
+
+        // Cluster drag: grabbing a node pulls its N-hop neighbourhood along
+        // with an exponential falloff so a tug on one node moves the whole
+        // local cluster, while distant nodes stay put. Implemented on top
+        // of the static fcose layout — no continuous physics simulation.
+        let dragState = null;
+        this._cy.on('grab', 'node', (evt) => {
+            const grabbed = evt.target;
+            if (typeof grabbed.position !== 'function'
+                || typeof grabbed.neighborhood !== 'function') {
+                dragState = null;
+                return;
+            }
+            const start = grabbed.position();
+            if (!start) { dragState = null; return; }
+            const startPos = { x: start.x, y: start.y };
+            const followers = [];
+            const visited = new Set([grabbed.id()]);
+            let frontier = grabbed;
+            for (let depth = 1; depth <= CLUSTER_DRAG_DEPTH; depth++) {
+                const ring = frontier.neighborhood?.('node');
+                if (!ring || typeof ring.filter !== 'function') break;
+                const fresh = ring.filter((n) => !visited.has(n.id()));
+                if (!fresh || fresh.length === 0) break;
+                const factor = Math.pow(0.5, depth - 1);
+                fresh.forEach((n) => {
+                    if (typeof n.locked === 'function' && n.locked()) return;
+                    const p = n.position?.();
+                    if (!p) return;
+                    followers.push({ node: n, startX: p.x, startY: p.y, factor });
+                    visited.add(n.id());
+                });
+                frontier = fresh;
+            }
+            dragState = { grabbedId: grabbed.id(), grabbed, startPos, followers };
+        });
+        this._cy.on('drag', 'node', (evt) => {
+            if (!dragState || evt.target.id() !== dragState.grabbedId) return;
+            const cur = dragState.grabbed.position();
+            if (!cur) return;
+            const dx = cur.x - dragState.startPos.x;
+            const dy = cur.y - dragState.startPos.y;
+            for (const f of dragState.followers) {
+                f.node.position({
+                    x: f.startX + dx * f.factor,
+                    y: f.startY + dy * f.factor
+                });
+            }
+        });
+        this._cy.on('free', 'node', () => {
+            dragState = null;
         });
 
         // Apply the initial detail filter so the default UI state (min
@@ -1505,8 +1591,15 @@ export class GraphExplorer {
     async _bootstrapEmptyCytoscape() {
         if (this._cy) return;
         if (!this._cytoscape) {
-            const mod = await import('cytoscape');
-            this._cytoscape = mod.default ?? mod;
+            const [cyMod, fcoseMod] = await Promise.all([
+                import('cytoscape'),
+                import('cytoscape-fcose')
+            ]);
+            this._cytoscape = cyMod.default ?? cyMod;
+            const fcose = fcoseMod.default ?? fcoseMod;
+            if (typeof this._cytoscape.use === 'function') {
+                this._cytoscape.use(fcose);
+            }
         }
         const book = this._getBook();
         if (book) this._configureChapterSlider(book);
@@ -1634,11 +1727,9 @@ export class GraphExplorer {
         try {
             if (typeof others.lock === 'function') others.lock();
             const layout = newSubgraph.layout({
-                name: 'cose',
-                animate: false,
+                ...FCOSE_BASE,
                 fit: false,
-                randomize: false,
-                padding: 30
+                randomize: false
             });
             // cytoscape's layout API is synchronous in our test mocks but
             // real cose runs asynchronously. Don't await — we want the
@@ -1849,9 +1940,7 @@ export class GraphExplorer {
         const bookId = this._getBook()?.id;
         if (bookId) this._positionCache.delete(bookId);
         const layout = this._cy.layout({
-            name: 'cose',
-            animate: false,
-            padding: 30,
+            ...FCOSE_BASE,
             randomize: true
         });
         if (layout && typeof layout.run === 'function') {
