@@ -3836,6 +3836,7 @@
     flex: 1;
     display: flex;
     min-height: 0;
+    position: relative;
 }
 
 .graph-body.hidden {
@@ -3846,6 +3847,22 @@
     flex: 1;
     min-width: 0;
     background: var(--bg-color);
+}
+
+.graph-explorer.is-fullscreen .graph-explorer-header,
+.graph-explorer.is-fullscreen .kg-side-panel {
+    display: none;
+}
+
+.graph-fullscreen-exit-btn {
+    position: absolute;
+    top: var(--spacing-sm);
+    right: var(--spacing-sm);
+    z-index: 10;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--text-secondary, inherit);
 }
 
 .kg-side-panel {

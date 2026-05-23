@@ -237,6 +237,20 @@ export class GraphExplorer {
                 <button type="button" class="btn btn-secondary graph-clear-highlights-btn hidden" aria-label="Clear highlights">
                     Clear highlights
                 </button>
+                <button class="btn-icon graph-fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="graph-fullscreen-expand-icon">
+                        <polyline points="15 3 21 3 21 9"/>
+                        <polyline points="9 21 3 21 3 15"/>
+                        <line x1="21" y1="3" x2="14" y2="10"/>
+                        <line x1="3" y1="21" x2="10" y2="14"/>
+                    </svg>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="graph-fullscreen-collapse-icon hidden">
+                        <polyline points="4 14 10 14 10 20"/>
+                        <polyline points="20 10 14 10 14 4"/>
+                        <line x1="14" y1="10" x2="21" y2="3"/>
+                        <line x1="3" y1="21" x2="10" y2="14"/>
+                    </svg>
+                </button>
                 <button class="btn-icon graph-close-btn" aria-label="Close">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -246,6 +260,14 @@ export class GraphExplorer {
             </div>
             <div class="graph-body">
                 <div id="cy-canvas" class="cy-canvas"></div>
+                <button class="btn-icon graph-fullscreen-exit-btn hidden" aria-label="Exit fullscreen" title="Exit fullscreen">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="4 14 10 14 10 20"/>
+                        <polyline points="20 10 14 10 14 4"/>
+                        <line x1="14" y1="10" x2="21" y2="3"/>
+                        <line x1="3" y1="21" x2="10" y2="14"/>
+                    </svg>
+                </button>
                 <aside id="kg-side-panel" class="kg-side-panel hidden"></aside>
             </div>
             <div id="kg-action-bar" class="kg-action-bar hidden">
@@ -266,6 +288,7 @@ export class GraphExplorer {
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
         this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
+        this._setupFullscreen();
         this._container.querySelector('.graph-reload-btn').addEventListener('click', () => {
             // Stale-chunk recovery: the user is on an older index.html than
             // what's currently deployed. A reload picks up the fresh entry
@@ -2216,10 +2239,63 @@ export class GraphExplorer {
         };
     }
 
+    _setupFullscreen() {
+        const btn = this._container.querySelector('.graph-fullscreen-btn');
+        const exitBtn = this._container.querySelector('.graph-fullscreen-exit-btn');
+        const expandIcon = this._container.querySelector('.graph-fullscreen-expand-icon');
+        const collapseIcon = this._container.querySelector('.graph-fullscreen-collapse-icon');
+        if (!btn) return;
+
+        const fsEnabled = document.fullscreenEnabled || document.webkitFullscreenEnabled;
+        if (!fsEnabled) {
+            btn.style.display = 'none';
+            return;
+        }
+
+        const toggle = async () => {
+            const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+            try {
+                if (fsEl === this._container) {
+                    if (document.exitFullscreen) await document.exitFullscreen();
+                    else if (document.webkitExitFullscreen) await document.webkitExitFullscreen();
+                } else {
+                    if (this._container.requestFullscreen) await this._container.requestFullscreen();
+                    else if (this._container.webkitRequestFullscreen) await this._container.webkitRequestFullscreen();
+                }
+            } catch (error) {
+                console.warn('Graph fullscreen toggle failed:', error);
+            }
+        };
+        btn.addEventListener('click', toggle);
+        if (exitBtn) exitBtn.addEventListener('click', toggle);
+
+        this._onFullscreenChange = () => {
+            const active = (document.fullscreenElement || document.webkitFullscreenElement) === this._container;
+            this._container.classList.toggle('is-fullscreen', active);
+            if (expandIcon) expandIcon.classList.toggle('hidden', active);
+            if (collapseIcon) collapseIcon.classList.toggle('hidden', !active);
+            if (exitBtn) exitBtn.classList.toggle('hidden', !active);
+            // Cytoscape doesn't auto-resize when its container's CSS box changes.
+            if (this._cy) {
+                this._cy.resize();
+                this._cy.fit(undefined, 40);
+            }
+        };
+        document.addEventListener('fullscreenchange', this._onFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', this._onFullscreenChange);
+    }
+
     /**
      * Close the overlay and free the cytoscape instance.
      */
     close() {
+        // If the user closes the graph while in fullscreen, exit fullscreen
+        // first so the rest of the app isn't stuck in an empty fullscreen view.
+        const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+        if (fsEl === this._container) {
+            if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
         // Capture positions before tearing down cytoscape so re-opening
         // preserves the layout.
         this._savePositionsToCache();
