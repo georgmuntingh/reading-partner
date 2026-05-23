@@ -65,6 +65,33 @@ const NODE_TYPE_SHAPE = {
     OTHER: 'ellipse'
 };
 
+// Tuned fcose options. fcose is the modern successor to cose-bilkent and
+// keeps nodes from overlapping on larger graphs (which plain cose does not).
+// Repulsion + ideal edge length + separation are turned up from the defaults
+// so dense graphs spread out instead of collapsing into a clump.
+const FCOSE_BASE = Object.freeze({
+    name: 'fcose',
+    quality: 'default',
+    animate: false,
+    fit: true,
+    padding: 30,
+    nodeRepulsion: 8000,
+    idealEdgeLength: 80,
+    nodeSeparation: 100,
+    gravity: 0.25,
+    gravityRange: 3.8,
+    numIter: 2500,
+    tile: true,
+    tilingPaddingVertical: 20,
+    tilingPaddingHorizontal: 20
+});
+
+// Cluster drag: a grabbed node pulls its N-hop neighbours along with
+// exponential falloff (1.0x, 0.5x, 0.25x, ...). Three hops is enough to
+// drag a tightly-knit subgraph as a unit without nudging the entire
+// connected component.
+const CLUSTER_DRAG_DEPTH = 3;
+
 export class GraphExplorer {
     /**
      * @param {Object} options
@@ -95,7 +122,7 @@ export class GraphExplorer {
      *   correct sentence in the reader.
      * @param {(chapterIndex: number, sentenceIndex: number) => void} [options.onJumpToSentence]
      */
-    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
+    constructor({ container, getBook, getCurrentChapterIndex, loadChapter, onLookup, lookupDefinition, getWheelSensitivity, getFcoseOptions, getNodeSizeScale, getNeighborhoodHops, onInternalLink, onJumpToSentence, getSearchSettings, getFlashcards, onOpenCardOverview, onReviewConcept }) {
         this._container = container;
         this._getBook = getBook;
         this._getCurrentChapterIndex = typeof getCurrentChapterIndex === 'function'
@@ -108,6 +135,25 @@ export class GraphExplorer {
             ? getWheelSensitivity
             : () => 1.0;
         this._wheelSensitivity = 1.0;
+        // Returns user-tuned fcose layout overrides ({ nodeRepulsion,
+        // idealEdgeLength, nodeSeparation, gravity, numIter }). Read on
+        // every layout pass so changes in Settings take effect on the next
+        // Re-layout without re-opening the explorer.
+        this._getFcoseOptions = typeof getFcoseOptions === 'function'
+            ? getFcoseOptions
+            : () => ({});
+        // How aggressively node size grows with degree. Read live by the
+        // node-size style function so changes take effect on the next
+        // cy.style().update() (called from setNodeSizeScale()).
+        this._getNodeSizeScale = typeof getNodeSizeScale === 'function'
+            ? getNodeSizeScale
+            : () => 1.0;
+        // How many hops of neighbours stay in focus on a node tap. Read on
+        // every tap so a Settings change takes effect immediately, without
+        // needing to re-open the explorer.
+        this._getNeighborhoodHops = typeof getNeighborhoodHops === 'function'
+            ? getNeighborhoodHops
+            : () => 1;
         this._onInternalLink = typeof onInternalLink === 'function' ? onInternalLink : null;
         // Returns `{ mode: 'text'|'semantic', threshold: number }`. Read on
         // every keystroke so a setting change takes effect immediately
@@ -211,10 +257,21 @@ export class GraphExplorer {
             <div id="graph-empty-state" class="graph-empty-state hidden">
                 <p>No knowledge graph yet. Open a chapter and click "Build graph" in the reader controls to extract entities and relations.</p>
             </div>
+            <div id="graph-load-error-state" class="graph-empty-state hidden">
+                <p>The knowledge graph engine couldn't be loaded. This tab is running an older build of the app than what's currently deployed — the chunk it needs has been replaced by a newer one.</p>
+                <p>Reload to fetch the latest version. Your books, graph, and settings are stored locally and will survive the reload.</p>
+                <button type="button" class="btn btn-primary graph-reload-btn">Reload</button>
+            </div>
         `;
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
         this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
+        this._container.querySelector('.graph-reload-btn').addEventListener('click', () => {
+            // Stale-chunk recovery: the user is on an older index.html than
+            // what's currently deployed. A reload picks up the fresh entry
+            // chunk and matching asset hashes. IndexedDB state survives.
+            window.location.reload();
+        });
         this._container.querySelector('.graph-card-highlight-btn').addEventListener('click', () => this._advanceCardHighlightMode());
 
         const degSlider = this._container.querySelector('#kg-min-degree');
@@ -421,9 +478,10 @@ export class GraphExplorer {
         const ws = Number(this._getWheelSensitivity());
         this._wheelSensitivity = Number.isFinite(ws) && ws > 0 ? ws : 1.0;
 
-        if (!this._cytoscape) {
-            const mod = await import('cytoscape');
-            this._cytoscape = mod.default ?? mod;
+        const loaded = await this._loadCytoscape();
+        if (!loaded) {
+            this._showLoadErrorState();
+            return;
         }
         const cytoscape = this._cytoscape;
 
@@ -510,7 +568,7 @@ export class GraphExplorer {
         }
         const layout = allPositioned
             ? { name: 'preset' }
-            : { name: 'cose', animate: false, padding: 30 };
+            : this._fcoseOptions({ randomize: true });
 
         this._cy = cytoscape({
             container: this._container.querySelector('#cy-canvas'),
@@ -528,8 +586,8 @@ export class GraphExplorer {
                         'text-outline-color': '#222',
                         'background-color': (ele) => BLOOM_COLOR[ele.data('bloom')] || '#888',
                         'shape': (ele) => NODE_TYPE_SHAPE[ele.data('type')] || 'ellipse',
-                        'width': 'mapData(degree, 0, 20, 30, 70)',
-                        'height': 'mapData(degree, 0, 20, 30, 70)'
+                        'width': (ele) => this._nodeSizeFor(ele.degree()),
+                        'height': (ele) => this._nodeSizeFor(ele.degree())
                     }
                 },
                 {
@@ -541,9 +599,27 @@ export class GraphExplorer {
                         'target-arrow-shape': 'triangle',
                         'line-color': '#888',
                         'target-arrow-color': '#888',
-                        'color': '#444',
+                        // Edge relation text: black for strong contrast
+                        // against the grey edge line, with a translucent
+                        // white pill so it stays readable wherever the
+                        // label sits over the canvas.
+                        'color': '#000',
+                        'text-background-color': '#fff',
+                        'text-background-opacity': 0.85,
+                        'text-background-padding': 2,
+                        'text-background-shape': 'roundrectangle',
                         'text-rotation': 'autorotate',
-                        'text-margin-y': -8
+                        'text-margin-y': -8,
+                        // Render edges above node bodies so the relation
+                        // labels are visible when an edge passes a node.
+                        // Cytoscape can't z-index the edge label
+                        // independently of the line — both rise together —
+                        // and there's no way to render the label between
+                        // the node body and the node text. Node labels
+                        // (and their text outlines) still stand out fine
+                        // thanks to the outline + larger font size.
+                        'z-index-compare': 'manual',
+                        'z-index': 1
                     }
                 },
                 {
@@ -569,6 +645,24 @@ export class GraphExplorer {
                 {
                     selector: '.kg-faded',
                     style: { 'opacity': 0.22 }
+                },
+                // Click-focus dim: applied to nodes/edges outside the N-hop
+                // neighbourhood of the most-recently-tapped node. Slightly
+                // dimmer than .kg-faded so the two states are visually
+                // distinct when a live build's fade overlaps with a focus.
+                {
+                    selector: '.kg-out-of-focus',
+                    style: { 'opacity': 0.1 }
+                },
+                // Click-focus raise: the focused subgraph renders above
+                // the dimmed rest. Cytoscape's default z-index-compare
+                // sorts within groups, so this lifts focused nodes above
+                // unfocused nodes and focused edges above unfocused edges,
+                // which together with the opacity dim gives a clean
+                // "subgraph in the foreground" look.
+                {
+                    selector: '.kg-in-focus',
+                    style: { 'z-index': 10 }
                 },
                 {
                     // Same yellow-ring treatment for nodes that landed in
@@ -701,6 +795,7 @@ export class GraphExplorer {
             lastTapAt = now;
             lastTapId = id;
             this._showNodeDetails(node);
+            this._focusNeighborhood(evt.target);
         });
         // Long press on touch enters selection mode.
         this._cy.on('tapstart', 'node', (evt) => {
@@ -743,10 +838,64 @@ export class GraphExplorer {
             if (evt.target === this._cy) {
                 this._hideSide();
                 // Plain background tap clears the selection (per design).
-                // In selection mode this also exits selection mode.
+                // In selection mode this also exits selection mode. Also
+                // drops the click-focus dim so the full graph comes back.
                 this._cy.elements().unselect();
+                this._clearFocus();
                 if (this._selectionMode) this._exitSelectionMode();
             }
+        });
+
+        // Cluster drag: grabbing a node pulls its N-hop neighbourhood along
+        // with an exponential falloff so a tug on one node moves the whole
+        // local cluster, while distant nodes stay put. Implemented on top
+        // of the static fcose layout — no continuous physics simulation.
+        let dragState = null;
+        this._cy.on('grab', 'node', (evt) => {
+            const grabbed = evt.target;
+            if (typeof grabbed.position !== 'function'
+                || typeof grabbed.neighborhood !== 'function') {
+                dragState = null;
+                return;
+            }
+            const start = grabbed.position();
+            if (!start) { dragState = null; return; }
+            const startPos = { x: start.x, y: start.y };
+            const followers = [];
+            const visited = new Set([grabbed.id()]);
+            let frontier = grabbed;
+            for (let depth = 1; depth <= CLUSTER_DRAG_DEPTH; depth++) {
+                const ring = frontier.neighborhood?.('node');
+                if (!ring || typeof ring.filter !== 'function') break;
+                const fresh = ring.filter((n) => !visited.has(n.id()));
+                if (!fresh || fresh.length === 0) break;
+                const factor = Math.pow(0.5, depth - 1);
+                fresh.forEach((n) => {
+                    if (typeof n.locked === 'function' && n.locked()) return;
+                    const p = n.position?.();
+                    if (!p) return;
+                    followers.push({ node: n, startX: p.x, startY: p.y, factor });
+                    visited.add(n.id());
+                });
+                frontier = fresh;
+            }
+            dragState = { grabbedId: grabbed.id(), grabbed, startPos, followers };
+        });
+        this._cy.on('drag', 'node', (evt) => {
+            if (!dragState || evt.target.id() !== dragState.grabbedId) return;
+            const cur = dragState.grabbed.position();
+            if (!cur) return;
+            const dx = cur.x - dragState.startPos.x;
+            const dy = cur.y - dragState.startPos.y;
+            for (const f of dragState.followers) {
+                f.node.position({
+                    x: f.startX + dx * f.factor,
+                    y: f.startY + dy * f.factor
+                });
+            }
+        });
+        this._cy.on('free', 'node', () => {
+            dragState = null;
         });
 
         // Apply the initial detail filter so the default UI state (min
@@ -904,6 +1053,14 @@ export class GraphExplorer {
             //    was absorbed under a different id pair) — remove the old
             //    representation if any and re-add fresh.
             for (const edge of savedEdges) {
+                // Belt-and-braces: kg-merge already drops self-loops, but a
+                // stray one (legacy data, future code path) should never end
+                // up rendered as a node looping to itself.
+                if (edge.sourceId === edge.targetId) {
+                    const stray = this._cy.getElementById(edge.id);
+                    if (stray && !stray.empty()) this._cy.remove(stray);
+                    continue;
+                }
                 const chSet = new Set();
                 for (const c of edge.contexts || []) {
                     if (Number.isInteger(c.chapterIndex)) chSet.add(c.chapterIndex);
@@ -1161,6 +1318,48 @@ export class GraphExplorer {
      * Cytoscape's native selectors (no per-edge iteration) so this stays
      * snappy on dense graphs.
      */
+    /**
+     * Click-focus: dim everything outside the N-hop neighbourhood of the
+     * tapped node and raise the in-focus subgraph (nodes + connecting
+     * edges) to the foreground. N is configurable via the "Click focus
+     * depth" setting. A background tap clears it (see _clearFocus).
+     */
+    _focusNeighborhood(node) {
+        if (!this._cy || !node) return;
+        const hops = Math.max(0, this._getNeighborhoodHops() | 0);
+
+        // BFS outward from the clicked node, collecting nodes by hop
+        // depth. We then ask cytoscape for the induced edge set so that
+        // every edge between any two focused nodes is included in focus —
+        // not only the spanning edges that BFS traverses.
+        const visited = new Set([node.id()]);
+        let focusedNodes = node;
+        let frontier = node;
+        for (let depth = 0; depth < hops; depth++) {
+            const next = frontier.neighborhood('node');
+            const fresh = (typeof next?.filter === 'function')
+                ? next.filter((n) => !visited.has(n.id()))
+                : null;
+            if (!fresh || fresh.length === 0) break;
+            fresh.forEach((n) => visited.add(n.id()));
+            focusedNodes = focusedNodes.union(fresh);
+            frontier = fresh;
+        }
+        const focusedEdges = focusedNodes.edgesWith(focusedNodes);
+        const focused = focusedNodes.union(focusedEdges);
+
+        const all = this._cy.elements();
+        all.removeClass('kg-in-focus').addClass('kg-out-of-focus');
+        focused.removeClass('kg-out-of-focus').addClass('kg-in-focus');
+    }
+
+    _clearFocus() {
+        if (!this._cy) return;
+        const all = this._cy.elements();
+        if (!all || typeof all.removeClass !== 'function') return;
+        all.removeClass('kg-out-of-focus').removeClass('kg-in-focus');
+    }
+
     _applyDetailFilter() {
         if (!this._cy || typeof this._cy.batch !== 'function') return;
         const degEl = this._container.querySelector('#kg-min-degree');
@@ -1239,8 +1438,47 @@ export class GraphExplorer {
         this._container.querySelector('.graph-body').classList.add('hidden');
     }
 
+    /**
+     * Shown when the dynamic import of cytoscape (or its fcose extension)
+     * 404s — typically because GitHub Pages redeployed this PR preview and
+     * the tab is holding a cached entry chunk that references the previous
+     * asset hashes. The UI offers a Reload button; nothing reloads
+     * automatically so the rest of the app stays put until the user opts in.
+     */
+    _showLoadErrorState() {
+        this._container.querySelector('#graph-empty-state').classList.add('hidden');
+        this._container.querySelector('#graph-load-error-state').classList.remove('hidden');
+        this._container.querySelector('.graph-body').classList.add('hidden');
+    }
+
+    /**
+     * Lazy-load cytoscape + the fcose layout extension and register the
+     * extension once. Returns true on success, false if either dynamic
+     * import fails — callers surface a Reload UI on false instead of
+     * letting the unhandled rejection crash the open() flow.
+     */
+    async _loadCytoscape() {
+        if (this._cytoscape) return true;
+        try {
+            const [cyMod, fcoseMod] = await Promise.all([
+                import('cytoscape'),
+                import('cytoscape-fcose')
+            ]);
+            this._cytoscape = cyMod.default ?? cyMod;
+            const fcose = fcoseMod.default ?? fcoseMod;
+            if (typeof this._cytoscape.use === 'function') {
+                this._cytoscape.use(fcose);
+            }
+            return true;
+        } catch (err) {
+            console.warn('Knowledge graph engine failed to load (likely a stale cached build):', err);
+            return false;
+        }
+    }
+
     _hideEmptyState() {
         this._container.querySelector('#graph-empty-state').classList.add('hidden');
+        this._container.querySelector('#graph-load-error-state').classList.add('hidden');
         this._container.querySelector('.graph-body').classList.remove('hidden');
     }
 
@@ -1504,9 +1742,10 @@ export class GraphExplorer {
      */
     async _bootstrapEmptyCytoscape() {
         if (this._cy) return;
-        if (!this._cytoscape) {
-            const mod = await import('cytoscape');
-            this._cytoscape = mod.default ?? mod;
+        const loaded = await this._loadCytoscape();
+        if (!loaded) {
+            this._showLoadErrorState();
+            return;
         }
         const book = this._getBook();
         if (book) this._configureChapterSlider(book);
@@ -1633,13 +1872,10 @@ export class GraphExplorer {
         const others = this._cy.nodes().difference(newNodes);
         try {
             if (typeof others.lock === 'function') others.lock();
-            const layout = newSubgraph.layout({
-                name: 'cose',
-                animate: false,
+            const layout = newSubgraph.layout(this._fcoseOptions({
                 fit: false,
-                randomize: false,
-                padding: 30
-            });
+                randomize: false
+            }));
             // cytoscape's layout API is synchronous in our test mocks but
             // real cose runs asynchronously. Don't await — we want the
             // controller to move on to the next batch immediately.
@@ -1848,12 +2084,16 @@ export class GraphExplorer {
         // truly starts from scratch.
         const bookId = this._getBook()?.id;
         if (bookId) this._positionCache.delete(bookId);
-        const layout = this._cy.layout({
-            name: 'cose',
-            animate: false,
-            padding: 30,
+        // Force the size style function to re-evaluate against the current
+        // "Node size by degree" setting, so the same Re-layout button users
+        // already press also picks up that slider's value.
+        if (typeof this._cy.style === 'function') {
+            const style = this._cy.style();
+            if (style && typeof style.update === 'function') style.update();
+        }
+        const layout = this._cy.layout(this._fcoseOptions({
             randomize: true
-        });
+        }));
         if (layout && typeof layout.run === 'function') {
             layout.run();
             // After the layout settles, refresh the cache so the next
@@ -1869,6 +2109,52 @@ export class GraphExplorer {
      * the next open() can use `preset` and skip the cose pass. Called
      * from close() and after a relayout() finishes.
      */
+    /**
+     * Merge the user's fcose tuning from settings on top of FCOSE_BASE.
+     * Each setting is validated independently — a bad value falls back to
+     * the base, so a partially-empty settings payload still produces a
+     * usable layout config.
+     */
+    _fcoseOptions(extra = {}) {
+        const user = this._getFcoseOptions() || {};
+        const out = { ...FCOSE_BASE };
+        if (Number.isFinite(user.nodeRepulsion) && user.nodeRepulsion > 0) {
+            out.nodeRepulsion = user.nodeRepulsion;
+        }
+        if (Number.isFinite(user.idealEdgeLength) && user.idealEdgeLength > 0) {
+            out.idealEdgeLength = user.idealEdgeLength;
+        }
+        if (Number.isFinite(user.nodeSeparation) && user.nodeSeparation > 0) {
+            out.nodeSeparation = user.nodeSeparation;
+        }
+        if (Number.isFinite(user.gravity) && user.gravity >= 0) {
+            out.gravity = user.gravity;
+        }
+        if (Number.isFinite(user.numIter) && user.numIter > 0) {
+            out.numIter = user.numIter;
+        }
+        if (typeof user.fit === 'boolean') {
+            out.fit = user.fit;
+        }
+        return { ...out, ...extra };
+    }
+
+    /**
+     * Map a node's connection count to a pixel size, scaled by the user's
+     * "Node size by degree" setting. 0 → uniform; 1 → the classic 30–70
+     * range; higher exaggerates hubs. Clamped to a minimum so a high
+     * scale doesn't make low-degree nodes invisible.
+     */
+    _nodeSizeFor(degree) {
+        const scale = Number.isFinite(this._getNodeSizeScale())
+            ? this._getNodeSizeScale() : 1.0;
+        const t = Math.min(Math.max(degree, 0), 20) / 20;
+        const base = 50;
+        const halfRange = 20;
+        const size = base + (t - 0.5) * 2 * halfRange * scale;
+        return Math.max(8, size);
+    }
+
     _savePositionsToCache() {
         if (!this._cy) return;
         const bookId = this._getBook()?.id;

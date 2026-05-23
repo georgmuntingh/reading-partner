@@ -19,6 +19,64 @@
 import { llmClient } from './llm-client.js';
 
 /**
+ * Best-effort JSON salvage for LLM responses that were truncated mid-string
+ * by the maxTokens limit (the model never got to close the braces). Walks
+ * the text tracking bracket depth + string state, records the last position
+ * where every open bracket could be cleanly closed, then closes them and
+ * tries to parse.
+ *
+ * Returns the parsed object on success, or null if no valid prefix exists.
+ * Downstream sanitizeExtraction tolerates partial entities/relations, so
+ * recovering even a handful of items from a truncated response is a strict
+ * improvement over dropping the whole chunk.
+ *
+ * Exported for tests; not part of the public extractor API.
+ */
+export function salvageTruncatedJSON(text) {
+    if (typeof text !== 'string') return null;
+    const start = text.indexOf('{');
+    if (start === -1) return null;
+    const s = text.slice(start);
+
+    const stack = [];
+    let inStr = false;
+    let esc = false;
+    let lastSafePos = -1;
+    let lastSafeStack = null;
+
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (esc) { esc = false; continue; }
+        if (inStr) {
+            if (c === '\\') esc = true;
+            else if (c === '"') inStr = false;
+            continue;
+        }
+        if (c === '"') { inStr = true; continue; }
+        if (c === '{' || c === '[') { stack.push(c); continue; }
+        if (c === '}' || c === ']') {
+            stack.pop();
+            // We just closed an element; the prefix up to here is a
+            // complete value at this nesting level. Closing the remaining
+            // open brackets in LIFO order gives us valid JSON.
+            lastSafePos = i + 1;
+            lastSafeStack = stack.slice();
+        }
+    }
+
+    if (lastSafePos < 0 || !lastSafeStack) return null;
+    let prefix = s.slice(0, lastSafePos);
+    for (let i = lastSafeStack.length - 1; i >= 0; i--) {
+        prefix += lastSafeStack[i] === '{' ? '}' : ']';
+    }
+    try {
+        return JSON.parse(prefix);
+    } catch {
+        return null;
+    }
+}
+
+/**
  * Split a list of sentences into overlapping chunks.
  *
  * @param {string[]} sentences - The chapter's sentences in reading order
@@ -199,7 +257,10 @@ export function sanitizeExtraction(parsed) {
  * @returns {Promise<{ entities: Object[], relations: Object[] } | null>}
  */
 export async function extractFromChunk(chunkText, opts = {}) {
-    const { maxTokens = 800, temperature = 0.1, kgDomain = '' } = opts;
+    // 800 tokens left the model short of breath on chunks with many
+    // entities + definitions and produced truncated JSON. 1500 gives a
+    // comfortable cushion without blowing the OpenRouter cost out.
+    const { maxTokens = 1500, temperature = 0.1, kgDomain = '' } = opts;
     const system = kgDomain
         ? buildExtractionSystemPrompt({ kgDomain })
         : KG_EXTRACTION_SYSTEM_PROMPT;
@@ -223,6 +284,18 @@ export async function extractFromChunk(chunkText, opts = {}) {
         if (!parsed || typeof parsed !== 'object') throw new Error('Non-object JSON');
         return sanitizeExtraction(parsed);
     } catch (err) {
+        // Most "bad JSON" cases here are truncations at the maxTokens
+        // boundary — the response is structurally fine for the first N
+        // entities and only fails on the unfinished tail. Try a recovery
+        // before giving up on the chunk entirely.
+        const salvaged = salvageTruncatedJSON(typeof raw === 'string' ? raw : '');
+        if (salvaged && typeof salvaged === 'object') {
+            console.warn(
+                '[kg-extractor] Salvaged truncated JSON:',
+                err?.message ?? String(err)
+            );
+            return sanitizeExtraction(salvaged);
+        }
         console.warn(
             '[kg-extractor] Bad JSON, skipping chunk:',
             err?.message ?? String(err),
@@ -254,7 +327,9 @@ export async function extractFromChunk(chunkText, opts = {}) {
 export async function extractFromChunkBatch(chunkTexts, opts = {}) {
     const {
         temperature = 0.1,
-        maxTokensPerChunk = 800,
+        // Matches extractFromChunk's bumped default; 800 truncated JSON on
+        // chunks with many entities + definitions.
+        maxTokensPerChunk = 1500,
         maxTokensCap = 8000,
         kgDomain = ''
     } = opts;
@@ -293,7 +368,19 @@ export async function extractFromChunkBatch(chunkTexts, opts = {}) {
     }
 
     try {
-        const parsed = llmClient.getProvider().parseJSON(raw);
+        let parsed;
+        try {
+            parsed = llmClient.getProvider().parseJSON(raw);
+        } catch (parseErr) {
+            // Same truncation-recovery as the single-chunk path. A salvaged
+            // batch may have fewer passages than we asked for; the .map()
+            // below already tolerates missing/undefined slots by returning
+            // null for that chunk.
+            const salvaged = salvageTruncatedJSON(typeof raw === 'string' ? raw : '');
+            if (!salvaged) throw parseErr;
+            console.warn('[kg-extractor] Salvaged truncated batch JSON');
+            parsed = salvaged;
+        }
         if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.passages)) {
             throw new Error('Missing "passages" array');
         }

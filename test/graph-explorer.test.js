@@ -9,6 +9,13 @@ const cytoscapeFactory = vi.fn(() => ({
 
 vi.mock('cytoscape', () => ({ default: cytoscapeFactory }));
 
+// The graph explorer registers the fcose layout extension lazily alongside
+// cytoscape. The cytoscape mock above is a plain vi.fn() with no `.use()`,
+// so the explorer's registration guard already skips the call — but we
+// still need to stub the package import itself or vitest will try to
+// resolve the real module and fail in some environments.
+vi.mock('cytoscape-fcose', () => ({ default: () => {} }));
+
 // Mock the floating menu + touch picker so tests can assert on the items
 // list directly and resolve the user's pick programmatically.
 const contextMenuSpy = vi.fn(async () => null);
@@ -794,7 +801,7 @@ describe('GraphExplorer', () => {
         expect(ge._anchoredLiveNodes.has('src')).toBe(true);
     });
 
-    it('handleBatchComplete runs a cose pass on the newly-added subgraph with existing nodes locked', () => {
+    it('handleBatchComplete runs an fcose pass on the newly-added subgraph with existing nodes locked', () => {
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({ container, getBook: () => ({ id: 'b1' }) });
         const lockSpy = vi.fn();
@@ -826,7 +833,7 @@ describe('GraphExplorer', () => {
         expect(unlockSpy).toHaveBeenCalled();
         expect(layoutSpy).toHaveBeenCalledTimes(1);
         const opts = layoutSpy.mock.calls[0][0];
-        expect(opts.name).toBe('cose');
+        expect(opts.name).toBe('fcose');
         expect(opts.randomize).toBe(false);
         expect(opts.fit).toBe(false);
     });
@@ -838,10 +845,10 @@ describe('GraphExplorer', () => {
             container,
             getBook: () => ({ id: 'b1' })
         });
-        // First open() — cytoscape gets cose because cache is empty.
+        // First open() — cytoscape gets fcose because cache is empty.
         await ge.open();
         const firstLayout = cytoscapeFactory.mock.calls[0][0].layout;
-        expect(firstLayout.name).toBe('cose');
+        expect(firstLayout.name).toBe('fcose');
 
         // Stub cy.nodes() so close() can populate the cache.
         ge._cy.nodes = () => ({
@@ -863,7 +870,7 @@ describe('GraphExplorer', () => {
         expect(n1.position).toEqual({ x: 100, y: 200 });
     });
 
-    it('relayout() clears the per-book cache and runs cose with randomize:true', () => {
+    it('relayout() clears the per-book cache and runs fcose with randomize:true', () => {
         const container = document.getElementById('graph-explorer');
         const ge = new GraphExplorer({
             container,
@@ -879,7 +886,7 @@ describe('GraphExplorer', () => {
         ge.relayout();
         expect(ge._cy.layout).toHaveBeenCalledTimes(1);
         const opts = ge._cy.layout.mock.calls[0][0];
-        expect(opts.name).toBe('cose');
+        expect(opts.name).toBe('fcose');
         expect(opts.randomize).toBe(true);
         expect(runSpy).toHaveBeenCalled();
         expect(ge._positionCache.has('b1')).toBe(false);
