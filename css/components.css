@@ -3849,8 +3849,7 @@
     background: var(--bg-color);
 }
 
-.graph-explorer.is-fullscreen .graph-explorer-header,
-.graph-explorer.is-fullscreen .kg-side-panel {
+.graph-explorer.is-fullscreen .graph-explorer-header {
     display: none;
 }
 
