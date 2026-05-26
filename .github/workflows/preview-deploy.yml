@@ -8,6 +8,8 @@ on:
       - synchronize
       - closed
 
+  workflow_dispatch: # Enable the manual trigger button
+
 # concurrency: preview-${{ github.ref }}
 concurrency:
   group: 'gh-pages-shared'
