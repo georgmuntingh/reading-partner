@@ -1137,6 +1137,13 @@ export class SettingsModal {
                         <div class="settings-subsection-header">Maintenance</div>
 
                         <div class="form-group">
+                            <button type="button" class="btn btn-secondary" id="settings-kg-export-btn">Export Knowledge Graph</button>
+                            <button type="button" class="btn btn-secondary" id="settings-kg-import-btn">Import Knowledge Graph</button>
+                            <input type="file" id="settings-kg-import-input" accept="application/json,.json" hidden>
+                            <p class="form-hint">Export saves the current book's graph as a JSON file (embeddings omitted). Import replaces the current book's graph with a previously exported file.</p>
+                        </div>
+
+                        <div class="form-group">
                             <button type="button" class="btn btn-danger" id="settings-kg-clear-btn">Clear Knowledge Graph</button>
                             <p class="form-hint">Permanently deletes every node and edge for the currently-open book and re-enables extraction on each chapter. Cannot be undone.</p>
                         </div>
@@ -1325,6 +1332,9 @@ export class SettingsModal {
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
             kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
             kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model'),
+            kgExportBtn: this._container.querySelector('#settings-kg-export-btn'),
+            kgImportBtn: this._container.querySelector('#settings-kg-import-btn'),
+            kgImportInput: this._container.querySelector('#settings-kg-import-input'),
             kgClearBtn: this._container.querySelector('#settings-kg-clear-btn'),
             // Spaced Review (Grounded SRS)
             srsEnabled: this._container.querySelector('#settings-srs-enabled'),
@@ -1586,6 +1596,21 @@ export class SettingsModal {
         // confirming, deleting, and refreshing the reader UI.
         this._elements.kgClearBtn?.addEventListener('click', () => {
             this._callbacks.onClearKG?.();
+        });
+
+        // Export / Import Knowledge Graph — modal stays UI-only; the host
+        // reads/writes storage and shows toasts.
+        this._elements.kgExportBtn?.addEventListener('click', () => {
+            this._callbacks.onExportKG?.();
+        });
+        this._elements.kgImportBtn?.addEventListener('click', () => {
+            this._elements.kgImportInput?.click();
+        });
+        this._elements.kgImportInput?.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (file) this._callbacks.onImportKG?.(file);
+            // Reset so selecting the same file again still fires `change`.
+            e.target.value = '';
         });
 
         // ---------- Spaced Review (Grounded SRS) ----------

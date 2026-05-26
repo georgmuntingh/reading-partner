@@ -254,6 +254,8 @@ class ReadingPartnerApp {
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
                 onLmstudioDiscover: (endpoint) => this._discoverLmstudioModels(endpoint),
                 onClearKG: () => this._onClearKGClick(),
+                onExportKG: () => this._onExportKGClick(),
+                onImportKG: (file) => this._onImportKGClick(file),
                 getBook: () => this._currentBook,
                 onDomainChange: (domain) => this._onKGDomainChange(domain)
             }
@@ -3939,6 +3941,133 @@ class ReadingPartnerApp {
         } catch (err) {
             console.error('Clear-KG failed:', err);
             this._showToast(`Failed to clear graph: ${err.message}`);
+        }
+    }
+
+    /**
+     * Handler for the "Export Knowledge Graph" button in settings. Bundles the
+     * current book's nodes + edges into a JSON file and downloads it. Node
+     * embeddings are intentionally omitted to keep the file small/readable.
+     */
+    async _onExportKGClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        try {
+            const bookId = this._currentBook.id;
+            const [nodes, edges] = await Promise.all([
+                storage.getKGNodesForBook(bookId),
+                storage.getKGEdgesForBook(bookId)
+            ]);
+            // Drop the bulky `embedding` field; keep everything else.
+            const strippedNodes = nodes.map(({ embedding, ...rest }) => rest);
+            const data = {
+                format: 'reading-partner-kg',
+                version: 1,
+                exportedAt: Date.now(),
+                book: { id: bookId, title: this._currentBook.title || '' },
+                nodes: strippedNodes,
+                edges
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const slug = (this._currentBook.title || 'book')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '') || 'book';
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${slug}-knowledge-graph.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            this._showToast('Knowledge graph exported');
+        } catch (err) {
+            console.error('Export-KG failed:', err);
+            this._showToast(`Failed to export graph: ${err.message}`);
+        }
+    }
+
+    /**
+     * Handler for the "Import Knowledge Graph" button in settings. Replaces the
+     * current book's graph with the contents of a previously-exported JSON
+     * file: clears existing data, re-maps every node/edge into the current book
+     * with fresh IDs, and marks all chapters processed so extraction won't run
+     * against the imported (embedding-less) nodes.
+     * @param {File} file
+     */
+    async _onImportKGClick(file) {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+
+        let data;
+        try {
+            data = JSON.parse(await file.text());
+        } catch {
+            this._showToast('Could not read file: invalid JSON');
+            return;
+        }
+        if (data?.format !== 'reading-partner-kg' || !Array.isArray(data.nodes) || !Array.isArray(data.edges)) {
+            this._showToast('Not a valid knowledge graph file');
+            return;
+        }
+
+        const confirmed = await confirmAction({
+            title: 'Import Knowledge Graph?',
+            message: `This will replace the entire knowledge graph for "${this._currentBook.title || 'this book'}" with ${data.nodes.length} node(s) and ${data.edges.length} edge(s) from the file. The current graph cannot be recovered.`,
+            confirmLabel: 'Replace & Import',
+            cancelLabel: 'Cancel',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        try {
+            const bookId = this._currentBook.id;
+            await storage.clearKGForBook(bookId);
+
+            const now = Date.now();
+            const idMap = new Map();
+            for (const raw of data.nodes) {
+                const { embedding, ...rest } = raw;
+                const newId = `kgnode_${crypto.randomUUID()}`;
+                idMap.set(raw.id, newId);
+                await storage.saveKGNode({
+                    ...rest,
+                    id: newId,
+                    bookId,
+                    createdAt: rest.createdAt || now,
+                    updatedAt: now
+                });
+            }
+
+            for (const raw of data.edges) {
+                const sourceId = idMap.get(raw.sourceId);
+                const targetId = idMap.get(raw.targetId);
+                if (!sourceId || !targetId) continue; // dangling edge
+                await storage.saveKGEdge({
+                    ...raw,
+                    id: `kgedge_${crypto.randomUUID()}`,
+                    bookId,
+                    sourceId,
+                    targetId,
+                    createdAt: raw.createdAt || now
+                });
+            }
+
+            // Freeze extraction: imported nodes have no embeddings, so the
+            // resolver's cosine search would throw if a chapter were rebuilt.
+            for (const ch of this._currentBook.chapters || []) {
+                ch.kgProcessed = true;
+            }
+            await storage.saveBook(this._currentBook);
+
+            this._updateKGBuildButtonState();
+            this._showToast('Knowledge graph imported');
+        } catch (err) {
+            console.error('Import-KG failed:', err);
+            this._showToast(`Failed to import graph: ${err.message}`);
         }
     }
 
