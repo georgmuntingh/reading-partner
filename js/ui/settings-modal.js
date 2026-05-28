@@ -1137,6 +1137,11 @@ export class SettingsModal {
                         <div class="settings-subsection-header">Maintenance</div>
 
                         <div class="form-group">
+                            <button type="button" class="btn btn-secondary" id="settings-kg-recompute-embeddings-btn">Recompute Embeddings</button>
+                            <p class="form-hint">Recomputes and overwrites the vector embedding of every node in the current book's graph using the embedding model selected above. Use after changing the embedding model so all nodes share one vector space. Existing embeddings cannot be recovered.</p>
+                        </div>
+
+                        <div class="form-group">
                             <button type="button" class="btn btn-secondary" id="settings-kg-export-btn">Export Knowledge Graph</button>
                             <button type="button" class="btn btn-secondary" id="settings-kg-import-btn">Import Knowledge Graph</button>
                             <input type="file" id="settings-kg-import-input" accept="application/json,.json" hidden>
@@ -1332,6 +1337,7 @@ export class SettingsModal {
             kgCloudEmbeddingModel: this._container.querySelector('#settings-kg-cloud-embedding-model'),
             kgLocalEmbeddingOptions: this._container.querySelector('#settings-kg-local-embedding-options'),
             kgLocalEmbeddingModel: this._container.querySelector('#settings-kg-local-embedding-model'),
+            kgRecomputeEmbeddingsBtn: this._container.querySelector('#settings-kg-recompute-embeddings-btn'),
             kgExportBtn: this._container.querySelector('#settings-kg-export-btn'),
             kgImportBtn: this._container.querySelector('#settings-kg-import-btn'),
             kgImportInput: this._container.querySelector('#settings-kg-import-input'),
@@ -1596,6 +1602,12 @@ export class SettingsModal {
         // confirming, deleting, and refreshing the reader UI.
         this._elements.kgClearBtn?.addEventListener('click', () => {
             this._callbacks.onClearKG?.();
+        });
+
+        // Recompute Embeddings — modal stays UI-only; the host re-embeds
+        // every node with the currently-selected embedding model.
+        this._elements.kgRecomputeEmbeddingsBtn?.addEventListener('click', () => {
+            this._callbacks.onRecomputeEmbeddings?.();
         });
 
         // Export / Import Knowledge Graph — modal stays UI-only; the host

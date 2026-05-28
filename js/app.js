@@ -23,6 +23,8 @@ import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/p
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
+import { embeddingProvider } from './services/embedding-provider.js';
+import { cosine } from './services/kg-resolver.js';
 import { sttService } from './services/stt-service.js';
 import { WhisperSTTService } from './services/whisper-stt-service.js';
 import { modelDownloadModal } from './ui/model-download-modal.js';
@@ -254,6 +256,7 @@ class ReadingPartnerApp {
                 onMediapipeLlmDownload: (config) => this._downloadMediapipeLlmModel(config),
                 onLmstudioDiscover: (endpoint) => this._discoverLmstudioModels(endpoint),
                 onClearKG: () => this._onClearKGClick(),
+                onRecomputeEmbeddings: () => this._onRecomputeEmbeddingsClick(),
                 onExportKG: () => this._onExportKGClick(),
                 onImportKG: (file) => this._onImportKGClick(file),
                 getBook: () => this._currentBook,
@@ -3941,6 +3944,123 @@ class ReadingPartnerApp {
         } catch (err) {
             console.error('Clear-KG failed:', err);
             this._showToast(`Failed to clear graph: ${err.message}`);
+        }
+    }
+
+    /**
+     * Handler for the "Recompute Embeddings" button in settings. Re-embeds
+     * every node's canonical name with the currently-selected embedding model
+     * and overwrites the stored vector, so the whole graph lives in one
+     * embedding space after a model change. When the book has a domain, the
+     * anchor is re-embedded too and each node's relevanceScore is recomputed
+     * against it; without a domain, relevanceScore is cleared (mirrors a
+     * build with no anchor). mergeCount resets to 1 since each node now holds
+     * a single fresh observation of its canonical name.
+     */
+    async _onRecomputeEmbeddingsClick() {
+        if (!this._currentBook) {
+            this._showToast('Open a book first');
+            return;
+        }
+        const bookId = this._currentBook.id;
+
+        let nodes;
+        try {
+            nodes = await storage.getKGNodesForBook(bookId);
+        } catch (err) {
+            this._showToast(`Failed to load graph: ${err.message}`);
+            return;
+        }
+        if (!nodes || nodes.length === 0) {
+            this._showToast('No knowledge graph nodes to recompute');
+            return;
+        }
+
+        const settings = this._settingsModal?.getSettings() ?? {};
+        const source = settings.kgEmbeddingSource || 'openrouter';
+        const modelLabel = source === 'openrouter'
+            ? (settings.kgCloudEmbeddingModel || 'cloud model')
+            : source === 'lmstudio'
+                ? (settings.lmstudioEmbeddingModel || 'LM Studio model')
+                : (settings.kgLocalEmbeddingModel || 'local model');
+
+        const confirmed = await confirmAction({
+            title: 'Recompute Embeddings?',
+            message: `This will recompute and overwrite the vector embedding of all ${nodes.length} node(s) for "${this._currentBook.title || 'this book'}" using the selected embedding model (${modelLabel}). Existing embeddings cannot be recovered.`,
+            confirmLabel: 'Recompute',
+            cancelLabel: 'Cancel'
+        });
+        if (!confirmed) return;
+
+        // Configure the embedding backend exactly as the KG controller does so
+        // a model/source change in settings takes effect here too.
+        embeddingProvider.setSource(source);
+        if (source === 'openrouter') {
+            if (settings.kgCloudEmbeddingModel) embeddingProvider.setCloudModel(settings.kgCloudEmbeddingModel);
+            if (settings.apiKey) embeddingProvider.setApiKey(settings.apiKey);
+        } else if (source === 'lmstudio') {
+            if (settings.lmstudioEndpoint) embeddingProvider.setLmstudioEndpoint(settings.lmstudioEndpoint);
+            if (settings.lmstudioEmbeddingModel) embeddingProvider.setLmstudioModel(settings.lmstudioEmbeddingModel);
+        } else {
+            if (settings.kgLocalEmbeddingModel) embeddingProvider.setLocalModel(settings.kgLocalEmbeddingModel);
+        }
+
+        const showStatus = (msg) => {
+            const el = this._elements.kgStatus;
+            const text = this._elements.kgStatusText;
+            if (el && text) {
+                text.textContent = msg;
+                el.classList.remove('hidden');
+            }
+        };
+
+        try {
+            embeddingProvider.onProgress = (p) => {
+                const pct = typeof p?.progress === 'number' ? ` (${Math.round(p.progress)}%)` : '';
+                showStatus(`Downloading embedding model${p?.file ? ` ${p.file}` : ''}${pct}…`);
+            };
+            showStatus('Loading embedding model…');
+            await embeddingProvider.load();
+
+            // Re-embed the domain anchor in the new vector space so the
+            // recomputed relevance scores are comparable to the embeddings.
+            let anchor = null;
+            const kgDomain = String(this._currentBook.kgDomain || '').trim();
+            if (kgDomain) {
+                try {
+                    const [vec] = await embeddingProvider.embed([`The core academic topic of this text is ${kgDomain}.`]);
+                    if (vec instanceof Float32Array) anchor = vec;
+                } catch (err) {
+                    console.warn('Recompute-embeddings: anchor embedding failed:', err?.message);
+                }
+            }
+
+            showStatus(`Recomputing embeddings for ${nodes.length} node(s)…`);
+            const names = nodes.map((n) => String(n.canonicalName || ''));
+            const embeddings = await embeddingProvider.embed(names);
+
+            const now = Date.now();
+            let updated = 0;
+            for (let i = 0; i < nodes.length; i++) {
+                const emb = embeddings[i];
+                if (!(emb instanceof Float32Array)) continue;
+                const node = nodes[i];
+                node.embedding = emb;
+                node.mergeCount = 1;
+                node.relevanceScore = anchor ? cosine(anchor, emb) : null;
+                node.updatedAt = now;
+                await storage.saveKGNode(node);
+                updated += 1;
+            }
+
+            this._hideKGStatus();
+            this._showToast(`Recomputed embeddings for ${updated} node(s)`);
+        } catch (err) {
+            this._hideKGStatus();
+            console.error('Recompute-embeddings failed:', err);
+            this._showToast(`Failed to recompute embeddings: ${err.message}`);
+        } finally {
+            embeddingProvider.onProgress = null;
         }
     }
 
