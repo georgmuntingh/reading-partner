@@ -2418,6 +2418,10 @@ class ReadingPartnerApp {
                     }).catch((err) => {
                         this._showToast?.(`Spaced Review: ${err?.message || err}`);
                     });
+                },
+                onLookup: (text, context) => {
+                    const idx = this._readerView?.getCurrentIndex?.() ?? 0;
+                    this._performLookup(text, idx, context);
                 }
             }
         );

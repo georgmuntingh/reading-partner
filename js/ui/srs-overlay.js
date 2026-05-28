@@ -19,6 +19,8 @@
  * falls to the empty state.
  */
 
+import { LookupSelection } from './lookup-selection.js';
+
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 export class SRSOverlay {
@@ -39,6 +41,9 @@ export class SRSOverlay {
      *        Fires when the Rebuild button is pressed. The caller should
      *        force the deck (and the on-screen card) to match the supplied
      *        1-based, inclusive chapter range.
+     * @param {(text: string, context: string) => void} [callbacks.onLookup]
+     *        Fires when the user selects text in the question, an option,
+     *        or the explanation and taps the floating magnifying glass.
      */
     constructor(options, callbacks = {}) {
         this._container = options.container;
@@ -53,6 +58,7 @@ export class SRSOverlay {
 
         this._buildUI();
         this._setupEventListeners();
+        this._setupLookupSelection();
     }
 
     // ---------- DOM build ----------
@@ -102,16 +108,16 @@ export class SRSOverlay {
 
                     <!-- Card body -->
                     <div class="srs-card-section hidden" id="srs-card-section">
-                        <div class="srs-question" id="srs-question"></div>
+                        <div class="srs-question" id="srs-question" data-lookup-context></div>
                         <div class="srs-options" id="srs-options">
-                            <button class="srs-option" data-index="0"><span class="srs-option-label">A)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="1"><span class="srs-option-label">B)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="2"><span class="srs-option-label">C)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="3"><span class="srs-option-label">D)</span> <span class="srs-option-text"></span></button>
+                            <button class="srs-option" data-index="0"><span class="srs-option-label">A)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="1"><span class="srs-option-label">B)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="2"><span class="srs-option-label">C)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="3"><span class="srs-option-label">D)</span> <span class="srs-option-text" data-lookup-context></span></button>
                         </div>
 
                         <!-- Explanation (after answer) -->
-                        <div class="srs-explanation hidden" id="srs-explanation"></div>
+                        <div class="srs-explanation hidden" id="srs-explanation" data-lookup-context></div>
 
                         <div class="srs-card-actions hidden" id="srs-card-actions">
                             <button class="btn btn-secondary srs-jump-btn hidden" id="srs-jump-btn">
@@ -277,6 +283,15 @@ export class SRSOverlay {
             from: Number(this._elements.chapterFromSlider.value),
             to: Number(this._elements.chapterToSlider.value)
         };
+    }
+
+    _setupLookupSelection() {
+        this._lookupSelection = new LookupSelection({
+            container: this._elements.dialog,
+            onLookup: (text, context) => {
+                this._callbacks.onLookup?.(text, context);
+            }
+        });
     }
 
     // ---------- show / hide ----------

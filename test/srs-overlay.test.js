@@ -398,6 +398,30 @@ describe('SRSOverlay chapter filter', () => {
         expect(onRebuildDeck).toHaveBeenCalledWith({ from: 1, to: 6 });
     });
 
+    it('marks the question, options, and explanation as lookup contexts', () => {
+        const { container } = mount();
+        expect(container.querySelector('#srs-question').hasAttribute('data-lookup-context')).toBe(true);
+        const optionTexts = container.querySelectorAll('.srs-option-text');
+        expect(optionTexts.length).toBeGreaterThan(0);
+        for (const el of optionTexts) {
+            expect(el.hasAttribute('data-lookup-context')).toBe(true);
+        }
+        expect(container.querySelector('#srs-explanation').hasAttribute('data-lookup-context')).toBe(true);
+    });
+
+    it('instantiates a LookupSelection helper for the dialog', () => {
+        const { overlay } = mount();
+        expect(overlay._lookupSelection).toBeDefined();
+        expect(overlay._lookupSelection._container).toBe(overlay._elements.dialog);
+    });
+
+    it('forwards onLookup invocations to the host callback', () => {
+        const onLookup = vi.fn();
+        const { overlay } = mount({ onLookup });
+        overlay._lookupSelection._onLookup?.('arthur', 'King Arthur drew the sword.');
+        expect(onLookup).toHaveBeenCalledWith('arthur', 'King Arthur drew the sword.');
+    });
+
     it('coalesces multiple rapid changes into a single emission', async () => {
         const onChapterRangeChange = vi.fn();
         const { overlay, container } = mount({ onChapterRangeChange });
