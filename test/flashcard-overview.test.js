@@ -512,6 +512,27 @@ describe('FlashcardOverview — chapter histogram', () => {
         expect(after).toEqual(before);
     });
 
+    it('preserves the histogram horizontal scroll position across re-renders', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [
+                makeCard({ id: 'a', primaryChapterIndex: 0 }),
+                makeCard({ id: 'b', primaryChapterIndex: 5 })
+            ],
+            nodesById: new Map(),
+            totalChapters: 20
+        });
+        const barsBefore = container.querySelector('.fc-bars');
+        // JSDom doesn't lay out, so scrollLeft is normally 0 — assign directly
+        // to simulate a user having scrolled to a later chapter.
+        Object.defineProperty(barsBefore, 'scrollLeft', { value: 240, writable: true, configurable: true });
+        // Trigger a re-render via a filter click.
+        container.querySelectorAll('.fc-bar-col')[5].click();
+        const barsAfter = container.querySelector('.fc-bars');
+        expect(barsAfter).not.toBe(barsBefore);                  // sanity: DOM was rebuilt
+        expect(barsAfter.scrollLeft).toBe(240);
+    });
+
     it('refresh() updates the histogram', () => {
         const { overview, container } = mount();
         overview.show({

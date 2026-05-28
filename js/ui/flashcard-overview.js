@@ -261,6 +261,11 @@ export class FlashcardOverview {
             this._histogram = [];
             return;
         }
+        // Preserve horizontal scroll so clicks on later chapters don't snap
+        // the histogram back to chapter 1 on every re-render.
+        const prevBars = panel.querySelector('.fc-bars');
+        const prevScrollLeft = prevBars ? prevBars.scrollLeft : 0;
+
         this._histogram = this._computeHistogram();
         const maxTotal = this._histogram.reduce((m, r) => Math.max(m, r.total), 0);
         const denom = maxTotal > 0 ? maxTotal : 1;
@@ -290,6 +295,11 @@ export class FlashcardOverview {
 
         panel.innerHTML = `<div class="fc-bars">${bars}</div>`;
         panel.classList.remove('hidden');
+
+        if (prevScrollLeft > 0) {
+            const nextBars = panel.querySelector('.fc-bars');
+            if (nextBars) nextBars.scrollLeft = prevScrollLeft;
+        }
     }
 
     // ---------- chapter filter chip ----------
