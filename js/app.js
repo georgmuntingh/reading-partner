@@ -2398,7 +2398,13 @@ class ReadingPartnerApp {
                 onContinue: () => { this._srsIsRevealing = false; },
                 onJump: () => this._srsController?.jumpToBook(),
                 onGenerateMore: () => this._onSRSGenerateMore(),
-                onCardOverview: () => this._openFlashcardOverview()
+                onCardOverview: () => this._openFlashcardOverview(),
+                onChapterRangeChange: ({ from, to }) => {
+                    this._srsController?.setChapterRange(
+                        { from: from - 1, to: to - 1 },
+                        { isRevealing: this._srsIsRevealing }
+                    );
+                }
             }
         );
 
@@ -2431,10 +2437,19 @@ class ReadingPartnerApp {
                     });
                 },
                 onDeckEmpty: () => {
-                    if (!this._srsIsRevealing) this._srsOverlay?.setEmpty();
+                    if (this._srsIsRevealing) return;
                     // else: overlay is showing the explanation; the Continue
                     // button click will flip to empty state via the overlay's
                     // own fallback.
+                    const range = this._srsController?.getChapterRange();
+                    if (range && Number.isFinite(range.from) && Number.isFinite(range.to)) {
+                        const span = range.from === range.to
+                            ? `chapter ${range.from + 1}`
+                            : `chapters ${range.from + 1}–${range.to + 1}`;
+                        this._srsOverlay?.setEmpty(`No cards match ${span}. Widen the range or generate more.`);
+                    } else {
+                        this._srsOverlay?.setEmpty();
+                    }
                 },
                 onJump: ({ chapterIndex, sentenceIndex }) => {
                     // Close every SRS-related surface so the reader is
@@ -2474,9 +2489,22 @@ class ReadingPartnerApp {
         this._srsIsRevealing = false;
         this._srsLastSelectedIndex = -1;
         this._pause();
+
+        // Configure the chapter-range slider: default to [current, current].
+        const totalChapters = this._currentBook.chapters?.length ?? 0;
+        const currentChapter1 = (this._readingState?.getCurrentPosition?.()?.chapterIndex ?? 0) + 1;
+        this._srsOverlay.configureChapterFilter({
+            totalChapters,
+            from: currentChapter1,
+            to: currentChapter1
+        });
+        const chapterRange = totalChapters >= 2
+            ? { from: currentChapter1 - 1, to: currentChapter1 - 1 }
+            : null;
+
         this._srsOverlay.setLoading();
         this._srsOverlay.show();
-        await this._srsController.openDeck(this._currentBook.id);
+        await this._srsController.openDeck(this._currentBook.id, { chapterRange });
     }
 
     /**
@@ -2506,7 +2534,8 @@ class ReadingPartnerApp {
     async _onSRSGenerateMore() {
         if (!this._currentBook || !this._srsController) return;
         this._srsOverlay.setLoading('Generating cards…');
-        await this._srsController.openDeck(this._currentBook.id);
+        const chapterRange = this._srsController.getChapterRange();
+        await this._srsController.openDeck(this._currentBook.id, { chapterRange });
     }
 
     // ========== Flashcard Overview ==========

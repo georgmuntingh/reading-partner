@@ -4154,6 +4154,39 @@
     overflow-y: auto;
 }
 
+/* ---- Chapter-range filter ---- */
+.srs-chapter-filter {
+    padding: var(--spacing-sm) var(--spacing-lg);
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.srs-chapter-filter-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+}
+
+.srs-chapter-filter-range {
+    font-variant-numeric: tabular-nums;
+    color: var(--text-color);
+    font-weight: 600;
+}
+
+.srs-chapter-filter-sliders {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-sm);
+}
+
+.srs-chapter-filter-sliders input[type="range"] {
+    width: 100%;
+}
+
 /* ---- Status (loading / empty / error) ---- */
 .srs-status-section {
     text-align: center;

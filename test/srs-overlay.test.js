@@ -301,3 +301,89 @@ describe('SRSOverlay variable option count', () => {
         expect(opts[3].classList.contains('hidden')).toBe(true);
     });
 });
+
+// ---------- chapter-range filter ----------
+
+describe('SRSOverlay chapter filter', () => {
+    it('is hidden by default until configureChapterFilter is called', () => {
+        const { container } = mount();
+        const section = container.querySelector('#srs-chapter-filter');
+        expect(section.classList.contains('hidden')).toBe(true);
+    });
+
+    it('hides the filter when totalChapters < 2', () => {
+        const { overlay, container } = mount();
+        overlay.configureChapterFilter({ totalChapters: 1, from: 1, to: 1 });
+        expect(container.querySelector('#srs-chapter-filter').classList.contains('hidden')).toBe(true);
+    });
+
+    it('shows the filter and sets min/max/value when totalChapters >= 2', () => {
+        const { overlay, container } = mount();
+        overlay.configureChapterFilter({ totalChapters: 10, from: 3, to: 3 });
+        const filter = container.querySelector('#srs-chapter-filter');
+        expect(filter.classList.contains('hidden')).toBe(false);
+        const fromSlider = container.querySelector('#srs-chapter-from');
+        const toSlider = container.querySelector('#srs-chapter-to');
+        expect(fromSlider.max).toBe('10');
+        expect(toSlider.max).toBe('10');
+        expect(fromSlider.value).toBe('3');
+        expect(toSlider.value).toBe('3');
+        expect(container.querySelector('#srs-chapter-from-label').textContent).toBe('3');
+        expect(container.querySelector('#srs-chapter-to-label').textContent).toBe('3');
+    });
+
+    it('getChapterRange returns the current values when visible, null when hidden', () => {
+        const { overlay } = mount();
+        expect(overlay.getChapterRange()).toBeNull();
+        overlay.configureChapterFilter({ totalChapters: 5, from: 2, to: 4 });
+        expect(overlay.getChapterRange()).toEqual({ from: 2, to: 4 });
+    });
+
+    it('keeps From <= To by nudging To upward when From moves past it', () => {
+        const { overlay, container } = mount();
+        overlay.configureChapterFilter({ totalChapters: 10, from: 3, to: 5 });
+        const fromSlider = container.querySelector('#srs-chapter-from');
+        const toSlider = container.querySelector('#srs-chapter-to');
+        fromSlider.value = '7';
+        fromSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(toSlider.value).toBe('7');
+    });
+
+    it('keeps From <= To by nudging From downward when To moves below it', () => {
+        const { overlay, container } = mount();
+        overlay.configureChapterFilter({ totalChapters: 10, from: 5, to: 7 });
+        const fromSlider = container.querySelector('#srs-chapter-from');
+        const toSlider = container.querySelector('#srs-chapter-to');
+        toSlider.value = '3';
+        toSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(fromSlider.value).toBe('3');
+    });
+
+    it('fires onChapterRangeChange after a debounce', async () => {
+        const onChapterRangeChange = vi.fn();
+        const { overlay, container } = mount({ onChapterRangeChange });
+        overlay.configureChapterFilter({ totalChapters: 10, from: 2, to: 5 });
+        const toSlider = container.querySelector('#srs-chapter-to');
+        toSlider.value = '8';
+        toSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        // Not yet — still debounced.
+        expect(onChapterRangeChange).not.toHaveBeenCalled();
+        await new Promise((r) => setTimeout(r, 200));
+        expect(onChapterRangeChange).toHaveBeenCalledTimes(1);
+        expect(onChapterRangeChange).toHaveBeenCalledWith({ from: 2, to: 8 });
+    });
+
+    it('coalesces multiple rapid changes into a single emission', async () => {
+        const onChapterRangeChange = vi.fn();
+        const { overlay, container } = mount({ onChapterRangeChange });
+        overlay.configureChapterFilter({ totalChapters: 10, from: 1, to: 1 });
+        const toSlider = container.querySelector('#srs-chapter-to');
+        for (const v of ['2', '3', '4', '5']) {
+            toSlider.value = v;
+            toSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        await new Promise((r) => setTimeout(r, 200));
+        expect(onChapterRangeChange).toHaveBeenCalledTimes(1);
+        expect(onChapterRangeChange).toHaveBeenCalledWith({ from: 1, to: 5 });
+    });
+});

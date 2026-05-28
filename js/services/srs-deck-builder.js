@@ -37,6 +37,11 @@ const NO_CENTRALITY = 0;
  * @property {Object} storage              - StorageService instance
  * @property {Object} settings             - SRS settings; srsMaxNew/Reviews per session
  * @property {number} [now]
+ * @property {{from:number,to:number}} [chapterRange] - 0-based inclusive chapter
+ *           range. When supplied, only cards whose targetNodeIds contains at
+ *           least one node with a `contexts[]` entry whose chapterIndex falls
+ *           in [from, to] are eligible. The prerequisite gate's L1 mastery
+ *           map is built from all cards regardless of range.
  *
  * @typedef {Object} BuildDeckResult
  * @property {Object[]} deck               - cards in playback order
@@ -47,7 +52,7 @@ const NO_CENTRALITY = 0;
  * @param {BuildDeckArgs} args
  * @returns {Promise<BuildDeckResult>}
  */
-export async function buildActiveDeck({ bookId, storage, settings, now = Date.now() }) {
+export async function buildActiveDeck({ bookId, storage, settings, now = Date.now(), chapterRange = null }) {
     const all = await storage.getFlashcardsForBook(bookId);
     if (!Array.isArray(all) || all.length === 0) {
         return { deck: [], gatedOut: [] };
@@ -88,10 +93,34 @@ export async function buildActiveDeck({ bookId, storage, settings, now = Date.no
         }
     }
 
-    // ---- eligibility: due OR new ----
+    // ---- chapter-range filter: cards whose target nodes appear in range ----
+    // A card survives if any of its targetNodeIds has at least one entry in
+    // `node.contexts[]` whose chapterIndex falls in [from, to]. When no range
+    // is supplied, this filter is a no-op (whole-book review).
+    const hasRange = chapterRange &&
+        Number.isFinite(chapterRange.from) &&
+        Number.isFinite(chapterRange.to);
+    const inRangeNodeIds = hasRange
+        ? new Set(nodes.filter((n) =>
+              (n.contexts || []).some((c) =>
+                  c.chapterIndex >= chapterRange.from &&
+                  c.chapterIndex <= chapterRange.to))
+              .map((n) => n.id))
+        : null;
+    const inRange = (card) => {
+        if (!inRangeNodeIds) return true;
+        const ids = card.targetNodeIds || [];
+        for (const id of ids) {
+            if (inRangeNodeIds.has(id)) return true;
+        }
+        return false;
+    };
+
+    // ---- eligibility: (due OR new) AND in chapter range ----
     const eligible = all.filter((c) =>
-        (Number.isFinite(c.nextReviewAt) && c.nextReviewAt <= now) ||
-        c.lastResult === 'new'
+        ((Number.isFinite(c.nextReviewAt) && c.nextReviewAt <= now) ||
+         c.lastResult === 'new') &&
+        inRange(c)
     );
 
     // ---- prerequisite gate: only L2/L3 are checked ----
