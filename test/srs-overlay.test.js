@@ -373,6 +373,31 @@ describe('SRSOverlay chapter filter', () => {
         expect(onChapterRangeChange).toHaveBeenCalledWith({ from: 2, to: 8 });
     });
 
+    it('rebuild button emits onRebuildDeck with the current 1-based range', () => {
+        const onRebuildDeck = vi.fn();
+        const { overlay, container } = mount({ onRebuildDeck });
+        overlay.configureChapterFilter({ totalChapters: 10, from: 3, to: 7 });
+        const rebuildBtn = container.querySelector('#srs-rebuild-btn');
+        rebuildBtn.click();
+        expect(onRebuildDeck).toHaveBeenCalledTimes(1);
+        expect(onRebuildDeck).toHaveBeenCalledWith({ from: 3, to: 7 });
+    });
+
+    it('rebuild flushes any pending debounced range change so it does not double-fire', async () => {
+        const onChapterRangeChange = vi.fn();
+        const onRebuildDeck = vi.fn();
+        const { overlay, container } = mount({ onChapterRangeChange, onRebuildDeck });
+        overlay.configureChapterFilter({ totalChapters: 10, from: 1, to: 1 });
+        const toSlider = container.querySelector('#srs-chapter-to');
+        toSlider.value = '6';
+        toSlider.dispatchEvent(new Event('input', { bubbles: true }));
+        // Before the debounce elapses, click Rebuild.
+        container.querySelector('#srs-rebuild-btn').click();
+        await new Promise((r) => setTimeout(r, 200));
+        expect(onChapterRangeChange).not.toHaveBeenCalled();
+        expect(onRebuildDeck).toHaveBeenCalledWith({ from: 1, to: 6 });
+    });
+
     it('coalesces multiple rapid changes into a single emission', async () => {
         const onChapterRangeChange = vi.fn();
         const { overlay, container } = mount({ onChapterRangeChange });

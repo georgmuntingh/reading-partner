@@ -2404,6 +2404,16 @@ class ReadingPartnerApp {
                         { from: from - 1, to: to - 1 },
                         { isRevealing: this._srsIsRevealing }
                     );
+                },
+                onRebuildDeck: ({ from, to }) => {
+                    // Force the on-screen card to match the new filter,
+                    // not just the upcoming ones. Drop reveal state so the
+                    // overlay routes onCardReady through showCard.
+                    this._srsIsRevealing = false;
+                    this._srsLastSelectedIndex = -1;
+                    this._srsController?.rebuildDeck({
+                        chapterRange: { from: from - 1, to: to - 1 }
+                    });
                 }
             }
         );

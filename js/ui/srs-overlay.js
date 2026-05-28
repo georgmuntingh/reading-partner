@@ -35,6 +35,10 @@ export class SRSOverlay {
      * @param {({from:number,to:number}) => void} [callbacks.onChapterRangeChange]
      *        Fires (debounced) when the chapter-range slider changes. `from`
      *        and `to` are 1-based, inclusive.
+     * @param {({from:number,to:number}) => void} [callbacks.onRebuildDeck]
+     *        Fires when the Rebuild button is pressed. The caller should
+     *        force the deck (and the on-screen card) to match the supplied
+     *        1-based, inclusive chapter range.
      */
     constructor(options, callbacks = {}) {
         this._container = options.container;
@@ -85,6 +89,7 @@ export class SRSOverlay {
                     <div class="srs-chapter-filter-sliders">
                         <input type="range" id="srs-chapter-from" min="1" max="1" step="1" value="1" aria-label="From chapter">
                         <input type="range" id="srs-chapter-to" min="1" max="1" step="1" value="1" aria-label="To chapter">
+                        <button type="button" class="btn btn-secondary srs-rebuild-btn" id="srs-rebuild-btn" title="Rebuild deck for the selected range">Rebuild</button>
                     </div>
                 </div>
 
@@ -146,7 +151,8 @@ export class SRSOverlay {
             chapterFromSlider: this._container.querySelector('#srs-chapter-from'),
             chapterToSlider: this._container.querySelector('#srs-chapter-to'),
             chapterFromLabel: this._container.querySelector('#srs-chapter-from-label'),
-            chapterToLabel: this._container.querySelector('#srs-chapter-to-label')
+            chapterToLabel: this._container.querySelector('#srs-chapter-to-label'),
+            rebuildBtn: this._container.querySelector('#srs-rebuild-btn')
         };
     }
 
@@ -200,6 +206,18 @@ export class SRSOverlay {
         };
         fromSlider.addEventListener('input', onFrom);
         toSlider.addEventListener('input', onTo);
+
+        this._elements.rebuildBtn.addEventListener('click', () => {
+            // Flush any pending debounced range emission so the host doesn't
+            // race against the rebuild request.
+            if (this._chapterFilterDebounce) {
+                clearTimeout(this._chapterFilterDebounce);
+                this._chapterFilterDebounce = null;
+            }
+            const from = Number(fromSlider.value);
+            const to = Number(toSlider.value);
+            this._callbacks.onRebuildDeck?.({ from, to });
+        });
     }
 
     _syncChapterFilterLabels() {

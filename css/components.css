@@ -4179,12 +4179,19 @@
 
 .srs-chapter-filter-sliders {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr 1fr auto;
     gap: var(--spacing-sm);
+    align-items: center;
 }
 
 .srs-chapter-filter-sliders input[type="range"] {
     width: 100%;
+}
+
+.srs-rebuild-btn {
+    padding: 4px 10px;
+    font-size: var(--font-size-sm);
+    white-space: nowrap;
 }
 
 /* ---- Status (loading / empty / error) ---- */

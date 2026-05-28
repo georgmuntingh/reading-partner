@@ -274,6 +274,38 @@ export class SRSController {
     }
 
     /**
+     * Force a full deck rebuild, optionally updating the chapter range
+     * first. Unlike `setChapterRange`, this does NOT preserve the
+     * currently-shown card: it always emits `onCardReady` with the new
+     * head (or `onDeckEmpty`). Use when the user explicitly asks for the
+     * on-screen question to match the current filter.
+     *
+     * @param {Object} [opts]
+     * @param {{from:number,to:number}|null} [opts.chapterRange]  if provided, replaces the stored range
+     */
+    async rebuildDeck(opts = {}) {
+        if (this._state === SRSState.IDLE) return;
+        if (Object.prototype.hasOwnProperty.call(opts, 'chapterRange')) {
+            this._chapterRange = opts.chapterRange ?? null;
+        }
+        try {
+            await this._rebuildDeck();
+        } catch (err) {
+            this._emitError(err);
+            return;
+        }
+        if (this._deck.length === 0) {
+            this._setState(SRSState.EMPTY);
+            try { this._onDeckEmpty?.(); }
+            catch (err) { this.logger.warn?.('[srs-controller] onDeckEmpty threw:', err); }
+        } else {
+            this._setState(SRSState.READY);
+            try { this._onCardReady?.(this._deck[0]); }
+            catch (err) { this.logger.warn?.('[srs-controller] onCardReady threw:', err); }
+        }
+    }
+
+    /**
      * Update the chapter-range filter and rebuild the upcoming deck.
      *
      * Mid-session semantics:
