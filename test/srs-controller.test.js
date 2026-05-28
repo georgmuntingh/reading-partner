@@ -566,3 +566,168 @@ describe('SRSController.removeCardFromDeck', () => {
         expect(callbacks.onDeckEmpty).not.toHaveBeenCalled();
     });
 });
+
+// ---------- chapter-range filter ----------
+
+describe('SRSController.setChapterRange', () => {
+    // Helper that seeds storage with three cards anchored to chapters 0, 2, and 5.
+    const seedThreeChapterCards = async (storage) => {
+        const makeNode = (id, chapterIndex) => ({
+            id, bookId: 'b1', canonicalName: id, aliases: [], type: 'OTHER',
+            bloom: 'Remember', embedding: new Float32Array(1),
+            contexts: [{ chapterIndex, sentenceIndices: [0] }],
+            firstSeenChapter: chapterIndex, relevanceScore: null, srs: {},
+            createdAt: 0, updatedAt: 0
+        });
+        await storage.saveKGNode(makeNode('n0', 0));
+        await storage.saveKGNode(makeNode('n2', 2));
+        await storage.saveKGNode(makeNode('n5', 5));
+        await storage.saveFlashcard(makeCard({ id: 'ch0', targetNodeIds: ['n0'], lastResult: 'new' }));
+        await storage.saveFlashcard(makeCard({ id: 'ch2', targetNodeIds: ['n2'], lastResult: 'new' }));
+        await storage.saveFlashcard(makeCard({ id: 'ch5', targetNodeIds: ['n5'], lastResult: 'new' }));
+    };
+
+    it('openDeck passes chapterRange through to the deck builder', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 2, to: 5 } });
+        expect(controller.getState()).toBe(SRSState.READY);
+        const deckIds = new Set();
+        for (let i = 0; i < controller.getDeckSize(); i++) deckIds.add(controller._deck[i].id);
+        expect(deckIds.has('ch0')).toBe(false);
+        expect(deckIds.has('ch2')).toBe(true);
+        expect(deckIds.has('ch5')).toBe(true);
+        expect(callbacks.onCardReady).toHaveBeenCalled();
+    });
+
+    it('getChapterRange reflects what openDeck stored', async () => {
+        const { controller, storage } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 0 } });
+        expect(controller.getChapterRange()).toEqual({ from: 0, to: 0 });
+    });
+
+    it('mid-question (isRevealing=false) keeps the current head and replaces the tail', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        const headBefore = controller.currentCard();
+        callbacks.onCardReady.mockClear();
+        // Narrow to a range that excludes the current head. The head should stay.
+        const otherChapter = headBefore.targetNodeIds[0] === 'n0' ? { from: 5, to: 5 } : { from: 0, to: 0 };
+        await controller.setChapterRange(otherChapter, { isRevealing: false });
+        expect(controller.currentCard().id).toBe(headBefore.id);
+        // No onCardReady fired — current card is unchanged.
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+    });
+
+    it('while revealing, emits onCardReady with the new filtered head', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        callbacks.onCardReady.mockClear();
+        await controller.setChapterRange({ from: 5, to: 5 }, { isRevealing: true });
+        expect(callbacks.onCardReady).toHaveBeenCalledTimes(1);
+        const emitted = callbacks.onCardReady.mock.calls[0][0];
+        expect(emitted.id).toBe('ch5');
+    });
+
+    it('flips from EMPTY to READY when a widening range surfaces cards', async () => {
+        const { controller, storage, callbacks } = await makeController({
+            settings: { srsTriggerLazyOnOpen: false }
+        });
+        await seedThreeChapterCards(storage);
+        // Open with a range that matches none of the seeded cards.
+        await controller.openDeck('b1', { chapterRange: { from: 9, to: 10 } });
+        expect(controller.getState()).toBe(SRSState.EMPTY);
+        callbacks.onCardReady.mockClear();
+        await controller.setChapterRange({ from: 0, to: 5 }, { isRevealing: false });
+        expect(controller.getState()).toBe(SRSState.READY);
+        expect(callbacks.onCardReady).toHaveBeenCalledTimes(1);
+    });
+
+    it('flips from READY to EMPTY when narrowing removes all cards and there is no head to preserve', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        // Drain the deck so headBefore is null.
+        controller._deck = [];
+        controller._setState(SRSState.EMPTY);
+        callbacks.onDeckEmpty.mockClear();
+        await controller.setChapterRange({ from: 9, to: 10 }, { isRevealing: false });
+        expect(controller.getState()).toBe(SRSState.EMPTY);
+        expect(callbacks.onDeckEmpty).toHaveBeenCalled();
+    });
+
+    it('is a no-op when the controller is IDLE', async () => {
+        const { controller, callbacks } = await makeController();
+        await controller.setChapterRange({ from: 0, to: 0 }, { isRevealing: false });
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+        expect(callbacks.onDeckEmpty).not.toHaveBeenCalled();
+        // But the range is still stored, so the next openDeck would use it.
+        expect(controller.getChapterRange()).toEqual({ from: 0, to: 0 });
+    });
+
+    it('rebuildDeck replaces the on-screen head even when not revealing', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        const headBefore = controller.currentCard();
+        callbacks.onCardReady.mockClear();
+        // Pick a range that excludes the current head, then force a rebuild.
+        const otherRange = headBefore.targetNodeIds[0] === 'n0'
+            ? { from: 5, to: 5 }
+            : { from: 0, to: 0 };
+        await controller.rebuildDeck({ chapterRange: otherRange });
+        expect(controller.currentCard().id).not.toBe(headBefore.id);
+        expect(callbacks.onCardReady).toHaveBeenCalledTimes(1);
+        expect(callbacks.onCardReady.mock.calls[0][0].id).toBe(controller.currentCard().id);
+    });
+
+    it('rebuildDeck without chapterRange just refreshes the deck under the current range', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 5, to: 5 } });
+        callbacks.onCardReady.mockClear();
+        await controller.rebuildDeck();
+        expect(controller.getChapterRange()).toEqual({ from: 5, to: 5 });
+        expect(controller.currentCard().id).toBe('ch5');
+        expect(callbacks.onCardReady).toHaveBeenCalledTimes(1);
+    });
+
+    it('rebuildDeck transitions through LOADING so the overlay clears the old card', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        callbacks.onStateChange.mockClear();
+        await controller.rebuildDeck({ chapterRange: { from: 5, to: 5 } });
+        const states = callbacks.onStateChange.mock.calls.map((c) => c[0]);
+        expect(states).toEqual([SRSState.LOADING, SRSState.READY]);
+    });
+
+    it('rebuildDeck emits onDeckEmpty when the new range matches nothing', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        callbacks.onDeckEmpty.mockClear();
+        await controller.rebuildDeck({ chapterRange: { from: 9, to: 10 } });
+        expect(controller.getState()).toBe(SRSState.EMPTY);
+        expect(callbacks.onDeckEmpty).toHaveBeenCalled();
+    });
+
+    it('rebuildDeck is a no-op when IDLE', async () => {
+        const { controller, callbacks } = await makeController();
+        await controller.rebuildDeck({ chapterRange: { from: 0, to: 0 } });
+        expect(callbacks.onCardReady).not.toHaveBeenCalled();
+        expect(callbacks.onDeckEmpty).not.toHaveBeenCalled();
+    });
+
+    it('closeDeck clears the stored range', async () => {
+        const { controller, storage } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 2 } });
+        expect(controller.getChapterRange()).not.toBeNull();
+        controller.closeDeck();
+        expect(controller.getChapterRange()).toBeNull();
+    });
+});

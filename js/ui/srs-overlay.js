@@ -19,6 +19,8 @@
  * falls to the empty state.
  */
 
+import { LookupSelection } from './lookup-selection.js';
+
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 export class SRSOverlay {
@@ -32,6 +34,16 @@ export class SRSOverlay {
      * @param {() => void} [callbacks.onJump]
      * @param {() => void} [callbacks.onGenerateMore]
      * @param {() => void} [callbacks.onCardOverview]   open the Flashcard Overview modal
+     * @param {({from:number,to:number}) => void} [callbacks.onChapterRangeChange]
+     *        Fires (debounced) when the chapter-range slider changes. `from`
+     *        and `to` are 1-based, inclusive.
+     * @param {({from:number,to:number}) => void} [callbacks.onRebuildDeck]
+     *        Fires when the Rebuild button is pressed. The caller should
+     *        force the deck (and the on-screen card) to match the supplied
+     *        1-based, inclusive chapter range.
+     * @param {(text: string, context: string) => void} [callbacks.onLookup]
+     *        Fires when the user selects text in the question, an option,
+     *        or the explanation and taps the floating magnifying glass.
      */
     constructor(options, callbacks = {}) {
         this._container = options.container;
@@ -42,8 +54,11 @@ export class SRSOverlay {
         this._isRevealing = false;
         this._answered = 0;
 
+        this._chapterFilterDebounce = null;
+
         this._buildUI();
         this._setupEventListeners();
+        this._setupLookupSelection();
     }
 
     // ---------- DOM build ----------
@@ -70,6 +85,20 @@ export class SRSOverlay {
                     </button>
                 </div>
 
+                <div class="srs-chapter-filter hidden" id="srs-chapter-filter">
+                    <div class="srs-chapter-filter-label">
+                        <span>Chapters</span>
+                        <span class="srs-chapter-filter-range">
+                            <span id="srs-chapter-from-label">1</span>–<span id="srs-chapter-to-label">1</span>
+                        </span>
+                    </div>
+                    <div class="srs-chapter-filter-sliders">
+                        <input type="range" id="srs-chapter-from" min="1" max="1" step="1" value="1" aria-label="From chapter">
+                        <input type="range" id="srs-chapter-to" min="1" max="1" step="1" value="1" aria-label="To chapter">
+                        <button type="button" class="btn btn-secondary srs-rebuild-btn" id="srs-rebuild-btn" title="Rebuild deck for the selected range">Rebuild</button>
+                    </div>
+                </div>
+
                 <div class="srs-content">
                     <!-- Status (loading / empty / error) -->
                     <div class="srs-status-section" id="srs-status-section">
@@ -79,16 +108,16 @@ export class SRSOverlay {
 
                     <!-- Card body -->
                     <div class="srs-card-section hidden" id="srs-card-section">
-                        <div class="srs-question" id="srs-question"></div>
+                        <div class="srs-question" id="srs-question" data-lookup-context></div>
                         <div class="srs-options" id="srs-options">
-                            <button class="srs-option" data-index="0"><span class="srs-option-label">A)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="1"><span class="srs-option-label">B)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="2"><span class="srs-option-label">C)</span> <span class="srs-option-text"></span></button>
-                            <button class="srs-option" data-index="3"><span class="srs-option-label">D)</span> <span class="srs-option-text"></span></button>
+                            <button class="srs-option" data-index="0"><span class="srs-option-label">A)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="1"><span class="srs-option-label">B)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="2"><span class="srs-option-label">C)</span> <span class="srs-option-text" data-lookup-context></span></button>
+                            <button class="srs-option" data-index="3"><span class="srs-option-label">D)</span> <span class="srs-option-text" data-lookup-context></span></button>
                         </div>
 
                         <!-- Explanation (after answer) -->
-                        <div class="srs-explanation hidden" id="srs-explanation"></div>
+                        <div class="srs-explanation hidden" id="srs-explanation" data-lookup-context></div>
 
                         <div class="srs-card-actions hidden" id="srs-card-actions">
                             <button class="btn btn-secondary srs-jump-btn hidden" id="srs-jump-btn">
@@ -123,7 +152,13 @@ export class SRSOverlay {
             cardActions: this._container.querySelector('#srs-card-actions'),
             jumpBtn: this._container.querySelector('#srs-jump-btn'),
             continueBtn: this._container.querySelector('#srs-continue-btn'),
-            progress: this._container.querySelector('#srs-progress')
+            progress: this._container.querySelector('#srs-progress'),
+            chapterFilter: this._container.querySelector('#srs-chapter-filter'),
+            chapterFromSlider: this._container.querySelector('#srs-chapter-from'),
+            chapterToSlider: this._container.querySelector('#srs-chapter-to'),
+            chapterFromLabel: this._container.querySelector('#srs-chapter-from-label'),
+            chapterToLabel: this._container.querySelector('#srs-chapter-to-label'),
+            rebuildBtn: this._container.querySelector('#srs-rebuild-btn')
         };
     }
 
@@ -157,6 +192,106 @@ export class SRSOverlay {
         this._elements.generateMoreBtn.addEventListener('click', () => {
             this._callbacks.onGenerateMore?.();
         });
+
+        const fromSlider = this._elements.chapterFromSlider;
+        const toSlider = this._elements.chapterToSlider;
+        const onFrom = () => {
+            // Keep From <= To by nudging To upward when needed.
+            if (Number(fromSlider.value) > Number(toSlider.value)) {
+                toSlider.value = fromSlider.value;
+            }
+            this._syncChapterFilterLabels();
+            this._scheduleChapterFilterEmit();
+        };
+        const onTo = () => {
+            if (Number(toSlider.value) < Number(fromSlider.value)) {
+                fromSlider.value = toSlider.value;
+            }
+            this._syncChapterFilterLabels();
+            this._scheduleChapterFilterEmit();
+        };
+        fromSlider.addEventListener('input', onFrom);
+        toSlider.addEventListener('input', onTo);
+
+        this._elements.rebuildBtn.addEventListener('click', () => {
+            // Flush any pending debounced range emission so the host doesn't
+            // race against the rebuild request.
+            if (this._chapterFilterDebounce) {
+                clearTimeout(this._chapterFilterDebounce);
+                this._chapterFilterDebounce = null;
+            }
+            const from = Number(fromSlider.value);
+            const to = Number(toSlider.value);
+            this._callbacks.onRebuildDeck?.({ from, to });
+        });
+    }
+
+    _syncChapterFilterLabels() {
+        this._elements.chapterFromLabel.textContent = this._elements.chapterFromSlider.value;
+        this._elements.chapterToLabel.textContent = this._elements.chapterToSlider.value;
+    }
+
+    _scheduleChapterFilterEmit() {
+        if (this._chapterFilterDebounce) {
+            clearTimeout(this._chapterFilterDebounce);
+        }
+        this._chapterFilterDebounce = setTimeout(() => {
+            this._chapterFilterDebounce = null;
+            const from = Number(this._elements.chapterFromSlider.value);
+            const to = Number(this._elements.chapterToSlider.value);
+            this._callbacks.onChapterRangeChange?.({ from, to });
+        }, 150);
+    }
+
+    /**
+     * Configure (or hide) the chapter-range filter. Hidden when the book
+     * has fewer than 2 chapters — the filter would be a no-op.
+     *
+     * @param {Object} opts
+     * @param {number} opts.totalChapters    total chapters in the book
+     * @param {number} opts.from             1-based initial From value
+     * @param {number} opts.to               1-based initial To value
+     */
+    configureChapterFilter({ totalChapters, from, to }) {
+        const total = Math.max(0, Number(totalChapters) || 0);
+        if (total < 2) {
+            this._elements.chapterFilter.classList.add('hidden');
+            return;
+        }
+        const clamp = (n) => Math.min(total, Math.max(1, Math.round(Number(n) || 1)));
+        const f = clamp(from);
+        const t = Math.max(f, clamp(to));
+        const fromS = this._elements.chapterFromSlider;
+        const toS = this._elements.chapterToSlider;
+        fromS.min = '1';
+        fromS.max = String(total);
+        toS.min = '1';
+        toS.max = String(total);
+        fromS.value = String(f);
+        toS.value = String(t);
+        this._syncChapterFilterLabels();
+        this._elements.chapterFilter.classList.remove('hidden');
+    }
+
+    /**
+     * Read the current 1-based chapter range from the sliders.
+     * @returns {{from:number,to:number}|null} null when the filter is hidden
+     */
+    getChapterRange() {
+        if (this._elements.chapterFilter.classList.contains('hidden')) return null;
+        return {
+            from: Number(this._elements.chapterFromSlider.value),
+            to: Number(this._elements.chapterToSlider.value)
+        };
+    }
+
+    _setupLookupSelection() {
+        this._lookupSelection = new LookupSelection({
+            container: this._elements.dialog,
+            onLookup: (text, context) => {
+                this._callbacks.onLookup?.(text, context);
+            }
+        });
     }
 
     // ---------- show / hide ----------
@@ -174,6 +309,10 @@ export class SRSOverlay {
         this._bufferedCard = null;
         this._isRevealing = false;
         this._answered = 0;
+        if (this._chapterFilterDebounce) {
+            clearTimeout(this._chapterFilterDebounce);
+            this._chapterFilterDebounce = null;
+        }
     }
 
     // ---------- state setters (driven by host wiring controller events) ----------

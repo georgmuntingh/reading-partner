@@ -383,4 +383,83 @@ describe('buildActiveDeck', () => {
         const out = await buildActiveDeck({ bookId: 'b1', storage, settings: SETTINGS, now: NOW });
         expect(out.deck.map((c) => c.id)).toEqual(['new-future']);
     });
+
+    // ---- chapter-range filter ----
+
+    describe('chapter-range filter', () => {
+        beforeEach(async () => {
+            await storage.saveKGNode(makeNode('n_ch0', { contexts: [{ chapterIndex: 0, sentenceIndices: [0] }] }));
+            await storage.saveKGNode(makeNode('n_ch5', { contexts: [{ chapterIndex: 5, sentenceIndices: [0] }] }));
+            await storage.saveKGNode(makeNode('n_ch2_5', { contexts: [
+                { chapterIndex: 2, sentenceIndices: [0] },
+                { chapterIndex: 5, sentenceIndices: [0] }
+            ] }));
+            await storage.saveFlashcard(makeCard({ id: 'card_ch0', targetNodeIds: ['n_ch0'], lastResult: 'new' }));
+            await storage.saveFlashcard(makeCard({ id: 'card_ch5', targetNodeIds: ['n_ch5'], lastResult: 'new' }));
+            await storage.saveFlashcard(makeCard({ id: 'card_multi', targetNodeIds: ['n_ch2_5'], lastResult: 'new' }));
+        });
+
+        it('passes ALL cards through when chapterRange is null', async () => {
+            const out = await buildActiveDeck({ bookId: 'b1', storage, settings: SETTINGS, now: NOW, chapterRange: null });
+            expect(out.deck.map((c) => c.id).sort()).toEqual(['card_ch0', 'card_ch5', 'card_multi']);
+        });
+
+        it('keeps only cards whose target nodes appear in the range', async () => {
+            const out = await buildActiveDeck({
+                bookId: 'b1', storage, settings: SETTINGS, now: NOW,
+                chapterRange: { from: 3, to: 5 }
+            });
+            expect(out.deck.map((c) => c.id).sort()).toEqual(['card_ch5', 'card_multi']);
+        });
+
+        it('excludes cards whose nodes have no in-range context', async () => {
+            const out = await buildActiveDeck({
+                bookId: 'b1', storage, settings: SETTINGS, now: NOW,
+                chapterRange: { from: 0, to: 1 }
+            });
+            expect(out.deck.map((c) => c.id).sort()).toEqual(['card_ch0']);
+        });
+
+        it('includes a card if ANY of its target nodes is in range', async () => {
+            await storage.saveFlashcard(makeCard({
+                id: 'card_any', targetNodeIds: ['n_ch0', 'n_ch5'], lastResult: 'new'
+            }));
+            const out = await buildActiveDeck({
+                bookId: 'b1', storage, settings: SETTINGS, now: NOW,
+                chapterRange: { from: 5, to: 5 }
+            });
+            expect(out.deck.map((c) => c.id).sort()).toContain('card_any');
+        });
+
+        it('returns an empty deck when no cards match the range', async () => {
+            const out = await buildActiveDeck({
+                bookId: 'b1', storage, settings: SETTINGS, now: NOW,
+                chapterRange: { from: 9, to: 10 }
+            });
+            expect(out.deck).toEqual([]);
+        });
+
+        it('prereq gate still uses ALL L1 cards (mastery ignores range)', async () => {
+            // L2 card in chapter 5; its L1 prereq covers a node in chapter 0.
+            // With range [5,5], the L1 prereq is out of range — but the gate
+            // should still treat the prereq node as mastered.
+            await storage.saveKGNode(makeNode('n_concept', { contexts: [
+                { chapterIndex: 0, sentenceIndices: [0] },
+                { chapterIndex: 5, sentenceIndices: [0] }
+            ] }));
+            await storage.saveFlashcard(makeCard({
+                id: 'l1_mastered', cognitiveLevel: 1, targetNodeIds: ['n_concept'],
+                lastResult: 'pass', srsBox: 2, nextReviewAt: FUTURE  // not eligible, just mastery anchor
+            }));
+            await storage.saveFlashcard(makeCard({
+                id: 'l2_in_range', cognitiveLevel: 2, targetNodeIds: ['n_concept'], lastResult: 'new'
+            }));
+            const out = await buildActiveDeck({
+                bookId: 'b1', storage, settings: SETTINGS, now: NOW,
+                chapterRange: { from: 5, to: 5 }
+            });
+            expect(out.deck.map((c) => c.id)).toContain('l2_in_range');
+            expect(out.gatedOut).toEqual([]);
+        });
+    });
 });

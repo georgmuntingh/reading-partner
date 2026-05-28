@@ -74,6 +74,8 @@ export class SRSController {
         this._bookId = null;
         this._deck = [];
         this._lastResultCard = null; // remembered so jumpToBook works post-submission
+        // Active chapter-range filter (0-based, inclusive). Null = whole book.
+        this._chapterRange = null;
         // Whether the diagnostic L1 fallback fires on L2/L3 failure for
         // the currently-open deck. Normal openDeck enables it; the
         // micro-review openCustomDeck disables it by default — the user
@@ -117,10 +119,14 @@ export class SRSController {
         const { deck } = await buildActiveDeck({
             bookId: this._bookId,
             storage: this.storage,
-            settings: this.settings
+            settings: this.settings,
+            chapterRange: this._chapterRange
         });
         this._deck = deck;
     }
+
+    /** Current chapter-range filter, or null. */
+    getChapterRange() { return this._chapterRange; }
 
     // ---------- lifecycle ----------
 
@@ -130,8 +136,12 @@ export class SRSController {
      * either onCardReady (with the head) or onDeckEmpty.
      *
      * @param {string} bookId
+     * @param {Object} [opts]
+     * @param {{from:number,to:number}|null} [opts.chapterRange] - 0-based inclusive
+     *        chapter range; restricts the deck to cards whose target nodes
+     *        appear in that range. Null/omitted = whole book.
      */
-    async openDeck(bookId) {
+    async openDeck(bookId, opts = {}) {
         if (!bookId) throw new Error('openDeck: bookId is required');
         if (this.settings?.srsEnabled === false) {
             this._setState(SRSState.EMPTY);
@@ -142,6 +152,7 @@ export class SRSController {
 
         this._bookId = bookId;
         this._lastResultCard = null;
+        this._chapterRange = opts.chapterRange ?? null;
         // Standard open path: full curriculum semantics, including the
         // diagnostic fallback. (A prior openCustomDeck session may have
         // left this false.)
@@ -258,7 +269,88 @@ export class SRSController {
         this._deck = [];
         this._lastResultCard = null;
         this._fallbackEnabled = true;
+        this._chapterRange = null;
         this._setState(SRSState.IDLE);
+    }
+
+    /**
+     * Force a full deck rebuild, optionally updating the chapter range
+     * first. Unlike `setChapterRange`, this does NOT preserve the
+     * currently-shown card: it always emits `onCardReady` with the new
+     * head (or `onDeckEmpty`). Use when the user explicitly asks for the
+     * on-screen question to match the current filter.
+     *
+     * @param {Object} [opts]
+     * @param {{from:number,to:number}|null} [opts.chapterRange]  if provided, replaces the stored range
+     */
+    async rebuildDeck(opts = {}) {
+        if (this._state === SRSState.IDLE) return;
+        if (Object.prototype.hasOwnProperty.call(opts, 'chapterRange')) {
+            this._chapterRange = opts.chapterRange ?? null;
+        }
+        // Surface a LOADING state so the overlay clears the old card body
+        // before the new head arrives — without this the previous question
+        // remains visible while buildActiveDeck awaits storage IO.
+        this._setState(SRSState.LOADING);
+        try {
+            await this._rebuildDeck();
+        } catch (err) {
+            this._emitError(err);
+            return;
+        }
+        if (this._deck.length === 0) {
+            this._setState(SRSState.EMPTY);
+            try { this._onDeckEmpty?.(); }
+            catch (err) { this.logger.warn?.('[srs-controller] onDeckEmpty threw:', err); }
+        } else {
+            this._setState(SRSState.READY);
+            try { this._onCardReady?.(this._deck[0]); }
+            catch (err) { this.logger.warn?.('[srs-controller] onCardReady threw:', err); }
+        }
+    }
+
+    /**
+     * Update the chapter-range filter and rebuild the upcoming deck.
+     *
+     * Mid-session semantics:
+     *   - If the user has NOT yet answered the current card (isRevealing=false),
+     *     the card on screen is kept as-is — the new filter applies only to
+     *     what comes after it. No event fires.
+     *   - If the user IS in the reveal phase, we emit onCardReady with the
+     *     new head so the host updates its buffered next-card.
+     *   - From EMPTY, a widening range may flip back to READY (or stay empty).
+     *
+     * @param {{from:number,to:number}|null} range  0-based inclusive, or null to clear
+     * @param {Object} [opts]
+     * @param {boolean} [opts.isRevealing=false]    host-managed reveal flag
+     */
+    async setChapterRange(range, { isRevealing = false } = {}) {
+        this._chapterRange = range ?? null;
+        if (this._state === SRSState.IDLE) return;
+        const headBefore = this._deck[0] ?? null;
+        try {
+            await this._rebuildDeck();
+        } catch (err) {
+            this._emitError(err);
+            return;
+        }
+
+        if (!isRevealing && headBefore) {
+            // Keep the unanswered card on screen; apply filter to the tail only.
+            this._deck = [headBefore, ...this._deck.filter((c) => c.id !== headBefore.id)];
+            // State stays READY; no event — current card unchanged.
+            return;
+        }
+
+        if (this._deck.length === 0) {
+            this._setState(SRSState.EMPTY);
+            try { this._onDeckEmpty?.(); }
+            catch (err) { this.logger.warn?.('[srs-controller] onDeckEmpty threw:', err); }
+        } else {
+            this._setState(SRSState.READY);
+            try { this._onCardReady?.(this._deck[0]); }
+            catch (err) { this.logger.warn?.('[srs-controller] onCardReady threw:', err); }
+        }
     }
 
     /**
@@ -292,6 +384,8 @@ export class SRSController {
         this._deck = cards.slice();
         this._lastResultCard = null;
         this._fallbackEnabled = opts.fallbackEnabled === true;
+        // Custom decks are caller-supplied; chapter-range filter doesn't apply.
+        this._chapterRange = null;
 
         this._setState(SRSState.READY);
         try { this._onCardReady?.(this._deck[0]); }
