@@ -355,3 +355,180 @@ describe('FlashcardOverview — scrollToCardId', () => {
         expect(targetRow.classList.contains('expanded')).toBe(true);
     });
 });
+
+// ---------- chapter histogram ----------
+
+describe('FlashcardOverview — chapter histogram', () => {
+    it('hides the histogram panel when totalChapters is 0', () => {
+        const { overview, container } = mount();
+        overview.show({ cards: [], nodesById: new Map(), totalChapters: 0 });
+        expect(container.querySelector('#fc-histogram').classList.contains('hidden')).toBe(true);
+    });
+
+    it('renders one bar column per chapter even when chapters are empty', () => {
+        const { overview, container } = mount();
+        overview.show({ cards: [], nodesById: new Map(), totalChapters: 5 });
+        const cols = container.querySelectorAll('.fc-bar-col');
+        expect(cols.length).toBe(5);
+        // Each column carries six box segments (one per box 0..5).
+        for (const col of cols) {
+            expect(col.querySelectorAll('.fc-bar-seg').length).toBe(6);
+        }
+    });
+
+    it('zero-count segments get flex: 0 via the data-count attribute', () => {
+        const { overview, container } = mount();
+        overview.show({ cards: [], nodesById: new Map(), totalChapters: 1 });
+        const segs = container.querySelectorAll('.fc-bar-seg');
+        for (const seg of segs) {
+            expect(seg.getAttribute('data-count')).toBe('0');
+        }
+    });
+
+    it('a card with primaryChapterIndex=2, srsBox=3 lands in the third bar\'s box-3 segment', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [makeCard({ id: 'a', primaryChapterIndex: 2, srsBox: 3 })],
+            nodesById: new Map(),
+            totalChapters: 4
+        });
+        const cols = container.querySelectorAll('.fc-bar-col');
+        const targetCol = cols[2];
+        const seg = targetCol.querySelector('.fc-bar-seg.fc-box-3');
+        expect(seg.getAttribute('data-count')).toBe('1');
+        // Other segments in the same column stay at 0.
+        const otherSegs = Array.from(targetCol.querySelectorAll('.fc-bar-seg'))
+            .filter((s) => !s.classList.contains('fc-box-3'));
+        for (const s of otherSegs) expect(s.getAttribute('data-count')).toBe('0');
+    });
+
+    it('hovering a bar shows the tooltip with chapter title and counts', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [
+                makeCard({ id: 'a', primaryChapterIndex: 1, srsBox: 0, cognitiveLevel: 1 }),
+                makeCard({ id: 'b', primaryChapterIndex: 1, srsBox: 3, cognitiveLevel: 2 }),
+                makeCard({ id: 'c', primaryChapterIndex: 1, srsBox: 5, cognitiveLevel: 3 })
+            ],
+            nodesById: new Map(),
+            totalChapters: 3,
+            chapterTitles: ['Prologue', 'The Sword', 'Camelot']
+        });
+        const col = container.querySelectorAll('.fc-bar-col')[1];
+        col.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        const tip = container.querySelector('.fc-tooltip');
+        expect(tip).toBeTruthy();
+        expect(tip.classList.contains('hidden')).toBe(false);
+        expect(tip.querySelector('.fc-tooltip-title').textContent).toBe('The Sword');
+        expect(tip.querySelector('.fc-tooltip-total').textContent).toMatch(/3 cards/);
+        expect(tip.querySelector('.fc-tooltip-levels').textContent).toBe('L1: 1 · L2: 1 · L3: 1');
+        const boxes = Array.from(tip.querySelectorAll('.fc-tt-box')).map((b) => b.textContent);
+        expect(boxes).toEqual(['B0:1', 'B1:0', 'B2:0', 'B3:1', 'B4:0', 'B5:1']);
+    });
+
+    it('falls back to "Chapter N" when chapterTitles is absent', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [makeCard({ id: 'a', primaryChapterIndex: 0 })],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        container.querySelector('.fc-bar-col').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+        expect(container.querySelector('.fc-tooltip-title').textContent).toBe('Chapter 1');
+    });
+
+    it('clicking a bar filters the card list to that chapter and shows the chip', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [
+                makeCard({ id: 'a', primaryChapterIndex: 0 }),
+                makeCard({ id: 'b', primaryChapterIndex: 1 }),
+                makeCard({ id: 'c', primaryChapterIndex: 1 })
+            ],
+            nodesById: new Map(),
+            totalChapters: 3
+        });
+        // Pre-click — all three rows visible.
+        expect(container.querySelectorAll('.fc-row').length).toBe(3);
+        container.querySelectorAll('.fc-bar-col')[1].click();
+        expect(overview.getState().chapterFilter).toBe(1);
+        expect(container.querySelectorAll('.fc-row').length).toBe(2);
+        const chip = container.querySelector('#fc-chapter-chip');
+        expect(chip.classList.contains('hidden')).toBe(false);
+        expect(chip.querySelector('#fc-chapter-chip-label').textContent).toBe('Chapter 2');
+        // The clicked bar is marked selected.
+        expect(container.querySelectorAll('.fc-bar-col')[1].querySelector('.fc-bar').classList.contains('fc-bar-selected')).toBe(true);
+    });
+
+    it('clicking the same bar again clears the chapter filter', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [makeCard({ id: 'a', primaryChapterIndex: 0 }), makeCard({ id: 'b', primaryChapterIndex: 1 })],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        container.querySelectorAll('.fc-bar-col')[0].click();
+        expect(overview.getState().chapterFilter).toBe(0);
+        // Re-query — the histogram re-renders on filter changes.
+        container.querySelectorAll('.fc-bar-col')[0].click();
+        expect(overview.getState().chapterFilter).toBeNull();
+        expect(container.querySelector('#fc-chapter-chip').classList.contains('hidden')).toBe(true);
+        expect(container.querySelectorAll('.fc-row').length).toBe(2);
+    });
+
+    it('the chip × clears the chapter filter', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [makeCard({ id: 'a', primaryChapterIndex: 0 }), makeCard({ id: 'b', primaryChapterIndex: 1 })],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        container.querySelectorAll('.fc-bar-col')[0].click();
+        expect(overview.getState().chapterFilter).toBe(0);
+        container.querySelector('#fc-chapter-chip-clear').click();
+        expect(overview.getState().chapterFilter).toBeNull();
+        expect(container.querySelectorAll('.fc-row').length).toBe(2);
+    });
+
+    it('histogram is computed from the full card set, NOT the search-filtered set', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [
+                makeCard({ id: 'a', primaryChapterIndex: 0, srsBox: 0, question: 'first' }),
+                makeCard({ id: 'b', primaryChapterIndex: 1, srsBox: 2, question: 'second' })
+            ],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        const before = Array.from(container.querySelectorAll('.fc-bar-seg'))
+            .map((s) => s.getAttribute('data-count'));
+        // A search that excludes everything should leave the histogram untouched.
+        const search = container.querySelector('#fc-search');
+        search.value = 'zzz_no_match';
+        search.dispatchEvent(new Event('input', { bubbles: true }));
+        expect(container.querySelector('.fc-empty')).toBeTruthy();
+        const after = Array.from(container.querySelectorAll('.fc-bar-seg'))
+            .map((s) => s.getAttribute('data-count'));
+        expect(after).toEqual(before);
+    });
+
+    it('refresh() updates the histogram', () => {
+        const { overview, container } = mount();
+        overview.show({
+            cards: [makeCard({ id: 'a', primaryChapterIndex: 0, srsBox: 0 })],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        overview.refresh({
+            cards: [
+                makeCard({ id: 'a', primaryChapterIndex: 0, srsBox: 0 }),
+                makeCard({ id: 'b', primaryChapterIndex: 1, srsBox: 5 })
+            ],
+            nodesById: new Map(),
+            totalChapters: 2
+        });
+        const cols = container.querySelectorAll('.fc-bar-col');
+        const ch1Box5 = cols[1].querySelector('.fc-bar-seg.fc-box-5');
+        expect(ch1Box5.getAttribute('data-count')).toBe('1');
+    });
+});

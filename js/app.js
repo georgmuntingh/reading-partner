@@ -2599,7 +2599,9 @@ class ReadingPartnerApp {
             storage.getKGNodesForBook(bookId)
         ]);
         const nodesById = new Map(nodes.map((n) => [n.id, n]));
-        this._flashcardOverview.show({ cards, nodesById, scrollToCardId });
+        const totalChapters = this._currentBook.chapters?.length ?? 0;
+        const chapterTitles = this._currentBook.chapters?.map((c) => c?.title ?? null) ?? null;
+        this._flashcardOverview.show({ cards, nodesById, scrollToCardId, totalChapters, chapterTitles });
     }
 
     async _refreshFlashcardOverview() {
@@ -2610,7 +2612,9 @@ class ReadingPartnerApp {
             storage.getKGNodesForBook(bookId)
         ]);
         const nodesById = new Map(nodes.map((n) => [n.id, n]));
-        this._flashcardOverview.refresh({ cards, nodesById });
+        const totalChapters = this._currentBook.chapters?.length ?? 0;
+        const chapterTitles = this._currentBook.chapters?.map((c) => c?.title ?? null) ?? null;
+        this._flashcardOverview.refresh({ cards, nodesById, totalChapters, chapterTitles });
     }
 
     /**
