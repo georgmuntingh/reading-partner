@@ -288,6 +288,10 @@ export class SRSController {
         if (Object.prototype.hasOwnProperty.call(opts, 'chapterRange')) {
             this._chapterRange = opts.chapterRange ?? null;
         }
+        // Surface a LOADING state so the overlay clears the old card body
+        // before the new head arrives — without this the previous question
+        // remains visible while buildActiveDeck awaits storage IO.
+        this._setState(SRSState.LOADING);
         try {
             await this._rebuildDeck();
         } catch (err) {

@@ -2408,11 +2408,15 @@ class ReadingPartnerApp {
                 onRebuildDeck: ({ from, to }) => {
                     // Force the on-screen card to match the new filter,
                     // not just the upcoming ones. Drop reveal state so the
-                    // overlay routes onCardReady through showCard.
+                    // overlay routes onCardReady through showCard. The
+                    // controller fires SRSState.LOADING during the rebuild,
+                    // which clears the visible card via onStateChange.
                     this._srsIsRevealing = false;
                     this._srsLastSelectedIndex = -1;
                     this._srsController?.rebuildDeck({
                         chapterRange: { from: from - 1, to: to - 1 }
+                    }).catch((err) => {
+                        this._showToast?.(`Spaced Review: ${err?.message || err}`);
                     });
                 }
             }

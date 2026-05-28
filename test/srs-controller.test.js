@@ -695,6 +695,16 @@ describe('SRSController.setChapterRange', () => {
         expect(callbacks.onCardReady).toHaveBeenCalledTimes(1);
     });
 
+    it('rebuildDeck transitions through LOADING so the overlay clears the old card', async () => {
+        const { controller, storage, callbacks } = await makeController();
+        await seedThreeChapterCards(storage);
+        await controller.openDeck('b1', { chapterRange: { from: 0, to: 5 } });
+        callbacks.onStateChange.mockClear();
+        await controller.rebuildDeck({ chapterRange: { from: 5, to: 5 } });
+        const states = callbacks.onStateChange.mock.calls.map((c) => c[0]);
+        expect(states).toEqual([SRSState.LOADING, SRSState.READY]);
+    });
+
     it('rebuildDeck emits onDeckEmpty when the new range matches nothing', async () => {
         const { controller, storage, callbacks } = await makeController();
         await seedThreeChapterCards(storage);
