@@ -2330,7 +2330,35 @@ export class GraphExplorer {
         openKGStatsModal({
             nodes: this._allNodes ?? [],
             edges: this._allEdges ?? [],
-            chapters
+            chapters,
+            onNodeClick: (id) => this.selectNodeById(id)
         });
+    }
+
+    /**
+     * Programmatic equivalent of tapping a node in the graph: selects the
+     * node, opens the side panel, and dims the rest of the graph. Used by
+     * the Stats modal's top-connected-nodes list so the user lands on the
+     * picked node ready to inspect it.
+     *
+     * No-op if the node isn't in the current cytoscape instance (e.g. the
+     * graph hasn't been opened yet).
+     */
+    selectNodeById(nodeId) {
+        if (!this._cy || !nodeId) return;
+        const node = this._cy.getElementById(nodeId);
+        if (!node || node.empty()) return;
+        const raw = node.data('raw');
+        this._cy.elements().unselect();
+        node.select();
+        if (raw) this._showNodeDetails(raw);
+        this._focusNeighborhood(node);
+        // Pan into view — the user picked this node from a modal and
+        // expects to see where it landed.
+        if (typeof this._cy.animate === 'function') {
+            this._cy.animate({ center: { eles: node } }, { duration: 250 });
+        } else if (typeof this._cy.center === 'function') {
+            this._cy.center(node);
+        }
     }
 }

@@ -150,18 +150,26 @@ function renderTiles(s) {
     `;
 }
 
-function renderTopK(items) {
+function renderTopK(items, clickable) {
     if (items.length === 0) {
         return `<div class="kg-stats-empty">No nodes to rank.</div>`;
     }
     return `
-        <ol class="kg-stats-toplist">
-            ${items.map((n) => `
-                <li>
+        <ol class="kg-stats-toplist${clickable ? ' kg-stats-toplist-clickable' : ''}">
+            ${items.map((n) => {
+                const inner = `
                     <span class="kg-stats-toplist-name">${esc(n.canonicalName)}</span>
                     <span class="kg-stats-toplist-degree" title="in ${n.inDegree} / out ${n.outDegree}">${n.degree}</span>
-                </li>
-            `).join('')}
+                `;
+                if (clickable) {
+                    return `
+                        <li>
+                            <button type="button" class="kg-stats-toplist-link" data-node-id="${esc(n.id)}" title="Open in graph">${inner}</button>
+                        </li>
+                    `;
+                }
+                return `<li>${inner}</li>`;
+            }).join('')}
         </ol>
     `;
 }
@@ -213,7 +221,7 @@ function renderEmptyBody() {
     `;
 }
 
-function renderBody(stats, chapters) {
+function renderBody(stats, chapters, clickableTop) {
     return `
         <section class="kg-stats-section">
             ${renderTiles(stats.summary)}
@@ -242,7 +250,7 @@ function renderBody(stats, chapters) {
         <section class="kg-stats-section kg-stats-section-split">
             <div>
                 <h3>Top connected nodes</h3>
-                ${renderTopK(stats.top)}
+                ${renderTopK(stats.top, clickableTop)}
             </div>
             <div>
                 <h3>Node types</h3>
@@ -261,12 +269,17 @@ function renderBody(stats, chapters) {
  * @param {Array} args.nodes
  * @param {Array} args.edges
  * @param {Array<{ title?: string }>} args.chapters
+ * @param {(nodeId: string) => void} [args.onNodeClick] - When provided, the
+ *   top-connected-nodes list becomes clickable. Clicking an entry closes the
+ *   modal and calls this with the node id, so the caller can replicate the
+ *   graph's tap-on-node behaviour (select + side panel).
  * @returns {Promise<void>}
  */
-export function openKGStatsModal({ nodes, edges, chapters }) {
+export function openKGStatsModal({ nodes, edges, chapters, onNodeClick }) {
     const safeNodes = Array.isArray(nodes) ? nodes : [];
     const safeEdges = Array.isArray(edges) ? edges : [];
     const safeChapters = Array.isArray(chapters) ? chapters : [];
+    const clickable = typeof onNodeClick === 'function';
     const hasData = safeNodes.length > 0;
     const stats = hasData
         ? computeAll({ nodes: safeNodes, edges: safeEdges, chapters: safeChapters })
@@ -287,7 +300,7 @@ export function openKGStatsModal({ nodes, edges, chapters }) {
                     </button>
                 </div>
                 <div class="modal-content kg-stats-content">
-                    ${hasData ? renderBody(stats, safeChapters) : renderEmptyBody()}
+                    ${hasData ? renderBody(stats, safeChapters, clickable) : renderEmptyBody()}
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-primary" data-action="close">Close</button>
@@ -297,20 +310,32 @@ export function openKGStatsModal({ nodes, edges, chapters }) {
         document.body.appendChild(overlay);
 
         let done = false;
-        const finish = () => {
+        const finish = (pickedNodeId = null) => {
             if (done) return;
             done = true;
             document.removeEventListener('keydown', onKey);
             overlay.remove();
+            if (pickedNodeId && clickable) onNodeClick(pickedNodeId);
             resolve();
         };
         const onKey = (e) => { if (e.key === 'Escape') finish(); };
 
-        overlay.querySelector('.kg-stats-close-btn').addEventListener('click', finish);
-        overlay.querySelector('[data-action="close"]').addEventListener('click', finish);
+        overlay.querySelector('.kg-stats-close-btn').addEventListener('click', () => finish());
+        overlay.querySelector('[data-action="close"]').addEventListener('click', () => finish());
         overlay.addEventListener('click', (e) => {
             if (e.target === overlay) finish();
         });
         document.addEventListener('keydown', onKey);
+
+        if (clickable) {
+            const list = overlay.querySelector('.kg-stats-toplist-clickable');
+            if (list) {
+                list.addEventListener('click', (e) => {
+                    const btn = e.target.closest('[data-node-id]');
+                    if (!btn) return;
+                    finish(btn.dataset.nodeId);
+                });
+            }
+        }
     });
 }

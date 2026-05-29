@@ -4938,6 +4938,33 @@
     font-weight: 600;
 }
 
+.kg-stats-toplist-link {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--spacing-sm);
+    width: 100%;
+    padding: 2px 4px;
+    margin: -2px -4px;
+    background: transparent;
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--primary-color);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.kg-stats-toplist-link:hover,
+.kg-stats-toplist-link:focus-visible {
+    background: var(--bg-color);
+    outline: none;
+}
+
+.kg-stats-toplist-link:focus-visible {
+    box-shadow: 0 0 0 2px var(--primary-color);
+}
+
 /* Distribution mini-bars (types, bloom) */
 .kg-stats-distribution {
     display: flex;
