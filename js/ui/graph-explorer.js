@@ -28,6 +28,7 @@ import {
     cardsByEdgeId
 } from '../services/srs-mastery.js';
 import { computeNodeDegrees } from '../services/srs-centrality.js';
+import { openKGStatsModal } from './kg-stats-modal.js';
 
 // Bottleneck threshold: a failing node with this many or more graph
 // connections gets a louder visual treatment so the user knows it is
@@ -237,6 +238,9 @@ export class GraphExplorer {
                 <button type="button" class="btn btn-secondary graph-clear-highlights-btn hidden" aria-label="Clear highlights">
                     Clear highlights
                 </button>
+                <button type="button" class="btn btn-secondary graph-stats-btn" aria-label="Show graph statistics" title="Graph statistics">
+                    Stats
+                </button>
                 <button class="btn-icon graph-fullscreen-btn" aria-label="Toggle fullscreen" title="Toggle fullscreen">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="graph-fullscreen-expand-icon">
                         <polyline points="15 3 21 3 21 9"/>
@@ -288,6 +292,7 @@ export class GraphExplorer {
         this._container.querySelector('.graph-close-btn').addEventListener('click', () => this.close());
         this._container.querySelector('.graph-clear-highlights-btn').addEventListener('click', () => this.clearHighlights());
         this._container.querySelector('.graph-relayout-btn').addEventListener('click', () => this.relayout());
+        this._container.querySelector('.graph-stats-btn').addEventListener('click', () => this._openStatsModal());
         this._setupFullscreen();
         this._container.querySelector('.graph-reload-btn').addEventListener('click', () => {
             // Stale-chunk recovery: the user is on an older index.html than
@@ -522,6 +527,10 @@ export class GraphExplorer {
             storage.getKGNodesForBook(book.id),
             storage.getKGEdgesForBook(book.id)
         ]);
+        // Cached so the Stats modal can render immediately without an
+        // extra round-trip to storage. Cleared on close() below.
+        this._allNodes = nodes;
+        this._allEdges = edges;
 
         if (nodes.length === 0) {
             this._showEmptyState();
@@ -2311,5 +2320,17 @@ export class GraphExplorer {
         if (input) input.value = '';
         const statusEl = this._container.querySelector('#kg-search-status');
         if (statusEl) statusEl.textContent = '';
+        this._allNodes = null;
+        this._allEdges = null;
+    }
+
+    _openStatsModal() {
+        const book = this._getBook();
+        const chapters = Array.isArray(book?.chapters) ? book.chapters : [];
+        openKGStatsModal({
+            nodes: this._allNodes ?? [],
+            edges: this._allEdges ?? [],
+            chapters
+        });
     }
 }
