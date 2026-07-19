@@ -218,6 +218,17 @@ export class PlaybackControls {
         // Clear existing options
         this._voiceSelect.innerHTML = '';
 
+        // Web Speech voices load asynchronously on mobile; show a
+        // placeholder instead of an empty select until they arrive
+        if (voices.length === 0) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.textContent = 'Loading voices…';
+            option.disabled = true;
+            this._voiceSelect.appendChild(option);
+            return;
+        }
+
         // Add new options
         voices.forEach(voice => {
             const option = document.createElement('option');

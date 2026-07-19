@@ -143,6 +143,20 @@ export class TTSEngine {
 
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
+
+        // Web Speech voices load asynchronously on some platforms (mobile
+        // Chrome/Android returns [] from getVoices() until 'voiceschanged'
+        // fires), so kick off the load now and let the app re-query the
+        // voice list when it completes.
+        this._onVoicesChanged = null;
+        if (this._webSpeechSupported) {
+            speechSynthesis.getVoices();
+            speechSynthesis.addEventListener('voiceschanged', () => {
+                if (this._onVoicesChanged) {
+                    this._onVoicesChanged();
+                }
+            });
+        }
     }
 
     /**
@@ -177,6 +191,15 @@ export class TTSEngine {
      */
     onProgress(callback) {
         this._onProgress = callback;
+    }
+
+    /**
+     * Set callback invoked when the Web Speech API voice list becomes
+     * available or changes (its voices load asynchronously on mobile).
+     * @param {() => void} callback
+     */
+    onVoicesChanged(callback) {
+        this._onVoicesChanged = callback;
     }
 
     /**
@@ -457,6 +480,9 @@ export class TTSEngine {
 
         } catch (error) {
             console.warn('Kokoro TTS failed to load, using Web Speech fallback:', error);
+            // console output is invisible on mobile — record the reason in
+            // the in-app log so the fallback is diagnosable there
+            appLogger.error(`Kokoro TTS failed to load, falling back to browser TTS: ${error?.message || error}`);
 
             if (this._webSpeechSupported) {
                 this._useKokoro = false;
@@ -484,7 +510,13 @@ export class TTSEngine {
         // Import the KokoroTTS library.
         // 1.2.1 is the minimum version exposing generate_from_ids(), which
         // the non-English synthesis path in _generateKokoroAudio relies on.
-        const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm');
+        // dist/kokoro.web.js is the package's self-contained browser build:
+        // its dependencies (transformers.js, onnxruntime glue) were frozen
+        // when the package was published. The '/+esm' endpoint instead
+        // re-resolves sub-dependencies by semver whenever jsDelivr rebuilds
+        // its bundle, and a transformers/onnxruntime drift there is what
+        // broke Kokoro loading on mobile.
+        const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js');
 
         this._reportProgress({ status: `Initializing model (${device}, ${dtype})...`, progress: 30 });
 
