@@ -1119,6 +1119,31 @@ export class ReaderView {
     }
 
     /**
+     * Whether a sentence's rendered extent intersects any currently visible
+     * page window. Used to avoid navigating when the sentence is already on
+     * screen — e.g. a sentence that wraps across a page boundary is mapped to
+     * the page where it *starts* (previous page), but its selectable text can
+     * be visible at the top of the current page. Works for single- and
+     * multi-column layouts.
+     * @param {number} sentenceIndex
+     * @returns {boolean}
+     */
+    _isSentenceVisibleOnCurrentPages(sentenceIndex) {
+        if (!this._pageHeight) return false;
+        const el = this._textContent.querySelector(`.sentence[data-index="${sentenceIndex}"]`);
+        if (!el) return false;
+
+        const top = el.offsetTop;
+        const bottom = top + el.offsetHeight;
+
+        return this._computeVisiblePages().some(p => {
+            if (p < 0) return false;
+            const pageTop = p * this._pageHeight;
+            return bottom > pageTop && top < pageTop + this._pageHeight;
+        });
+    }
+
+    /**
      * Navigate to page containing a specific sentence
      * @param {number} sentenceIndex
      * @returns {boolean} Whether page change occurred
@@ -1126,6 +1151,12 @@ export class ReaderView {
     _navigateToSentencePage(sentenceIndex) {
         const page = this._sentenceToPage.get(sentenceIndex);
         if (page === undefined) return false;
+
+        // If the sentence is already visible on the current page(s), don't
+        // navigate. This prevents a backward jump when selecting a sentence
+        // that wraps from the bottom of the previous page onto the top of the
+        // current page (its stored page is the previous one).
+        if (this._isSentenceVisibleOnCurrentPages(sentenceIndex)) return false;
 
         const effectiveColumns = this._getEffectiveColumnCount();
 
