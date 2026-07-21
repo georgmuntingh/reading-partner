@@ -31,6 +31,47 @@ import { appLogger } from './app-logger.js';
 const DEFAULT_FASTAPI_URL = 'http://localhost:8880';
 
 /**
+ * Voice-prefix → espeak-ng language for Kokoro voices whose official G2P
+ * pipeline (misaki) is espeak-based. kokoro-js only phonemizes English, so
+ * for these languages we phonemize ourselves and feed the token ids to
+ * `generate_from_ids()` (public, does not validate the voice id) instead of
+ * `generate()`. English ('a'/'b') keeps kokoro-js's built-in phonemizer;
+ * Japanese/Chinese need G2P (pyopenjtalk/jieba) that has no browser port and
+ * therefore stay FastAPI-only.
+ */
+const ESPEAK_LANG_BY_VOICE_PREFIX = {
+    e: 'es',      // Spanish (ef_/em_)
+    f: 'fr-fr',   // French (ff_)
+    h: 'hi',      // Hindi (hf_/hm_)
+    i: 'it',      // Italian (if_/im_)
+    p: 'pt-br',   // Brazilian Portuguese (pf_/pm_)
+};
+
+/**
+ * espeak IPA sequences → Kokoro vocab tokens, ported from misaki's EspeakG2P
+ * post-processing. Misaki phonemizes with espeak ties (`t^ʃ`); the espeak
+ * CLI's plain --ipa output is untied, so the digraphs appear as plain
+ * two-char sequences here.
+ */
+const ESPEAK_TO_KOKORO = [
+    ['dʒ', 'ʤ'], ['tʃ', 'ʧ'], ['dz', 'ʣ'], ['ts', 'ʦ'],
+    ['aɪ', 'I'], ['aʊ', 'W'], ['eɪ', 'A'],
+    ['oʊ', 'O'], ['əʊ', 'Q'], ['ɔɪ', 'Y'],
+];
+
+/**
+ * espeak-ng drops punctuation from its IPA output, so (like kokoro-js's own
+ * phonemizer) text is split on punctuation runs which are passed through to
+ * the phoneme string verbatim — the Kokoro tokenizer has vocab entries for
+ * punctuation and uses it for prosody.
+ */
+const PHONEMIZE_PUNCTUATION = ';:,.!?¡¿—…"«»“”(){}[]';
+const PHONEMIZE_PUNCT_RUN = new RegExp(
+    `(?:\\s*[${PHONEMIZE_PUNCTUATION.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}]+\\s*)+`,
+    'g'
+);
+
+/**
  * Heuristic: are we running on a memory-constrained mobile device?
  *
  * Used to pick a lighter dtype for the WebGPU path. `navigator.deviceMemory`
@@ -93,8 +134,29 @@ export class TTSEngine {
         // Current audio source for stopping playback
         this._currentSource = null;
 
+        // Lazy-loaded espeak-ng WASM module factory for non-English
+        // kokoro-js synthesis; survives Kokoro reinits since it holds no
+        // ONNX state.
+        this._espeakFactory = null;
+        // Phoneme chars already reported as missing from the tokenizer vocab
+        this._unknownPhonemesWarned = new Set();
+
         // Check for Web Speech API support
         this._webSpeechSupported = 'speechSynthesis' in window;
+
+        // Web Speech voices load asynchronously on some platforms (mobile
+        // Chrome/Android returns [] from getVoices() until 'voiceschanged'
+        // fires), so kick off the load now and let the app re-query the
+        // voice list when it completes.
+        this._onVoicesChanged = null;
+        if (this._webSpeechSupported) {
+            speechSynthesis.getVoices();
+            speechSynthesis.addEventListener('voiceschanged', () => {
+                if (this._onVoicesChanged) {
+                    this._onVoicesChanged();
+                }
+            });
+        }
     }
 
     /**
@@ -129,6 +191,15 @@ export class TTSEngine {
      */
     onProgress(callback) {
         this._onProgress = callback;
+    }
+
+    /**
+     * Set callback invoked when the Web Speech API voice list becomes
+     * available or changes (its voices load asynchronously on mobile).
+     * @param {() => void} callback
+     */
+    onVoicesChanged(callback) {
+        this._onVoicesChanged = callback;
     }
 
     /**
@@ -409,6 +480,9 @@ export class TTSEngine {
 
         } catch (error) {
             console.warn('Kokoro TTS failed to load, using Web Speech fallback:', error);
+            // console output is invisible on mobile — record the reason in
+            // the in-app log so the fallback is diagnosable there
+            appLogger.error(`Kokoro TTS failed to load, falling back to browser TTS: ${error?.message || error}`);
 
             if (this._webSpeechSupported) {
                 this._useKokoro = false;
@@ -433,8 +507,16 @@ export class TTSEngine {
         // Dynamic import of Kokoro from ESM CDN
         this._reportProgress({ status: 'Loading Kokoro library...', progress: 10 });
 
-        // Import the KokoroTTS library
-        const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.1.0/+esm');
+        // Import the KokoroTTS library.
+        // 1.2.1 is the minimum version exposing generate_from_ids(), which
+        // the non-English synthesis path in _generateKokoroAudio relies on.
+        // dist/kokoro.web.js is the package's self-contained browser build:
+        // its dependencies (transformers.js, onnxruntime glue) were frozen
+        // when the package was published. The '/+esm' endpoint instead
+        // re-resolves sub-dependencies by semver whenever jsDelivr rebuilds
+        // its bundle, and a transformers/onnxruntime drift there is what
+        // broke Kokoro loading on mobile.
+        const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/dist/kokoro.web.js');
 
         this._reportProgress({ status: `Initializing model (${device}, ${dtype})...`, progress: 30 });
 
@@ -702,7 +784,7 @@ export class TTSEngine {
         }
 
         // Generate audio using Kokoro with speed parameter
-        const audio = await this._kokoro.generate(text, { voice, speed });
+        const audio = await this._generateKokoroAudio(text, voice, speed);
 
         const synthesisTime = performance.now() - startTime;
 
@@ -762,6 +844,131 @@ export class TTSEngine {
     }
 
     /**
+     * Run one Kokoro inference, routing by voice language.
+     * English voices ('a'/'b' prefix) use kokoro-js's built-in phonemizer via
+     * `generate()`. Voices for espeak-supported languages (see
+     * ESPEAK_LANG_BY_VOICE_PREFIX) are phonemized here and synthesized via
+     * `generate_from_ids()`, because kokoro-js's `generate()` would phonemize
+     * their text as English.
+     * @param {string} text
+     * @param {string} voice - Kokoro voice ID
+     * @param {number} speed
+     * @returns {Promise<{audio: Float32Array, sampling_rate: number}>}
+     */
+    async _generateKokoroAudio(text, voice, speed) {
+        const espeakLang = ESPEAK_LANG_BY_VOICE_PREFIX[voice.charAt(0)];
+        if (!espeakLang) {
+            return await this._kokoro.generate(text, { voice, speed });
+        }
+
+        const phonemes = await this._phonemizeEspeak(text, espeakLang);
+        this._warnUnknownPhonemes(phonemes, espeakLang);
+        const { input_ids } = this._kokoro.tokenizer(phonemes, { truncation: true });
+        return await this._kokoro.generate_from_ids(input_ids, { voice, speed });
+    }
+
+    /**
+     * Phonemize text with espeak-ng (WASM) and post-process the IPA into
+     * Kokoro's phoneme vocabulary, mirroring misaki's EspeakG2P.
+     * @param {string} text
+     * @param {string} lang - espeak-ng language code (e.g. 'fr-fr')
+     * @returns {Promise<string>}
+     */
+    async _phonemizeEspeak(text, lang) {
+        if (!this._espeakFactory) {
+            // Full espeak-ng CLI build with all language data (~18 MB wasm,
+            // fetched once and HTTP-cached). The `phonemizer` package that
+            // kokoro-js uses internally ships English-only espeak data and
+            // rejects other language codes, so it can't be reused here.
+            this._espeakFactory = import('https://cdn.jsdelivr.net/npm/espeak-ng@1.0.2/dist/espeak-ng.js')
+                .then(mod => mod.default);
+        }
+        const ESpeakNg = await this._espeakFactory;
+
+        // espeak-ng drops punctuation, so phonemize the runs of text between
+        // punctuation and pass the punctuation through verbatim.
+        let result = '';
+        let last = 0;
+        const parts = [];
+        for (const m of text.matchAll(PHONEMIZE_PUNCT_RUN)) {
+            parts.push({ punct: false, text: text.slice(last, m.index) });
+            parts.push({ punct: true, text: m[0] });
+            last = m.index + m[0].length;
+        }
+        parts.push({ punct: false, text: text.slice(last) });
+
+        for (const part of parts) {
+            if (part.punct) {
+                result += part.text.replace(/\s+/g, ' ');
+            } else if (part.text.trim()) {
+                result += await this._espeakIpa(ESpeakNg, part.text, lang);
+            }
+        }
+
+        // misaki EspeakG2P post-processing (Kokoro v1.0 flavor):
+        // drop espeak language-switch flags like "(en)", map digraphs to the
+        // single-codepoint tokens the model was trained on, drop the
+        // hyphen separators espeak inserts, and normalize guillemets to the
+        // curly quotes present in the tokenizer vocab.
+        result = result.replace(/\((?:[a-z]{2,3})(?:-[a-z]{2,10})?\)/gi, '');
+        for (const [from, to] of ESPEAK_TO_KOKORO) {
+            result = result.replaceAll(from, to);
+        }
+        result = result.replaceAll('-', '')
+            .replaceAll('«', '“').replaceAll('»', '”')
+            .replace(/\s+/g, ' ')
+            .trim();
+        return result;
+    }
+
+    /**
+     * Run one espeak-ng CLI invocation and return its IPA output.
+     * The build runs main() once per instance, so a fresh (cheap, the wasm
+     * is compiled once by the browser) module is created per call. Text goes
+     * through the emscripten FS because argv mangles non-ASCII input.
+     * @param {Function} ESpeakNg - module factory
+     * @param {string} text - punctuation-free text run
+     * @param {string} lang - espeak-ng voice, e.g. 'fr-fr'
+     * @returns {Promise<string>}
+     */
+    async _espeakIpa(ESpeakNg, text, lang) {
+        // espeak reads curly apostrophes as word breaks (l’eau → "l a o")
+        const input = text.replace(/[’ʼ]/g, "'");
+        const espeak = await ESpeakNg({
+            arguments: ['--phonout', 'phonemes.txt', '-f', 'input.txt', '-q', '-b', '1', '--ipa', '-v', lang],
+            preRun: [(mod) => mod.FS.writeFile('input.txt', input)],
+        });
+        // espeak emits one line per clause; they are all part of one run
+        return espeak.FS.readFile('phonemes.txt', { encoding: 'utf8' }).replace(/\n/g, ' ');
+    }
+
+    /**
+     * Diagnostic: report phoneme characters missing from the tokenizer vocab.
+     * The Kokoro tokenizer silently drops unknown characters, which comes out
+     * as subtly wrong audio — a log line makes G2P mapping gaps findable.
+     * @param {string} phonemes
+     * @param {string} lang
+     */
+    _warnUnknownPhonemes(phonemes, lang) {
+        try {
+            const vocab = this._kokoro?.tokenizer?.model?.tokens_to_ids;
+            if (!vocab || typeof vocab.has !== 'function') return;
+            const unknown = [...new Set(phonemes)]
+                .filter(ch => !vocab.has(ch) && !this._unknownPhonemesWarned.has(ch));
+            if (unknown.length > 0) {
+                unknown.forEach(ch => this._unknownPhonemesWarned.add(ch));
+                appLogger.warn(
+                    `Kokoro phonemize (${lang}): chars outside tokenizer vocab ` +
+                    `(will be dropped): ${JSON.stringify(unknown.join(''))}`
+                );
+            }
+        } catch {
+            // Vocab introspection relies on transformers.js internals; a shape
+            // change just disables this diagnostic.
+        }
+    }
+
+    /**
      * Check whether a Kokoro reinit should be scheduled.
      * Called after each inference completes.
      */
@@ -802,7 +1009,7 @@ export class TTSEngine {
                 );
             }
 
-            const audio = await this._kokoro.generate(chunk, { voice, speed });
+            const audio = await this._generateKokoroAudio(chunk, voice, speed);
             const audioData = audio.audio;
             sampleRate = audio.sampling_rate || this._sampleRate;
 
@@ -1091,7 +1298,10 @@ export class TTSEngine {
      */
     getAvailableVoices() {
         if (this._useKokoro) {
-            // Non-English voices require the FastAPI backend
+            // Voices whose G2P has no browser port (Japanese, Chinese) and
+            // voice blends require the FastAPI backend. espeak-based
+            // languages (fr/es/it/pt/hi) work on kokoro-js too via
+            // _generateKokoroAudio's custom phonemization path.
             const needsFastAPI = this._backend !== 'kokoro-fastapi';
 
             // Kokoro voices - organized by accent and gender
@@ -1148,25 +1358,31 @@ export class TTSEngine {
                 { id: 'zm_yunxi', name: 'Yunxi (Chinese Male)', disabled: needsFastAPI },
                 { id: 'zm_yunyang', name: 'Yunyang (Chinese Male)', disabled: needsFastAPI },
 
-                // French (FastAPI only)
-                { id: 'ff_siwis', name: 'Siwis (French Female)', disabled: needsFastAPI },
+                // French
+                { id: 'ff_siwis', name: 'Siwis (French Female)' },
 
-                // Hindi (FastAPI only)
-                { id: 'hf_alpha', name: 'Alpha (Hindi Female)', disabled: needsFastAPI },
-                { id: 'hf_beta', name: 'Beta (Hindi Female)', disabled: needsFastAPI },
-                { id: 'hm_omega', name: 'Omega (Hindi Male)', disabled: needsFastAPI },
-                { id: 'hm_psi', name: 'Psi (Hindi Male)', disabled: needsFastAPI },
+                // Hindi
+                { id: 'hf_alpha', name: 'Alpha (Hindi Female)' },
+                { id: 'hf_beta', name: 'Beta (Hindi Female)' },
+                { id: 'hm_omega', name: 'Omega (Hindi Male)' },
+                { id: 'hm_psi', name: 'Psi (Hindi Male)' },
 
-                // Italian (FastAPI only)
-                { id: 'if_sara', name: 'Sara (Italian Female)', disabled: needsFastAPI },
-                { id: 'im_nicola', name: 'Nicola (Italian Male)', disabled: needsFastAPI },
+                // Italian
+                { id: 'if_sara', name: 'Sara (Italian Female)' },
+                { id: 'im_nicola', name: 'Nicola (Italian Male)' },
 
-                // Portuguese Brazilian (FastAPI only)
-                { id: 'pf_dora', name: 'Dora (Portuguese Female)', disabled: needsFastAPI },
-                { id: 'pm_alex', name: 'Alex (Portuguese Male)', disabled: needsFastAPI },
-                { id: 'pm_santa', name: 'Santa (Portuguese Male)', disabled: needsFastAPI },
+                // Portuguese Brazilian
+                { id: 'pf_dora', name: 'Dora (Portuguese Female)' },
+                { id: 'pm_alex', name: 'Alex (Portuguese Male)' },
+                { id: 'pm_santa', name: 'Santa (Portuguese Male)' },
 
-                // Spanish (FastAPI only)
+                // Spanish — ef_/em_ are the Kokoro v1.0 voice-pack ids
+                { id: 'ef_dora', name: 'Dora (Spanish Female)' },
+                { id: 'em_alex', name: 'Alex (Spanish Male)' },
+                { id: 'em_santa', name: 'Santa (Spanish Male)' },
+
+                // Spanish (FastAPI only) — ids not present in the v1.0 ONNX
+                // voice pack, only served by the FastAPI voice set
                 { id: 'sf_dalia', name: 'Dalia (Spanish Female)', disabled: needsFastAPI },
                 { id: 'sm_agustin', name: 'Agustin (Spanish Male)', disabled: needsFastAPI }
             ];
@@ -1189,23 +1405,26 @@ export class TTSEngine {
      */
     getVoiceForLanguage(langCode) {
         const prefixMap = {
-            'en': 'af_', // American English by default
-            'ja': 'jf_',
-            'zh': 'zf_',
-            'fr': 'ff_',
-            'hi': 'hf_',
-            'it': 'if_',
-            'pt': 'pf_',
-            'es': 'sf_',
+            'en': ['af_'], // American English by default
+            'ja': ['jf_'],
+            'zh': ['zf_'],
+            'fr': ['ff_'],
+            'hi': ['hf_'],
+            'it': ['if_'],
+            'pt': ['pf_'],
+            'es': ['ef_', 'sf_'], // v1.0 voice-pack ids first, FastAPI-only ids second
         };
 
-        const prefix = prefixMap[langCode];
-        if (!prefix) return null;
+        const prefixes = prefixMap[langCode];
+        if (!prefixes) return null;
 
-        // Find the first enabled voice matching this prefix
+        // Find the first enabled voice matching a prefix
         const voices = this.getAvailableVoices();
-        const match = voices.find(v => v.id.startsWith(prefix) && !v.disabled);
-        return match ? match.id : null;
+        for (const prefix of prefixes) {
+            const match = voices.find(v => v.id.startsWith(prefix) && !v.disabled);
+            if (match) return match.id;
+        }
+        return null;
     }
 
     /**

@@ -507,6 +507,20 @@ class ReadingPartnerApp {
             }
         });
 
+        // Web Speech voices arrive asynchronously (empty list until the
+        // browser fires 'voiceschanged', notably on mobile) — refill the
+        // voice dropdowns when they do.
+        ttsEngine.onVoicesChanged(() => {
+            if (ttsEngine.getBackend() !== 'web-speech') return;
+            const voices = ttsEngine.getAvailableVoices();
+            if (this._controls) {
+                this._controls.setVoices(voices);
+            }
+            if (this._settingsModal) {
+                this._settingsModal.setVoices(voices);
+            }
+        });
+
         try {
             // Load saved backend preference
             const savedBackend = await storage.getSetting('ttsBackend');
@@ -541,14 +555,20 @@ class ReadingPartnerApp {
                 const dtype = ttsEngine.getDtype();
                 this._showTTSStatus(`TTS ready (${device}, ${dtype})`);
                 console.log(`TTS Engine: Kokoro with ${device} backend, ${dtype} precision`);
+            } else if (activeBackend === 'web-speech' && backend !== 'web-speech') {
+                this._showTTSStatus('Kokoro failed to load — using browser TTS for this session');
             } else {
                 this._showTTSStatus('TTS ready (Browser)');
             }
 
-            // Update settings modal to reflect actual backend
+            // Keep the *requested* backend in the settings form rather than
+            // the one actually running. A fallback (Kokoro load failure →
+            // web-speech, or FastAPI unreachable → kokoro-js) is session-only:
+            // this way a later Save doesn't persist the fallback as the
+            // user's preference, and the next launch retries their choice.
             this._settingsModal.setSettings({
                 ...this._settingsModal.getSettings(),
-                ttsBackend: activeBackend,
+                ttsBackend: backend,
                 fastApiUrl: ttsEngine.getFastApiUrl()
             });
 
