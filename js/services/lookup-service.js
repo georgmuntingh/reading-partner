@@ -92,7 +92,7 @@ export class LookupService {
                 voice: kokoroVoice,
                 speed: 0.9 // Slightly slower for clarity
             });
-            await ttsEngine.playAudio(audio);
+            await ttsEngine.playBuffer(audio, 0.9);
         } else if ('speechSynthesis' in window) {
             // Fallback to Web Speech API for unsupported languages
             const utterance = new SpeechSynthesisUtterance(phrase);
