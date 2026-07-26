@@ -17,6 +17,7 @@ export class NavigationPanel {
      * @param {(highlight: Object) => void} callbacks.onHighlightSelect
      * @param {(highlightId: string) => void} callbacks.onHighlightDelete
      * @param {() => void} [callbacks.onViewLookupHistory] - Open full lookup history overlay
+     * @param {() => void} [callbacks.onRefreshRedditThread] - Re-fetch the current Reddit thread
      */
     constructor(options, callbacks) {
         this._panel = options.panel;
@@ -61,6 +62,14 @@ export class NavigationPanel {
         if (addBookmarkBtn) {
             addBookmarkBtn.addEventListener('click', () => {
                 this._callbacks.onAddBookmark?.();
+            });
+        }
+
+        // Refresh Reddit thread button
+        const redditRefreshBtn = this._panel.querySelector('#reddit-refresh-btn');
+        if (redditRefreshBtn) {
+            redditRefreshBtn.addEventListener('click', () => {
+                this._callbacks.onRefreshRedditThread?.();
             });
         }
 
@@ -138,11 +147,33 @@ export class NavigationPanel {
             return;
         }
 
+        this._renderRedditSection();
         this._renderChapters();
         this._renderBookmarks();
         this._renderHighlights();
         this._renderLookups();
         this._renderQuizHistory();
+    }
+
+    /**
+     * Show the Reddit refresh controls, but only for Reddit threads.
+     */
+    _renderRedditSection() {
+        const section = this._panel.querySelector('#reddit-section');
+        if (!section) {
+            return;
+        }
+
+        const source = this._currentBook?.source;
+        const isReddit = source?.type === 'reddit';
+        section.classList.toggle('hidden', !isReddit);
+
+        const fetchedAt = this._panel.querySelector('#reddit-fetched-at');
+        if (fetchedAt) {
+            fetchedAt.textContent = isReddit && source.fetchedAt
+                ? `Fetched ${new Date(source.fetchedAt).toLocaleString()}`
+                : '';
+        }
     }
 
     /**

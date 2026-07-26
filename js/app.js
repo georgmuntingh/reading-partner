@@ -20,6 +20,8 @@ if (window.Capacitor?.isNativePlatform?.()) {
 }
 
 import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/parser-factory.js';
+import { fetchWithProxyFallback } from './utils/cors-proxy.js';
+import { fetchThread } from './services/reddit-client.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
@@ -196,7 +198,8 @@ class ReadingPartnerApp {
                 onAddBookmark: () => this._addBookmark(),
                 onHighlightSelect: (highlight) => this._navigateToHighlight(highlight),
                 onHighlightDelete: (id) => this._deleteHighlight(id),
-                onViewLookupHistory: () => this._showLookupHistory()
+                onViewLookupHistory: () => this._showLookupHistory(),
+                onRefreshRedditThread: () => this._handleRedditRefresh()
             }
         );
 
@@ -304,7 +307,8 @@ class ReadingPartnerApp {
                 onResumeBook: (savedState) => this._handleResumeFromModal(savedState),
                 onPasteText: (text, format, title) => this._handlePasteText(text, format, title),
                 onGenerateText: (text, format, title, meta) => this._handleGenerateText(text, format, title, meta),
-                onURLLoad: (url) => this._handleURLLoad(url)
+                onURLLoad: (url) => this._handleURLLoad(url),
+                onRedditLoad: (ref, options) => this._handleRedditLoad(ref, options)
             }
         );
 
@@ -844,39 +848,7 @@ class ReadingPartnerApp {
                 throw new Error('No readable content found in pasted text');
             }
 
-            if (isFromReader) {
-                this._showTTSStatus('Preparing reader...');
-            } else {
-                loadingText.textContent = 'Preparing reader...';
-            }
-
-            if (!this._controls) {
-                this._initializeReader();
-            } else {
-                this._readerView.setBookTitle(this._currentBook.title);
-                this._controls.setEnabled(true);
-                this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
-            }
-
-            this._navigationHistory?.clear();
-            this._viewDecoupled = false;
-
-            const position = this._readingState.getCurrentPosition();
-            await this._loadChapter(position.chapterIndex, false);
-
-            this._navigation.setBook(this._currentBook, position.chapterIndex);
-            this._navigation.setBookmarks(this._readingState.getBookmarks());
-            this._navigation.setHighlights(this._readingState.getHighlights());
-            this._refreshLookupNav();
-            this._loadQuizHistory();
-
-            this._showScreen('reader');
-            this._saveCookieState();
-
-            if (isFromReader) {
-                this._hideTTSStatus();
-                this._showToast(`Loaded "${this._currentBook.title}"`);
-            }
+            await this._enterReaderForCurrentBook(isFromReader);
         } catch (error) {
             console.error('Failed to load pasted content:', error);
             if (isFromReader) {
@@ -946,39 +918,7 @@ class ReadingPartnerApp {
                 throw new Error('No readable content found in generated text');
             }
 
-            if (isFromReader) {
-                this._showTTSStatus('Preparing reader...');
-            } else {
-                loadingText.textContent = 'Preparing reader...';
-            }
-
-            if (!this._controls) {
-                this._initializeReader();
-            } else {
-                this._readerView.setBookTitle(this._currentBook.title);
-                this._controls.setEnabled(true);
-                this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
-            }
-
-            this._navigationHistory?.clear();
-            this._viewDecoupled = false;
-
-            const position = this._readingState.getCurrentPosition();
-            await this._loadChapter(position.chapterIndex, false);
-
-            this._navigation.setBook(this._currentBook, position.chapterIndex);
-            this._navigation.setBookmarks(this._readingState.getBookmarks());
-            this._navigation.setHighlights(this._readingState.getHighlights());
-            this._refreshLookupNav();
-            this._loadQuizHistory();
-
-            this._showScreen('reader');
-            this._saveCookieState();
-
-            if (isFromReader) {
-                this._hideTTSStatus();
-                this._showToast(`Loaded "${this._currentBook.title}"`);
-            }
+            await this._enterReaderForCurrentBook(isFromReader);
         } catch (error) {
             console.error('Failed to load generated content:', error);
             if (isFromReader) {
@@ -989,6 +929,151 @@ class ReadingPartnerApp {
                 this._bookLoaderModal.show();
                 this._bookLoaderModal.showError(error.message);
             }
+        }
+    }
+
+    /**
+     * Handle a Reddit thread load from the book loader modal
+     * @param {{threadId: string, subreddit: string|null}} ref
+     * @param {{sort?: string, limit?: number}} options
+     */
+    async _handleRedditLoad(ref, options = {}) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+
+        if (isFromReader) {
+            this._pause();
+            this._qaController?.stop();
+            this._qaOverlay?.hide();
+            this._quizController?.stop();
+            this._quizOverlay?.hide();
+            if (this._qaController) {
+                this._qaController.setBookMeta(null);
+                this._qaController.clearHistory();
+            }
+            this._quizController?.resetSession();
+            this._currentChapterIndex = 0;
+        }
+
+        this._bookLoaderModal.showLoading('Fetching thread from Reddit...');
+
+        const { loadingIndicator, loadingText } = this._elements;
+
+        try {
+            const payload = await fetchThread(ref.threadId, options);
+
+            this._bookLoaderModal.hide();
+
+            if (isFromReader) {
+                this._showTTSStatus('Loading thread...');
+            } else {
+                loadingIndicator.classList.remove('hidden');
+                loadingText.textContent = 'Parsing thread...';
+            }
+
+            const url = ref.subreddit
+                ? `https://www.reddit.com/r/${ref.subreddit}/comments/${ref.threadId}/`
+                : `https://www.reddit.com/comments/${ref.threadId}/`;
+
+            this._currentBook = await this._readingState.loadRedditThread(
+                payload,
+                { url, threadId: ref.threadId },
+                options
+            );
+
+            if (!this._currentBook.chapters.length) {
+                throw new Error('No readable content found in that thread');
+            }
+
+            await this._enterReaderForCurrentBook(isFromReader);
+        } catch (error) {
+            console.error('Failed to load Reddit thread:', error);
+            if (isFromReader) {
+                this._hideTTSStatus();
+                this._showToast(`Failed to load: ${error.message}`);
+            }
+            loadingIndicator.classList.add('hidden');
+            this._bookLoaderModal.show();
+            this._bookLoaderModal.showError(error.message);
+        }
+    }
+
+    /**
+     * Re-fetch the current Reddit thread and rebuild the reader around it.
+     */
+    async _handleRedditRefresh() {
+        if (this._currentBook?.source?.type !== 'reddit') {
+            return;
+        }
+
+        this._pause();
+        this._navigation?.close();
+        this._showTTSStatus('Refreshing thread...');
+
+        try {
+            this._currentBook = await this._readingState.refreshRedditThread(
+                (threadId, options) => fetchThread(threadId, options)
+            );
+
+            this._navigationHistory?.clear();
+            this._viewDecoupled = false;
+
+            const position = this._readingState.getCurrentPosition();
+            await this._loadChapter(position.chapterIndex, false);
+
+            this._navigation.setBook(this._currentBook, position.chapterIndex);
+            this._navigation.setBookmarks(this._readingState.getBookmarks());
+            this._navigation.setHighlights(this._readingState.getHighlights());
+
+            this._saveCookieState();
+            this._hideTTSStatus();
+            this._showToast('Thread refreshed');
+        } catch (error) {
+            console.error('Failed to refresh Reddit thread:', error);
+            this._hideTTSStatus();
+            this._showToast(`Refresh failed: ${error.message}`);
+        }
+    }
+
+    /**
+     * Shared tail of the content-load handlers: bring up the reader around
+     * `this._currentBook`.
+     * @param {boolean} isFromReader - whether the load started from the reader
+     */
+    async _enterReaderForCurrentBook(isFromReader) {
+        const { loadingText } = this._elements;
+
+        if (isFromReader) {
+            this._showTTSStatus('Preparing reader...');
+        } else {
+            loadingText.textContent = 'Preparing reader...';
+        }
+
+        if (!this._controls) {
+            this._initializeReader();
+        } else {
+            this._readerView.setBookTitle(this._currentBook.title);
+            this._controls.setEnabled(true);
+            this._controls.setAskDisabled(!this._qaSettings.apiKey, 'Configure API key in Q&A Settings to enable voice questions');
+        }
+
+        this._navigationHistory?.clear();
+        this._viewDecoupled = false;
+
+        const position = this._readingState.getCurrentPosition();
+        await this._loadChapter(position.chapterIndex, false);
+
+        this._navigation.setBook(this._currentBook, position.chapterIndex);
+        this._navigation.setBookmarks(this._readingState.getBookmarks());
+        this._navigation.setHighlights(this._readingState.getHighlights());
+        this._refreshLookupNav();
+        this._loadQuizHistory();
+
+        this._showScreen('reader');
+        this._saveCookieState();
+
+        if (isFromReader) {
+            this._hideTTSStatus();
+            this._showToast(`Loaded "${this._currentBook.title}"`);
         }
     }
 
@@ -1081,40 +1166,28 @@ class ReadingPartnerApp {
             `https://www.gutenberg.org/files/${gutenbergBookId}/${gutenbergBookId}.epub`
         ];
 
-        // Multiple CORS proxies for reliability
-        const corsProxies = [
-            (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-        ];
-
-        // Build URL list: try each epub path with each proxy
-        const urlsToTry = [];
-        for (const epubUrl of gutenbergEpubUrls) {
-            for (const proxyFn of corsProxies) {
-                urlsToTry.push(proxyFn(epubUrl));
-            }
-        }
-
         let lastError = null;
 
-        for (const url of urlsToTry) {
+        // Try each epub path, each through the shared CORS proxy ladder
+        for (const epubUrl of gutenbergEpubUrls) {
             try {
-                const response = await fetch(url);
-
-                if (response.ok) {
-                    const blob = await response.blob();
-
-                    if (blob.size < 100) {
-                        throw new Error('Downloaded file is too small to be an EPUB');
+                let blob = null;
+                await fetchWithProxyFallback(epubUrl, {
+                    validate: async (response) => {
+                        const body = await response.blob();
+                        if (body.size < 100) {
+                            throw new Error('Downloaded file is too small to be an EPUB');
+                        }
+                        blob = body;
                     }
+                });
 
-                    const file = new File([blob], `gutenberg-${gutenbergBookId}.epub`, { type: 'application/epub+zip' });
-                    const source = { type: 'gutenberg', bookId: gutenbergBookId };
-                    return { file, source };
-                }
+                const file = new File([blob], `gutenberg-${gutenbergBookId}.epub`, { type: 'application/epub+zip' });
+                const source = { type: 'gutenberg', bookId: gutenbergBookId };
+                return { file, source };
             } catch (error) {
                 lastError = error;
-                console.log(`Failed to load from ${url}:`, error.message);
+                console.log(`Failed to load from ${epubUrl}:`, error.message);
             }
         }
 
@@ -1164,49 +1237,38 @@ class ReadingPartnerApp {
      * @returns {Promise<{file: File, source: Object}>}
      */
     async _downloadFromURL(url) {
-        const corsProxies = [
-            (u) => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-            (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`
-        ];
+        let blob = null;
 
-        let lastError = null;
-
-        for (const proxyFn of corsProxies) {
-            try {
-                const proxiedUrl = proxyFn(url);
-                const response = await fetch(proxiedUrl);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        let response;
+        try {
+            ({ response } = await fetchWithProxyFallback(url, {
+                validate: async (res) => {
+                    const body = await res.blob();
+                    if (body.size < 50) {
+                        throw new Error('Downloaded content is too small');
+                    }
+                    blob = body;
                 }
-
-                const blob = await response.blob();
-                if (blob.size < 50) {
-                    throw new Error('Downloaded content is too small');
-                }
-
-                // Determine content type from response headers, URL, and content
-                const contentType = response.headers.get('content-type') || '';
-                const { extension, mimeType } = this._detectContentType(url, contentType, blob);
-
-                // Extract a filename from the URL
-                const urlPath = new URL(url).pathname;
-                const urlFilename = urlPath.split('/').pop() || 'document';
-                const filename = urlFilename.includes('.') ? urlFilename : `${urlFilename}${extension}`;
-
-                const file = new File([blob], filename, { type: mimeType });
-                const source = { type: 'url', url };
-                return { file, source };
-            } catch (error) {
-                lastError = error;
-                console.log(`Failed to load from URL via proxy:`, error.message);
-            }
+            }));
+        } catch (error) {
+            throw new Error(
+                `Could not load content from URL. ${error?.message || 'All proxies failed.'}` +
+                ` The server may block cross-origin requests.`
+            );
         }
 
-        throw new Error(
-            `Could not load content from URL. ${lastError?.message || 'All proxies failed.'}` +
-            ` The server may block cross-origin requests.`
-        );
+        // Determine content type from response headers, URL, and content
+        const contentType = response.headers.get('content-type') || '';
+        const { extension, mimeType } = this._detectContentType(url, contentType, blob);
+
+        // Extract a filename from the URL
+        const urlPath = new URL(url).pathname;
+        const urlFilename = urlPath.split('/').pop() || 'document';
+        const filename = urlFilename.includes('.') ? urlFilename : `${urlFilename}${extension}`;
+
+        const file = new File([blob], filename, { type: mimeType });
+        const source = { type: 'url', url };
+        return { file, source };
     }
 
     /**
@@ -5331,7 +5393,7 @@ class ReadingPartnerApp {
                 openError = error;
             }
 
-            // If opening failed, try re-downloading for Gutenberg books
+            // If opening failed, try re-fetching sources we know how to reload
             if (openError) {
                 const source = savedState.source;
                 if (source?.type === 'gutenberg' && source.bookId) {
@@ -5340,6 +5402,22 @@ class ReadingPartnerApp {
                     const { file, source: dlSource } = await this._downloadGutenbergEpub(source.bookId);
                     await this._loadBook(file, dlSource, bookId);
                     return; // _loadBook handles everything including screen switch
+                }
+                if (source?.type === 'reddit' && source.threadId) {
+                    console.log('Thread data not in storage, re-fetching from Reddit...');
+                    loadingText.textContent = 'Re-fetching thread from Reddit...';
+                    const payload = await fetchThread(source.threadId, {
+                        sort: source.sort,
+                        limit: source.limit
+                    });
+                    this._currentBook = await this._readingState.loadRedditThread(
+                        payload,
+                        { url: source.url, threadId: source.threadId },
+                        { sort: source.sort, limit: source.limit },
+                        bookId
+                    );
+                    await this._enterReaderForCurrentBook(false);
+                    return;
                 }
                 throw new Error(openError.message + '. Please load the file again.');
             }

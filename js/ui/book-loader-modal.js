@@ -7,6 +7,7 @@ import { FORMAT_LABELS } from '../services/parser-factory.js';
 import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
 import { marked } from 'marked';
 import { llmClient } from '../services/llm-client.js';
+import { parseRedditUrl } from '../services/reddit-client.js';
 
 export class BookLoaderModal {
     /**
@@ -25,6 +26,7 @@ export class BookLoaderModal {
      * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
      * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
      * @param {(url: string) => void} callbacks.onURLLoad - Load content from a URL
+     * @param {(ref: Object, options: Object) => void} callbacks.onRedditLoad - Load a Reddit thread
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -270,6 +272,55 @@ export class BookLoaderModal {
                         </p>
                     </div>
 
+                    <div class="book-source-divider">
+                        <span>or</span>
+                    </div>
+
+                    <!-- Reddit Thread Option -->
+                    <div class="book-source-option" id="reddit-load-option">
+                        <div class="book-source-header">
+                            <div class="book-source-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="9"/>
+                                    <circle cx="8.5" cy="12" r="1"/>
+                                    <circle cx="15.5" cy="12" r="1"/>
+                                    <path d="M8.5 15.5c1 .8 2.2 1.2 3.5 1.2s2.5-.4 3.5-1.2"/>
+                                    <path d="M12 7.5l1-4 3 .7"/>
+                                    <circle cx="17" cy="4.5" r="1.2"/>
+                                </svg>
+                            </div>
+                            <div class="book-source-info">
+                                <h3>Load from Reddit</h3>
+                                <p>Read a whole thread — post and comments</p>
+                            </div>
+                        </div>
+                        <div class="url-input-row">
+                            <input type="text" id="reddit-load-input" class="form-input" placeholder="https://reddit.com/r/…/comments/…">
+                            <button class="btn btn-primary" id="reddit-load-btn">Load</button>
+                        </div>
+                        <div class="reddit-options-row">
+                            <div class="reddit-option">
+                                <label for="reddit-sort">Sort comments by</label>
+                                <select id="reddit-sort" class="form-select">
+                                    <option value="top" selected>Top</option>
+                                    <option value="best">Best</option>
+                                    <option value="new">New</option>
+                                    <option value="controversial">Controversial</option>
+                                    <option value="old">Old</option>
+                                    <option value="qa">Q&amp;A</option>
+                                </select>
+                            </div>
+                            <div class="reddit-option">
+                                <label for="reddit-limit">Max comments</label>
+                                <input type="number" id="reddit-limit" class="form-input" value="500" min="10" max="1000" step="10">
+                            </div>
+                        </div>
+                        <p class="form-hint reddit-hint">
+                            The post becomes the first chapter and each top-level comment its own chapter.
+                            Very large threads are truncated by Reddit; unloaded replies are marked in the text.
+                        </p>
+                    </div>
+
                     <!-- Loading State -->
                     <div id="book-loader-loading" class="book-loader-loading hidden">
                         <div class="spinner"></div>
@@ -324,6 +375,11 @@ export class BookLoaderModal {
             // URL load elements
             urlInput: this._container.querySelector('#url-load-input'),
             urlLoadBtn: this._container.querySelector('#url-load-btn'),
+            // Reddit load elements
+            redditInput: this._container.querySelector('#reddit-load-input'),
+            redditLoadBtn: this._container.querySelector('#reddit-load-btn'),
+            redditSort: this._container.querySelector('#reddit-sort'),
+            redditLimit: this._container.querySelector('#reddit-limit'),
             // Search elements
             searchInput: this._container.querySelector('#gutenberg-search-input'),
             searchBtn: this._container.querySelector('#gutenberg-search-btn'),
@@ -460,6 +516,18 @@ export class BookLoaderModal {
         this._elements.urlInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 this._loadFromURL();
+            }
+        });
+
+        // Reddit load button
+        this._elements.redditLoadBtn.addEventListener('click', () => {
+            this._loadFromReddit();
+        });
+
+        // Enter key in Reddit input
+        this._elements.redditInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this._loadFromReddit();
             }
         });
 
@@ -718,6 +786,29 @@ export class BookLoaderModal {
 
         this._hideError();
         this._callbacks.onURLLoad?.(url);
+    }
+
+    /**
+     * Handle loading a Reddit thread
+     */
+    _loadFromReddit() {
+        const input = this._elements.redditInput.value.trim();
+
+        let ref;
+        try {
+            ref = parseRedditUrl(input);
+        } catch (error) {
+            this._showError(error.message);
+            return;
+        }
+
+        const limit = parseInt(this._elements.redditLimit.value, 10);
+
+        this._hideError();
+        this._callbacks.onRedditLoad?.(ref, {
+            sort: this._elements.redditSort.value,
+            limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 10), 1000) : undefined
+        });
     }
 
     /**

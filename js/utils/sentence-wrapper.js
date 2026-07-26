@@ -22,12 +22,26 @@ const BLOCK_TAGS = new Set([
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'TEXTAREA']);
 
 /**
+ * Class that marks an element as visible-but-not-spoken. Text inside it is
+ * rendered normally but never enters the sentence stream, so TTS skips it.
+ * Used for things like Reddit comment scores and timestamps.
+ */
+const SKIP_CLASS = 'tts-skip';
+
+/**
  * Normalize a tag name to uppercase for case-insensitive comparison.
  * XHTML documents (used in EPUBs) have lowercase tag names, while HTML
  * documents use uppercase. This ensures both are handled correctly.
  */
 function tag(element) {
     return element.tagName.toUpperCase();
+}
+
+/**
+ * Check whether an element's content should be kept out of the sentence stream.
+ */
+function isSkipped(element) {
+    return SKIP_TAGS.has(tag(element)) || element.classList?.contains(SKIP_CLASS);
 }
 
 /**
@@ -56,7 +70,7 @@ function collectTextNodes(root) {
             acceptNode(node) {
                 let parent = node.parentNode;
                 while (parent && parent !== root) {
-                    if (SKIP_TAGS.has(tag(parent))) {
+                    if (isSkipped(parent)) {
                         return NodeFilter.FILTER_REJECT;
                     }
                     parent = parent.parentNode;
@@ -220,7 +234,7 @@ function processLeafBlock(element, sentences) {
  * @param {string[]} sentences - array that collects plain-text sentences
  */
 export function wrapSentencesInElement(element, sentences) {
-    if (SKIP_TAGS.has(tag(element))) return;
+    if (isSkipped(element)) return;
 
     if (!hasBlockChildren(element)) {
         // Leaf block: contains only inline content — process as a unit.
@@ -229,7 +243,7 @@ export function wrapSentencesInElement(element, sentences) {
         // Container block: recurse into children.
         for (const child of Array.from(element.childNodes)) {
             if (child.nodeType === Node.ELEMENT_NODE) {
-                if (SKIP_TAGS.has(tag(child))) continue;
+                if (isSkipped(child)) continue;
                 if (BLOCK_TAGS.has(tag(child))) {
                     wrapSentencesInElement(child, sentences);
                 } else {

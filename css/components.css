@@ -2177,6 +2177,85 @@
     color: #9d174d;
 }
 
+.format-reddit {
+    background-color: #ffe8d6;
+    color: #9a3412;
+}
+
+/* Reddit Load Section */
+.reddit-options-row {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.reddit-option {
+    flex: 1;
+    min-width: 0;
+}
+
+.reddit-option label {
+    display: block;
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-xs);
+}
+
+/* Reddit thread rendering in the reader */
+.reddit-comment {
+    margin-bottom: 1.2em;
+    padding-left: 0.75em;
+    border-left: 2px solid var(--border-color);
+}
+
+.reddit-depth-0 {
+    padding-left: 0;
+    border-left: none;
+}
+
+.reddit-depth-1 { margin-left: 0.5em; }
+.reddit-depth-2 { margin-left: 1em; }
+.reddit-depth-3 { margin-left: 1.5em; }
+.reddit-depth-4 { margin-left: 2em; }
+.reddit-depth-5 { margin-left: 2.5em; }
+
+.reddit-byline {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 0.25em;
+}
+
+.reddit-more,
+.reddit-media-note {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.reddit-media img,
+.reddit-content img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+}
+
+/*
+ * Content marked tts-skip is visible but never enters the sentence stream,
+ * so it is rendered muted to signal that it will not be read aloud.
+ */
+.tts-skip {
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+/* Navigation panel hint text */
+.nav-hint {
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    margin-top: var(--spacing-xs);
+}
+
 /* URL Load Section */
 .url-input-row {
     display: flex;

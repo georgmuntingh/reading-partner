@@ -8,6 +8,7 @@ import { MarkdownParser } from './markdown-parser.js';
 import { HTMLParser } from './html-parser.js';
 import { PlainTextParser } from './plain-text-parser.js';
 import { PDFParser } from './pdf-parser.js';
+import { RedditParser } from './reddit-parser.js';
 
 /** @type {Map<string, import('./format-parser.js').FormatParser>} */
 const parserInstances = new Map();
@@ -38,6 +39,7 @@ export const FORMAT_LABELS = {
     html: 'HTML',
     plaintext: 'Text',
     pdf: 'PDF',
+    reddit: 'Reddit',
 };
 
 /**
@@ -81,6 +83,9 @@ export function getParser(fileType) {
             break;
         case 'pdf':
             parser = new PDFParser();
+            break;
+        case 'reddit':
+            parser = new RedditParser();
             break;
         default:
             throw new Error(`Unsupported file format: ${fileType}`);
