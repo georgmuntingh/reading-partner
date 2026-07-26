@@ -178,6 +178,9 @@ export class ReadingStateController {
             threadId,
             sort: options.sort,
             limit: options.limit,
+            // Loaded from JSON the user pasted by hand, because every fetch
+            // route was blocked. A refresh will hit the same wall.
+            viaPaste: options.viaPaste || false,
             fetchedAt: Date.now()
         };
 

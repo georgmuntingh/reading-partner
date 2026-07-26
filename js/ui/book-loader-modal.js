@@ -27,6 +27,7 @@ export class BookLoaderModal {
      * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
      * @param {(url: string) => void} callbacks.onURLLoad - Load content from a URL
      * @param {(ref: Object, options: Object) => void} callbacks.onRedditLoad - Load a Reddit thread
+     * @param {(json: string, ref: Object) => void} callbacks.onRedditPasteJson - Load a hand-pasted thread JSON
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -34,6 +35,7 @@ export class BookLoaderModal {
         this._readingHistory = [];
         this._pasteExpanded = false;
         this._generateExpanded = false;
+        this._lastRedditRef = null;
         this._isGenerating = false;
         this._lastGenerateParams = null;
         this._lastGenerateResult = null;
@@ -336,6 +338,31 @@ export class BookLoaderModal {
                         </svg>
                         <span id="book-loader-error-text"></span>
                     </div>
+
+                    <!-- Reddit fetch-failure recovery panel -->
+                    <div id="reddit-fallback" class="reddit-fallback hidden">
+                        <p class="reddit-fallback-lead">
+                            Reddit could not be reached from the browser. Every route was tried:
+                        </p>
+                        <table class="reddit-attempts">
+                            <thead>
+                                <tr><th>Route</th><th>Result</th></tr>
+                            </thead>
+                            <tbody id="reddit-attempts-body"></tbody>
+                        </table>
+                        <p class="form-hint">
+                            You can still load it by hand: open the thread's JSON in a new tab
+                            (your own browser is not blocked), copy everything, and paste it below.
+                        </p>
+                        <p>
+                            <a id="reddit-json-link" class="btn btn-secondary" href="#" target="_blank" rel="noopener">
+                                Open thread JSON
+                            </a>
+                        </p>
+                        <textarea id="reddit-json-input" class="form-input reddit-json-input" rows="4"
+                                  placeholder="Paste the JSON here"></textarea>
+                        <button class="btn btn-primary" id="reddit-json-load-btn">Load pasted JSON</button>
+                    </div>
                 </div>
             </div>
         `;
@@ -390,7 +417,13 @@ export class BookLoaderModal {
             loading: this._container.querySelector('#book-loader-loading'),
             loadingText: this._container.querySelector('#book-loader-loading-text'),
             error: this._container.querySelector('#book-loader-error'),
-            errorText: this._container.querySelector('#book-loader-error-text')
+            errorText: this._container.querySelector('#book-loader-error-text'),
+            // Reddit fetch-failure recovery
+            redditFallback: this._container.querySelector('#reddit-fallback'),
+            redditAttemptsBody: this._container.querySelector('#reddit-attempts-body'),
+            redditJsonLink: this._container.querySelector('#reddit-json-link'),
+            redditJsonInput: this._container.querySelector('#reddit-json-input'),
+            redditJsonLoadBtn: this._container.querySelector('#reddit-json-load-btn')
         };
 
         // Track search state
@@ -522,6 +555,17 @@ export class BookLoaderModal {
         // Reddit load button
         this._elements.redditLoadBtn.addEventListener('click', () => {
             this._loadFromReddit();
+        });
+
+        // Load hand-pasted thread JSON
+        this._elements.redditJsonLoadBtn.addEventListener('click', () => {
+            const text = this._elements.redditJsonInput.value.trim();
+            if (!text) {
+                this._showError('Paste the thread JSON first');
+                return;
+            }
+            this._hideError();
+            this._callbacks.onRedditPasteJson?.(text, this._lastRedditRef);
         });
 
         // Enter key in Reddit input
@@ -803,6 +847,9 @@ export class BookLoaderModal {
         }
 
         const limit = parseInt(this._elements.redditLimit.value, 10);
+
+        // Remembered so the paste fallback knows which thread it belongs to.
+        this._lastRedditRef = ref;
 
         this._hideError();
         this._callbacks.onRedditLoad?.(ref, {
@@ -1303,10 +1350,69 @@ export class BookLoaderModal {
     }
 
     /**
+     * Show the Reddit recovery panel: what each route did, a link to the raw
+     * JSON, and a box to paste it into.
+     *
+     * @param {Object} params
+     * @param {string} params.message
+     * @param {import('../utils/cors-proxy.js').FetchAttempt[]} [params.attempts]
+     * @param {string} params.jsonUrl - the .json URL that was attempted
+     */
+    showRedditFailure({ message, attempts = [], jsonUrl }) {
+        this._hideLoading();
+        this._showError(message);
+
+        const body = this._elements.redditAttemptsBody;
+        body.innerHTML = '';
+
+        for (const attempt of attempts) {
+            const row = document.createElement('tr');
+
+            const tier = document.createElement('td');
+            tier.textContent = attempt.tier;
+
+            const outcome = document.createElement('td');
+            outcome.textContent = this._describeAttempt(attempt);
+
+            row.append(tier, outcome);
+            body.appendChild(row);
+        }
+
+        this._elements.redditJsonLink.href = jsonUrl || '#';
+        this._elements.redditJsonInput.value = '';
+        this._elements.redditFallback.classList.remove('hidden');
+    }
+
+    /**
+     * One-line summary of a failed fetch attempt.
+     * @param {Object} attempt
+     * @returns {string}
+     */
+    _describeAttempt(attempt) {
+        const parts = [];
+        parts.push(attempt.status ? `HTTP ${attempt.status}` : 'no response');
+        if (attempt.contentType) {
+            parts.push(attempt.contentType.split(';')[0]);
+        }
+        if (attempt.error) {
+            parts.push(attempt.error);
+        }
+        return parts.join(' · ');
+    }
+
+    /**
+     * Hide the Reddit recovery panel
+     */
+    hideRedditFailure() {
+        this._elements.redditFallback.classList.add('hidden');
+    }
+
+    /**
      * Hide error message
      */
     _hideError() {
         this._elements.error.classList.add('hidden');
+        this._elements.redditFallback?.classList.add('hidden');
     }
 
     /**

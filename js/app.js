@@ -21,7 +21,7 @@ if (window.Capacitor?.isNativePlatform?.()) {
 
 import { detectFileType, FORMAT_LABELS, ACCEPTED_EXTENSIONS } from './services/parser-factory.js';
 import { fetchWithProxyFallback } from './utils/cors-proxy.js';
-import { fetchThread } from './services/reddit-client.js';
+import { fetchThread, buildThreadUrl, parseThreadJson } from './services/reddit-client.js';
 import { ttsEngine } from './services/tts-engine.js';
 import { storage } from './services/storage.js';
 import { llmClient, OPENROUTER_MODELS, DEFAULT_MODEL } from './services/llm-client.js';
@@ -71,6 +71,7 @@ class ReadingPartnerApp {
         this._savedVoice = undefined;
         this._wasPlayingBeforeQA = false;
         this._readingHistorySize = 3;
+        this._redditClientId = '';
 
         // STT backend
         this._sttBackend = 'web-speech';
@@ -270,7 +271,7 @@ class ReadingPartnerApp {
         // Setup settings button
         this._elements.settingsBtn = document.getElementById('settings-btn');
         this._elements.settingsBtn?.addEventListener('click', () => {
-            this._settingsModal.setSettings({ readingHistorySize: this._readingHistorySize, lookupLanguage: lookupService.getTargetLanguage(), ...this._qaSettings, ...this._quizSettings });
+            this._settingsModal.setSettings({ readingHistorySize: this._readingHistorySize, redditClientId: this._redditClientId, lookupLanguage: lookupService.getTargetLanguage(), ...this._qaSettings, ...this._quizSettings });
             this._settingsModal.show();
         });
 
@@ -308,7 +309,8 @@ class ReadingPartnerApp {
                 onPasteText: (text, format, title) => this._handlePasteText(text, format, title),
                 onGenerateText: (text, format, title, meta) => this._handleGenerateText(text, format, title, meta),
                 onURLLoad: (url) => this._handleURLLoad(url),
-                onRedditLoad: (ref, options) => this._handleRedditLoad(ref, options)
+                onRedditLoad: (ref, options) => this._handleRedditLoad(ref, options),
+                onRedditPasteJson: (json, ref) => this._handleRedditPasteJson(json, ref)
             }
         );
 
@@ -959,7 +961,10 @@ class ReadingPartnerApp {
         const { loadingIndicator, loadingText } = this._elements;
 
         try {
-            const payload = await fetchThread(ref.threadId, options);
+            const payload = await fetchThread(ref.threadId, {
+                ...options,
+                clientId: this._redditClientId
+            });
 
             this._bookLoaderModal.hide();
 
@@ -993,6 +998,60 @@ class ReadingPartnerApp {
             }
             loadingIndicator.classList.add('hidden');
             this._bookLoaderModal.show();
+
+            if (error.attempts) {
+                // Every route failed — show what each one did, plus the
+                // paste-it-yourself escape hatch.
+                this._bookLoaderModal.showRedditFailure({
+                    message: error.message,
+                    attempts: error.attempts,
+                    jsonUrl: buildThreadUrl(ref.threadId, options)
+                });
+            } else {
+                this._bookLoaderModal.showError(error.message);
+            }
+        }
+    }
+
+    /**
+     * Load a thread from JSON the user fetched and pasted themselves.
+     * @param {string} json
+     * @param {{threadId: string, subreddit: string|null}} ref
+     */
+    async _handleRedditPasteJson(json, ref) {
+        const isFromReader = this._elements.readerScreen.classList.contains('active');
+        const { loadingIndicator, loadingText } = this._elements;
+
+        try {
+            const payload = parseThreadJson(json);
+
+            this._bookLoaderModal.hide();
+
+            if (isFromReader) {
+                this._showTTSStatus('Loading thread...');
+            } else {
+                loadingIndicator.classList.remove('hidden');
+                loadingText.textContent = 'Parsing thread...';
+            }
+
+            const threadId = ref?.threadId
+                || payload[0]?.data?.children?.[0]?.data?.id
+                || 'pasted';
+            const url = payload[0]?.data?.children?.[0]?.data?.permalink
+                ? `https://www.reddit.com${payload[0].data.children[0].data.permalink}`
+                : `https://www.reddit.com/comments/${threadId}/`;
+
+            this._currentBook = await this._readingState.loadRedditThread(
+                payload,
+                { url, threadId },
+                { viaPaste: true }
+            );
+
+            await this._enterReaderForCurrentBook(isFromReader);
+        } catch (error) {
+            console.error('Failed to load pasted Reddit JSON:', error);
+            loadingIndicator.classList.add('hidden');
+            this._bookLoaderModal.show();
             this._bookLoaderModal.showError(error.message);
         }
     }
@@ -1001,17 +1060,29 @@ class ReadingPartnerApp {
      * Re-fetch the current Reddit thread and rebuild the reader around it.
      */
     async _handleRedditRefresh() {
-        if (this._currentBook?.source?.type !== 'reddit') {
+        const source = this._currentBook?.source;
+        if (source?.type !== 'reddit') {
             return;
         }
 
         this._pause();
         this._navigation?.close();
+
+        if (source.viaPaste) {
+            // This thread only loaded because the user pasted the JSON — an
+            // automatic re-fetch would hit the same block. Send them back to
+            // the importer, where the paste box lives.
+            this._showToast('This thread was loaded by pasting JSON — import it again to refresh');
+            this._bookLoaderModal.setReadingHistory(this._loadCookieState());
+            this._bookLoaderModal.show();
+            return;
+        }
+
         this._showTTSStatus('Refreshing thread...');
 
         try {
             this._currentBook = await this._readingState.refreshRedditThread(
-                (threadId, options) => fetchThread(threadId, options)
+                (threadId, options) => fetchThread(threadId, { ...options, clientId: this._redditClientId })
             );
 
             this._navigationHistory?.clear();
@@ -3018,6 +3089,9 @@ class ReadingPartnerApp {
         }
 
         // Save general settings
+        if (settings.redditClientId !== undefined) {
+            this._redditClientId = settings.redditClientId;
+        }
         if (settings.readingHistorySize !== undefined) {
             this._readingHistorySize = settings.readingHistorySize;
             // Trim existing cookie history if new size is smaller
@@ -3028,6 +3102,9 @@ class ReadingPartnerApp {
         try {
             if (settings.readingHistorySize !== undefined) {
                 await storage.saveSetting('readingHistorySize', settings.readingHistorySize);
+            }
+            if (settings.redditClientId !== undefined) {
+                await storage.saveSetting('redditClientId', settings.redditClientId);
             }
             await storage.saveSetting('qaApiKey', this._qaSettings.apiKey);
             await storage.saveSetting('qaModel', this._qaSettings.model);
@@ -4629,6 +4706,11 @@ class ReadingPartnerApp {
                 this._readingHistorySize = readingHistorySize;
             }
 
+            const redditClientId = await storage.getSetting('redditClientId');
+            if (redditClientId !== null) {
+                this._redditClientId = redditClientId;
+            }
+
             const speed = await storage.getSetting('playbackSpeed');
             if (speed !== null) {
                 // Will be set when controls are initialized
@@ -4848,6 +4930,7 @@ class ReadingPartnerApp {
             // Update settings modal with all settings
             this._settingsModal?.setSettings({
                 readingHistorySize: this._readingHistorySize,
+                redditClientId: this._redditClientId,
                 ...this._qaSettings,
                 ...this._quizSettings,
                 voice: this._savedVoice,
@@ -5408,7 +5491,8 @@ class ReadingPartnerApp {
                     loadingText.textContent = 'Re-fetching thread from Reddit...';
                     const payload = await fetchThread(source.threadId, {
                         sort: source.sort,
-                        limit: source.limit
+                        limit: source.limit,
+                        clientId: this._redditClientId
                     });
                     this._currentBook = await this._readingState.loadRedditThread(
                         payload,

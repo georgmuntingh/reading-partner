@@ -210,6 +210,18 @@ export class SettingsModal {
                         </div>
 
                         <div class="form-group">
+                            <label for="settings-reddit-client-id">Reddit Client ID (optional)</label>
+                            <input type="text" id="settings-reddit-client-id" class="form-input" placeholder="e.g. Xy1AbC2dEfGh3i">
+                            <p class="form-hint">
+                                Lets Reddit imports use the official API instead of public proxies.
+                                Create a free <strong>installed app</strong> at
+                                <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener">reddit.com/prefs/apps</a>
+                                and paste its client ID (no secret needed). The free tier allows
+                                100 requests per minute, shared by everyone using this site.
+                            </p>
+                        </div>
+
+                        <div class="form-group">
                             <label for="settings-lookup-language">Translation Target Language</label>
                             <select id="settings-lookup-language" class="form-select">
                                 <option value="auto">Auto (LLM decides)</option>
@@ -1179,6 +1191,7 @@ export class SettingsModal {
             closeBtn: this._container.querySelector('.modal-close-btn'),
             historySize: this._container.querySelector('#settings-history-size'),
             historySizeValue: this._container.querySelector('#settings-history-size-value'),
+            redditClientId: this._container.querySelector('#settings-reddit-client-id'),
             voice: this._container.querySelector('#settings-voice'),
             customVoice: this._container.querySelector('#settings-custom-voice'),
             customVoiceGroup: this._container.querySelector('#settings-custom-voice-group'),
@@ -2203,6 +2216,7 @@ export class SettingsModal {
     _save() {
         const settings = {
             readingHistorySize: parseInt(this._elements.historySize.value) || 3,
+            redditClientId: this._elements.redditClientId.value.trim(),
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
             fullChapterContext: this._elements.fullChapterContext.checked,
@@ -2488,6 +2502,7 @@ export class SettingsModal {
         // General settings
         this._elements.historySize.value = this._settings.readingHistorySize || 3;
         this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 3;
+        this._elements.redditClientId.value = this._settings.redditClientId || '';
 
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;

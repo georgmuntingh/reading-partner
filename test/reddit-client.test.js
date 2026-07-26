@@ -4,6 +4,7 @@ import {
     buildThreadUrl,
     fetchThread,
     isThreadPayload,
+    parseThreadJson,
     DEFAULT_SORT
 } from '../js/services/reddit-client.js';
 
@@ -168,18 +169,160 @@ describe('fetchThread', () => {
         expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     });
 
-    it('surfaces a Reddit error payload once every tier is exhausted', async () => {
+    it('records a Reddit error payload against every tier it tried', async () => {
         globalThis.fetch = vi.fn(async () => jsonResponse({ error: 403, message: 'Forbidden' }));
 
-        await expect(fetchThread('1abc23')).rejects.toThrow(/403/);
+        const error = await fetchThread('1abc23').catch((e) => e);
+
+        expect(error.name).toBe('ProxyFetchError');
+        expect(error.attempts.length).toBeGreaterThan(1);
+        expect(error.describeAttempts()).toMatch(/403/);
+        // Every tier is reported, not just the last one.
+        expect(error.attempts.every((a) => a.error)).toBe(true);
     });
 
-    it('reports a deleted thread', async () => {
+    it('reports a deleted thread in the attempt log', async () => {
         globalThis.fetch = vi.fn(async () => jsonResponse([
             { kind: 'Listing', data: { children: [] } },
             { kind: 'Listing', data: { children: [] } }
         ]));
 
-        await expect(fetchThread('1abc23')).rejects.toThrow(/could not be found|Unexpected/i);
+        const error = await fetchThread('1abc23').catch((e) => e);
+
+        expect(error.describeAttempts()).toMatch(/could not be found|Unexpected/i);
+    });
+
+    it('labels the smaller-limit retry pass distinctly', async () => {
+        globalThis.fetch = vi.fn(async () => {
+            throw new Error('CORS blocked');
+        });
+
+        const error = await fetchThread('1abc23', { limit: 500 }).catch((e) => e);
+        const tiers = error.attempts.map((a) => a.tier);
+
+        expect(tiers).toContain('direct');
+        expect(tiers).toContain('direct (retry, limit 100)');
+        // No tier name appears twice unlabelled.
+        const plain = tiers.filter((t) => !t.includes('retry'));
+        expect(new Set(plain).size).toBe(plain.length);
+    });
+
+    it('names each tier it tried', async () => {
+        globalThis.fetch = vi.fn(async () => {
+            throw new Error('CORS blocked');
+        });
+
+        const error = await fetchThread('1abc23').catch((e) => e);
+        const tiers = error.attempts.map((a) => a.tier);
+
+        expect(tiers).toContain('direct');
+        expect(tiers).toContain('corsproxy.io');
+        expect(tiers).toContain('allorigins/raw');
+        expect(tiers).toContain('allorigins/get');
+    });
+
+    it('retries once at a smaller limit when everything fails', async () => {
+        globalThis.fetch = vi.fn(async () => {
+            throw new Error('CORS blocked');
+        });
+
+        await fetchThread('1abc23', { limit: 500 }).catch(() => {});
+
+        const requested = globalThis.fetch.mock.calls.map((c) => decodeURIComponent(c[0]));
+        expect(requested.some((u) => u.includes('limit=500'))).toBe(true);
+        expect(requested.some((u) => u.includes('limit=100'))).toBe(true);
+        // Exactly one retry pass, not a loop.
+        expect(requested.filter((u) => u.includes('limit=100')).length)
+            .toBe(requested.filter((u) => u.includes('limit=500')).length);
+    });
+
+    it('does not retry when the limit is already small', async () => {
+        globalThis.fetch = vi.fn(async () => {
+            throw new Error('CORS blocked');
+        });
+
+        await fetchThread('1abc23', { limit: 50 }).catch(() => {});
+
+        const requested = globalThis.fetch.mock.calls.map((c) => decodeURIComponent(c[0]));
+        expect(requested.every((u) => u.includes('limit=50'))).toBe(true);
+    });
+
+    describe('OAuth tier', () => {
+        it('is skipped when no client ID is configured', async () => {
+            globalThis.fetch = vi.fn(async () => jsonResponse(threadPayload()));
+
+            await fetchThread('1abc23');
+
+            const requested = globalThis.fetch.mock.calls.map((c) => c[0]);
+            expect(requested.some((u) => u.includes('oauth.reddit.com'))).toBe(false);
+        });
+
+        it('is tried first when a client ID is configured', async () => {
+            const payload = threadPayload();
+            globalThis.fetch = vi.fn(async (url) => {
+                if (url.includes('access_token')) {
+                    return { ok: true, status: 200, json: async () => ({ access_token: 't0k', expires_in: 3600 }) };
+                }
+                if (url.includes('oauth.reddit.com')) {
+                    return jsonResponse(payload);
+                }
+                throw new Error('should not reach the ladder');
+            });
+
+            const result = await fetchThread('1abc23', { clientId: 'abc123' });
+
+            expect(result).toEqual(payload);
+            const requested = globalThis.fetch.mock.calls.map((c) => c[0]);
+            expect(requested[0]).toContain('access_token');
+            expect(requested[1]).toContain('oauth.reddit.com');
+        });
+
+        it('falls through to the ladder when OAuth fails', async () => {
+            const payload = threadPayload();
+            globalThis.fetch = vi.fn(async (url) => {
+                if (url.includes('access_token')) {
+                    return { ok: false, status: 401, json: async () => ({}) };
+                }
+                if (url.includes('oauth.reddit.com')) {
+                    throw new Error('unreachable');
+                }
+                return jsonResponse(payload);
+            });
+
+            const result = await fetchThread('1abc23', { clientId: 'abc123' });
+
+            expect(result).toEqual(payload);
+        });
+    });
+
+    describe('native tier', () => {
+        afterEach(() => {
+            delete window.Capacitor;
+        });
+
+        it('is skipped on the web build', async () => {
+            globalThis.fetch = vi.fn(async () => jsonResponse(threadPayload()));
+
+            await fetchThread('1abc23');
+
+            expect(globalThis.fetch).toHaveBeenCalled();
+        });
+    });
+});
+
+describe('parseThreadJson', () => {
+    it('returns a valid payload', () => {
+        const payload = threadPayload();
+        expect(parseThreadJson(JSON.stringify(payload))).toEqual(payload);
+    });
+
+    it('rejects an HTML block page', () => {
+        expect(() => parseThreadJson('<html>blocked</html>'))
+            .toThrow(/was not JSON/i);
+    });
+
+    it('rejects a valid-JSON non-thread', () => {
+        expect(() => parseThreadJson(JSON.stringify({ error: 403, message: 'Forbidden' })))
+            .toThrow(/403/);
     });
 });
