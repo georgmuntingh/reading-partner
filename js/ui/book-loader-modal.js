@@ -7,6 +7,7 @@ import { FORMAT_LABELS } from '../services/parser-factory.js';
 import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
 import { marked } from 'marked';
 import { llmClient } from '../services/llm-client.js';
+import { parseRedditUrl } from '../services/reddit-client.js';
 
 export class BookLoaderModal {
     /**
@@ -25,6 +26,8 @@ export class BookLoaderModal {
      * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
      * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
      * @param {(url: string) => void} callbacks.onURLLoad - Load content from a URL
+     * @param {(ref: Object, options: Object) => void} callbacks.onRedditLoad - Load a Reddit thread
+     * @param {(json: string, ref: Object) => void} callbacks.onRedditPasteJson - Load a hand-pasted thread JSON
      */
     constructor(options, callbacks) {
         this._container = options.container;
@@ -32,6 +35,7 @@ export class BookLoaderModal {
         this._readingHistory = [];
         this._pasteExpanded = false;
         this._generateExpanded = false;
+        this._lastRedditRef = null;
         this._isGenerating = false;
         this._lastGenerateParams = null;
         this._lastGenerateResult = null;
@@ -270,6 +274,55 @@ export class BookLoaderModal {
                         </p>
                     </div>
 
+                    <div class="book-source-divider">
+                        <span>or</span>
+                    </div>
+
+                    <!-- Reddit Thread Option -->
+                    <div class="book-source-option" id="reddit-load-option">
+                        <div class="book-source-header">
+                            <div class="book-source-icon">
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="9"/>
+                                    <circle cx="8.5" cy="12" r="1"/>
+                                    <circle cx="15.5" cy="12" r="1"/>
+                                    <path d="M8.5 15.5c1 .8 2.2 1.2 3.5 1.2s2.5-.4 3.5-1.2"/>
+                                    <path d="M12 7.5l1-4 3 .7"/>
+                                    <circle cx="17" cy="4.5" r="1.2"/>
+                                </svg>
+                            </div>
+                            <div class="book-source-info">
+                                <h3>Load from Reddit</h3>
+                                <p>Read a whole thread — post and comments</p>
+                            </div>
+                        </div>
+                        <div class="url-input-row">
+                            <input type="text" id="reddit-load-input" class="form-input" placeholder="https://reddit.com/r/…/comments/…">
+                            <button class="btn btn-primary" id="reddit-load-btn">Load</button>
+                        </div>
+                        <div class="reddit-options-row">
+                            <div class="reddit-option">
+                                <label for="reddit-sort">Sort comments by</label>
+                                <select id="reddit-sort" class="form-select">
+                                    <option value="top" selected>Top</option>
+                                    <option value="best">Best</option>
+                                    <option value="new">New</option>
+                                    <option value="controversial">Controversial</option>
+                                    <option value="old">Old</option>
+                                    <option value="qa">Q&amp;A</option>
+                                </select>
+                            </div>
+                            <div class="reddit-option">
+                                <label for="reddit-limit">Max comments</label>
+                                <input type="number" id="reddit-limit" class="form-input" value="500" min="10" max="1000" step="10">
+                            </div>
+                        </div>
+                        <p class="form-hint reddit-hint">
+                            The post becomes the first chapter and each top-level comment its own chapter.
+                            Very large threads are truncated by Reddit; unloaded replies are marked in the text.
+                        </p>
+                    </div>
+
                     <!-- Loading State -->
                     <div id="book-loader-loading" class="book-loader-loading hidden">
                         <div class="spinner"></div>
@@ -284,6 +337,31 @@ export class BookLoaderModal {
                             <line x1="12" y1="16" x2="12.01" y2="16"/>
                         </svg>
                         <span id="book-loader-error-text"></span>
+                    </div>
+
+                    <!-- Reddit fetch-failure recovery panel -->
+                    <div id="reddit-fallback" class="reddit-fallback hidden">
+                        <p class="reddit-fallback-lead">
+                            Reddit could not be reached from the browser. Every route was tried:
+                        </p>
+                        <table class="reddit-attempts">
+                            <thead>
+                                <tr><th>Route</th><th>Result</th></tr>
+                            </thead>
+                            <tbody id="reddit-attempts-body"></tbody>
+                        </table>
+                        <p class="form-hint">
+                            You can still load it by hand: open the thread's JSON in a new tab
+                            (your own browser is not blocked), copy everything, and paste it below.
+                        </p>
+                        <p>
+                            <a id="reddit-json-link" class="btn btn-secondary" href="#" target="_blank" rel="noopener">
+                                Open thread JSON
+                            </a>
+                        </p>
+                        <textarea id="reddit-json-input" class="form-input reddit-json-input" rows="4"
+                                  placeholder="Paste the JSON here"></textarea>
+                        <button class="btn btn-primary" id="reddit-json-load-btn">Load pasted JSON</button>
                     </div>
                 </div>
             </div>
@@ -324,6 +402,11 @@ export class BookLoaderModal {
             // URL load elements
             urlInput: this._container.querySelector('#url-load-input'),
             urlLoadBtn: this._container.querySelector('#url-load-btn'),
+            // Reddit load elements
+            redditInput: this._container.querySelector('#reddit-load-input'),
+            redditLoadBtn: this._container.querySelector('#reddit-load-btn'),
+            redditSort: this._container.querySelector('#reddit-sort'),
+            redditLimit: this._container.querySelector('#reddit-limit'),
             // Search elements
             searchInput: this._container.querySelector('#gutenberg-search-input'),
             searchBtn: this._container.querySelector('#gutenberg-search-btn'),
@@ -334,7 +417,13 @@ export class BookLoaderModal {
             loading: this._container.querySelector('#book-loader-loading'),
             loadingText: this._container.querySelector('#book-loader-loading-text'),
             error: this._container.querySelector('#book-loader-error'),
-            errorText: this._container.querySelector('#book-loader-error-text')
+            errorText: this._container.querySelector('#book-loader-error-text'),
+            // Reddit fetch-failure recovery
+            redditFallback: this._container.querySelector('#reddit-fallback'),
+            redditAttemptsBody: this._container.querySelector('#reddit-attempts-body'),
+            redditJsonLink: this._container.querySelector('#reddit-json-link'),
+            redditJsonInput: this._container.querySelector('#reddit-json-input'),
+            redditJsonLoadBtn: this._container.querySelector('#reddit-json-load-btn')
         };
 
         // Track search state
@@ -460,6 +549,29 @@ export class BookLoaderModal {
         this._elements.urlInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 this._loadFromURL();
+            }
+        });
+
+        // Reddit load button
+        this._elements.redditLoadBtn.addEventListener('click', () => {
+            this._loadFromReddit();
+        });
+
+        // Load hand-pasted thread JSON
+        this._elements.redditJsonLoadBtn.addEventListener('click', () => {
+            const text = this._elements.redditJsonInput.value.trim();
+            if (!text) {
+                this._showError('Paste the thread JSON first');
+                return;
+            }
+            this._hideError();
+            this._callbacks.onRedditPasteJson?.(text, this._lastRedditRef);
+        });
+
+        // Enter key in Reddit input
+        this._elements.redditInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                this._loadFromReddit();
             }
         });
 
@@ -718,6 +830,32 @@ export class BookLoaderModal {
 
         this._hideError();
         this._callbacks.onURLLoad?.(url);
+    }
+
+    /**
+     * Handle loading a Reddit thread
+     */
+    _loadFromReddit() {
+        const input = this._elements.redditInput.value.trim();
+
+        let ref;
+        try {
+            ref = parseRedditUrl(input);
+        } catch (error) {
+            this._showError(error.message);
+            return;
+        }
+
+        const limit = parseInt(this._elements.redditLimit.value, 10);
+
+        // Remembered so the paste fallback knows which thread it belongs to.
+        this._lastRedditRef = ref;
+
+        this._hideError();
+        this._callbacks.onRedditLoad?.(ref, {
+            sort: this._elements.redditSort.value,
+            limit: Number.isFinite(limit) ? Math.min(Math.max(limit, 10), 1000) : undefined
+        });
     }
 
     /**
@@ -1212,10 +1350,69 @@ export class BookLoaderModal {
     }
 
     /**
+     * Show the Reddit recovery panel: what each route did, a link to the raw
+     * JSON, and a box to paste it into.
+     *
+     * @param {Object} params
+     * @param {string} params.message
+     * @param {import('../utils/cors-proxy.js').FetchAttempt[]} [params.attempts]
+     * @param {string} params.jsonUrl - the .json URL that was attempted
+     */
+    showRedditFailure({ message, attempts = [], jsonUrl }) {
+        this._hideLoading();
+        this._showError(message);
+
+        const body = this._elements.redditAttemptsBody;
+        body.innerHTML = '';
+
+        for (const attempt of attempts) {
+            const row = document.createElement('tr');
+
+            const tier = document.createElement('td');
+            tier.textContent = attempt.tier;
+
+            const outcome = document.createElement('td');
+            outcome.textContent = this._describeAttempt(attempt);
+
+            row.append(tier, outcome);
+            body.appendChild(row);
+        }
+
+        this._elements.redditJsonLink.href = jsonUrl || '#';
+        this._elements.redditJsonInput.value = '';
+        this._elements.redditFallback.classList.remove('hidden');
+    }
+
+    /**
+     * One-line summary of a failed fetch attempt.
+     * @param {Object} attempt
+     * @returns {string}
+     */
+    _describeAttempt(attempt) {
+        const parts = [];
+        parts.push(attempt.status ? `HTTP ${attempt.status}` : 'no response');
+        if (attempt.contentType) {
+            parts.push(attempt.contentType.split(';')[0]);
+        }
+        if (attempt.error) {
+            parts.push(attempt.error);
+        }
+        return parts.join(' · ');
+    }
+
+    /**
+     * Hide the Reddit recovery panel
+     */
+    hideRedditFailure() {
+        this._elements.redditFallback.classList.add('hidden');
+    }
+
+    /**
      * Hide error message
      */
     _hideError() {
         this._elements.error.classList.add('hidden');
+        this._elements.redditFallback?.classList.add('hidden');
     }
 
     /**

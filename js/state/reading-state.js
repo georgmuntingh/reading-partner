@@ -155,6 +155,82 @@ export class ReadingStateController {
     }
 
     /**
+     * Load a fetched Reddit thread as a book.
+     *
+     * @param {Array} payload - raw `[postListing, commentListing]` JSON
+     * @param {Object} ref
+     * @param {string} ref.url - canonical thread URL
+     * @param {string} ref.threadId
+     * @param {Object} [options] - fetch options to remember for a refresh
+     * @param {string} [options.sort]
+     * @param {number} [options.limit]
+     * @param {string} [existingBookId] - reuse an ID (for refresh/re-download)
+     * @returns {Promise<Object>} book
+     */
+    async loadRedditThread(payload, { url, threadId }, options = {}, existingBookId = null) {
+        const parser = getParser('reddit');
+        const book = await parser.loadFromJson(payload, { url, threadId });
+
+        book.id = existingBookId || this._generateBookId(`reddit_${threadId}`);
+        book.source = {
+            type: 'reddit',
+            url: url || book.source?.url || '',
+            threadId,
+            sort: options.sort,
+            limit: options.limit,
+            // Loaded from JSON the user pasted by hand, because every fetch
+            // route was blocked. A refresh will hit the same wall.
+            viaPaste: options.viaPaste || false,
+            fetchedAt: Date.now()
+        };
+
+        await storage.saveBook(book);
+
+        this._currentBook = book;
+
+        if (existingBookId) {
+            // Refreshing: keep the reader roughly where it was, but sentence
+            // indices shift when comments are added, so land at the top of the
+            // chapter rather than mid-sentence.
+            const chapterIndex = Math.min(this._position.chapterIndex, book.chapters.length - 1);
+            this._position = { chapterIndex: Math.max(0, chapterIndex), sentenceIndex: 0 };
+            this._bookmarks = await storage.getBookmarks(book.id);
+            this._highlights = await storage.getHighlights(book.id);
+        } else {
+            this._position = { chapterIndex: 0, sentenceIndex: 0 };
+            this._bookmarks = [];
+            this._highlights = [];
+        }
+
+        return book;
+    }
+
+    /**
+     * Re-fetch the current Reddit thread and rebuild its chapters in place.
+     *
+     * @param {(threadId: string, options: Object) => Promise<Array>} fetchThread
+     * @returns {Promise<Object>} the refreshed book
+     */
+    async refreshRedditThread(fetchThread) {
+        const source = this._currentBook?.source;
+        if (source?.type !== 'reddit' || !source.threadId) {
+            throw new Error('The current book is not a Reddit thread');
+        }
+
+        const payload = await fetchThread(source.threadId, {
+            sort: source.sort,
+            limit: source.limit
+        });
+
+        return this.loadRedditThread(
+            payload,
+            { url: source.url, threadId: source.threadId },
+            { sort: source.sort, limit: source.limit },
+            this._currentBook.id
+        );
+    }
+
+    /**
      * Open a book by ID from storage
      * @param {string} bookId
      * @returns {Promise<Object>} book
