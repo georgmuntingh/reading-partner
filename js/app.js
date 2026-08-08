@@ -56,6 +56,7 @@ import { LookupDrawer } from './ui/lookup-drawer.js';
 import { LookupHistoryOverlay } from './ui/lookup-history-overlay.js';
 import { lookupService } from './services/lookup-service.js';
 import { NavigationHistory } from './state/navigation-history.js';
+import { observeViewportChrome } from './utils/viewport-chrome.js';
 import { appLogger } from './services/app-logger.js';
 import { setSentenceSplitterConfig } from './utils/sentence-splitter.js';
 
@@ -157,6 +158,7 @@ class ReadingPartnerApp {
      */
     async init() {
         this._cacheElements();
+        this._setupViewportChrome();
         this._setupUploadHandlers();
         this._setupKeyboardShortcuts();
         this._setupFullscreen();
@@ -649,6 +651,18 @@ class ReadingPartnerApp {
             const reason = event?.reason;
             const msg = (reason && (reason.message || String(reason))) || 'unknown';
             appLogger.error(`unhandledrejection: ${msg}`);
+        });
+    }
+
+    /**
+     * Keep the reading area's height reservation in sync with the real header
+     * and footer, which change size across the responsive breakpoints and grow
+     * by the safe-area inset on notched phones.
+     */
+    _setupViewportChrome() {
+        observeViewportChrome({
+            header: document.querySelector('.reader-header'),
+            controls: document.querySelector('.reader-controls')
         });
     }
 
@@ -2711,6 +2725,8 @@ class ReadingPartnerApp {
             textContentEl: this._readerView.getTextContentElement(),
             totalPages: this._readerView.getTotalPages(),
             pageHeight: this._readerView.getPageHeight(),
+            pageOffsets: this._readerView.getPageOffsets(),
+            contentBottom: this._readerView.getContentBottom(),
             currentPage: this._readerView.getCurrentPage(),
             currentSentenceIndex: this._readerView.getCurrentIndex(),
             sentenceToPage: this._readerView.getSentenceToPageMap(),

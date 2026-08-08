@@ -47,7 +47,15 @@
 
 /* Content area */
 .reader-content {
+    /* 100vh is the *large* viewport on mobile (URL bar collapsed), so the
+       reading area would extend below what is actually on screen and the fixed
+       footer would clip the bottom line. 100dvh tracks the real visible height;
+       the 100vh line is the fallback for browsers without dvh support.
+       --header-height / --controls-height are measured at runtime from the real
+       elements (js/utils/viewport-chrome.js) so the reservation matches the
+       responsive breakpoints and the safe-area inset. */
     height: calc(100vh - var(--header-height) - var(--controls-height));
+    height: calc(100dvh - var(--header-height) - var(--controls-height));
     margin-top: var(--header-height);
     padding: var(--spacing-md) var(--spacing-lg);
     overflow: hidden;
