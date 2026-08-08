@@ -4,6 +4,8 @@
  * Triggered by clicking the page number display
  */
 
+import { pageRange } from '../utils/page-breaker.js';
+
 export class ChapterOverview {
     /**
      * @param {Object} options
@@ -23,6 +25,8 @@ export class ChapterOverview {
         this._currentPage = 0;
         this._totalPages = 0;
         this._pageHeight = 0;
+        this._pageOffsets = [0];
+        this._contentBottom = 0;
         this._textContentEl = null;
         this._sentenceToPage = new Map();
         this._currentSentenceIndex = -1;
@@ -149,6 +153,8 @@ export class ChapterOverview {
         this._textContentEl = data.textContentEl;
         this._totalPages = data.totalPages;
         this._pageHeight = data.pageHeight;
+        this._pageOffsets = data.pageOffsets?.length ? data.pageOffsets : [0];
+        this._contentBottom = data.contentBottom || 0;
         this._currentPage = data.currentPage;
         this._currentSentenceIndex = data.currentSentenceIndex;
         this._sentenceToPage = data.sentenceToPage;
@@ -344,15 +350,22 @@ export class ChapterOverview {
      * @param {number} pageNum - The page number to render
      */
     _renderThumbnailContent(preview, pageNum) {
-        // Clone the full content - it will be constrained to one page height
-        // and scrolled to show the correct page
+        // Clone the full content - it will be constrained to the page's own
+        // (line-aligned) height and scrolled to show the correct page
+        const { top, height } = pageRange(
+            this._pageOffsets,
+            pageNum,
+            this._pageHeight,
+            this._contentBottom
+        );
+
         const clone = this._textContentEl.cloneNode(true);
         clone.removeAttribute('id');
         clone.classList.remove('multi-column-hidden');
         clone.className = 'text-content chapter-overview-clone';
         clone.style.cssText = `
             width: ${this._contentWidth}px;
-            height: ${this._pageHeight}px;
+            height: ${height}px;
             overflow: hidden;
             position: relative;
             pointer-events: none;
@@ -361,7 +374,9 @@ export class ChapterOverview {
             flex: none;
         `;
 
-        // Scale wrapper: scales the clone from content size to thumbnail size
+        // Scale wrapper: scales the clone from content size to thumbnail size.
+        // Kept at the full page height so every thumbnail is the same size and
+        // short pages simply have a ragged bottom.
         const scaleWrapper = document.createElement('div');
         scaleWrapper.style.cssText = `
             transform: scale(${this._thumbScale});
@@ -388,7 +403,7 @@ export class ChapterOverview {
 
         // After DOM insertion, scroll to show the correct page
         requestAnimationFrame(() => {
-            clone.scrollTop = pageNum * this._pageHeight;
+            clone.scrollTop = top;
         });
     }
 

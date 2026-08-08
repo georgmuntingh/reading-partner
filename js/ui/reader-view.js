@@ -5,6 +5,14 @@
  */
 
 import { debounce } from '../utils/helpers.js';
+import {
+    BREAK_EPSILON,
+    computePageOffsets,
+    largestAtOrBefore,
+    mergeRectsToLineBottoms,
+    pageForOffset,
+    pageRange
+} from '../utils/page-breaker.js';
 
 export class ReaderView {
     /**
@@ -49,10 +57,20 @@ export class ReaderView {
         // Pagination state
         this._currentPage = 0;
         this._totalPages = 1;
-        this._pageHeight = 0; // Calculated page height
+        this._pageHeight = 0; // Height of the visible page viewport
+        this._pageOffsets = [0]; // Scroll offset of each page, snapped to line boundaries
+        this._contentBottom = 0; // Bottom of the last rendered content
         this._sentenceToPage = new Map(); // Maps sentence index to page number
         this._pageToSentences = new Map(); // Maps page number to array of sentence indices
         this._isCalculatingPages = false;
+
+        // Element categories used when looking for safe page breaks
+        this._BLOCK_TAGS = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE',
+            'UL', 'OL', 'LI', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'ASIDE', 'NAV', 'MAIN',
+            'DL', 'DT', 'DD', 'ADDRESS', 'FIELDSET', 'FORM']);
+        // Treated as unbreakable: never split one of these across a page boundary
+        this._ATOMIC_TAGS = new Set(['IMG', 'SVG', 'TABLE', 'VIDEO', 'IFRAME', 'CANVAS', 'HR',
+            'PRE', 'FIGURE']);
 
         // Chapter boundary state
         this._isFirstChapter = true;
@@ -203,8 +221,12 @@ export class ReaderView {
             this._textContent.classList.remove('multi-column-hidden');
             this._multiColumnContainer.classList.add('multi-column-inactive');
             this._columnViewports = [];
-            // Restore scroll position for current page
-            this._goToPageInternal(this._currentPage, false);
+            // Restore clipping and scroll position for the current page.
+            // Called directly rather than via _goToPageInternal, which
+            // short-circuits when the target page is already current — after a
+            // recalculation the clip has been cleared and must be re-applied.
+            this._currentPage = Math.max(0, Math.min(this._currentPage, this._totalPages - 1));
+            this._applySinglePageView();
         } else {
             // Multi-column mode: hide textContent scrolling, show multi-column container
             this._textContent.classList.add('multi-column-hidden');
@@ -315,19 +337,22 @@ export class ReaderView {
             viewport.classList.remove('column-empty');
 
             // Clone the master content and scroll to the right page
+            const { top, height } = this._pageRange(pageNum);
             const clone = this._textContent.cloneNode(true);
             clone.removeAttribute('id');
             clone.classList.remove('multi-column-hidden');
             clone.className = 'text-content column-page-content';
             clone.style.position = 'relative';
             clone.style.overflow = 'hidden';
-            clone.style.height = `${this._pageHeight}px`;
+            // Clip to the page's own height, not the full viewport height, so the
+            // first line of the next page is not partially visible at the bottom.
+            clone.style.height = `${height}px`;
 
             // Add bottom padding so the last page can scroll to the correct position.
             // Without this, the browser clamps scrollTop when content is shorter than
-            // (pageNum + 1) * pageHeight, causing overlap with the previous page.
+            // (page offset + page height), causing overlap with the previous page.
             // Use _contentScrollHeight (measured at column viewport width) for accuracy.
-            const neededHeight = (pageNum + 1) * this._pageHeight;
+            const neededHeight = top + height;
             const refScrollHeight = this._contentScrollHeight || this._textContent.scrollHeight;
             if (refScrollHeight < neededHeight) {
                 const spacer = document.createElement('div');
@@ -340,7 +365,7 @@ export class ReaderView {
             content.appendChild(clone);
 
             // Set scroll position after appending to DOM
-            clone.scrollTop = pageNum * this._pageHeight;
+            clone.scrollTop = top;
         }
     }
 
@@ -547,6 +572,16 @@ export class ReaderView {
         }, 250);
 
         window.addEventListener('resize', this._debouncedRecalculate);
+        window.addEventListener('orientationchange', this._debouncedRecalculate);
+
+        // A mobile URL bar collapsing does not reliably fire `resize` (notably
+        // on iOS Safari), and the header/footer heights are measured at runtime,
+        // so watch the page container itself for any height change.
+        if (typeof ResizeObserver !== 'undefined' && this._pageContainer) {
+            this._pageResizeObserver = new ResizeObserver(this._debouncedRecalculate);
+            this._pageResizeObserver.observe(this._pageContainer);
+        }
+        window.visualViewport?.addEventListener('resize', this._debouncedRecalculate);
     }
 
     /**
@@ -652,11 +687,8 @@ export class ReaderView {
                     this._buildColumnViewports(this._getEffectiveColumnCount());
                     this._updateMultiColumnDisplay();
                 } else {
-                    // Single column: scroll to the right page
-                    if (this._currentPage > 0) {
-                        const pageHeight = this._pageHeight || this._textContent.clientHeight;
-                        this._textContent.scrollTop = this._currentPage * pageHeight;
-                    }
+                    // Single column: clip and scroll to the right page
+                    this._applySinglePageView();
                 }
                 this._updatePageIndicator();
                 this._updatePageButtons();
@@ -754,6 +786,163 @@ export class ReaderView {
         console.timeEnd('ReaderView._renderSentencesOnly');
     }
 
+    // ========== Line-aware page breaking ==========
+
+    /**
+     * Page offset for a page number, in the scroll space of the master content.
+     * @param {number} page
+     * @returns {number}
+     */
+    _pageOffset(page) {
+        const offsets = this._pageOffsets;
+        if (!offsets || offsets.length === 0) return page * this._pageHeight;
+        const index = Math.max(0, Math.min(page, offsets.length - 1));
+        return offsets[index];
+    }
+
+    /**
+     * Visible extent of a page. The height is <= the viewport height: clipping
+     * to it is what keeps the first line of the next page from peeking in at
+     * the bottom, half-rendered.
+     * @param {number} page
+     * @returns {{ top: number, height: number }}
+     */
+    _pageRange(page) {
+        return pageRange(this._pageOffsets, page, this._pageHeight, this._contentBottom);
+    }
+
+    /**
+     * Collect the leaf blocks of the rendered content with their vertical extent
+     * in the master content's scroll coordinate space.
+     *
+     * A "leaf block" is a block-level element with no block-level descendants —
+     * i.e. one that directly contains line boxes — or an atomic element (image,
+     * table, figure) that must not be split across pages.
+     *
+     * @returns {{el: HTMLElement, atomic: boolean, top: number, bottom: number}[]}
+     *     Ascending by top offset.
+     */
+    _collectLeafBlocks() {
+        const rootRect = this._textContent.getBoundingClientRect();
+        const scrollTop = this._textContent.scrollTop;
+        // Client rects are viewport-relative; page offsets are relative to the
+        // top of the scrolled content.
+        const originY = rootRect.top - scrollTop;
+
+        const blocks = [];
+        const visit = (parent) => {
+            for (const child of parent.children) {
+                const tag = child.tagName;
+
+                if (this._ATOMIC_TAGS.has(tag)) {
+                    blocks.push({ el: child, atomic: true });
+                    continue;
+                }
+
+                if (this._hasBlockDescendant(child)) {
+                    visit(child);
+                    continue;
+                }
+
+                if (this._BLOCK_TAGS.has(tag)) {
+                    blocks.push({ el: child, atomic: false });
+                }
+                // Anything else is inline-level content of an ancestor block
+                // that we have already recorded (or will treat as a gap).
+            }
+        };
+        visit(this._textContent);
+
+        // Read all geometry after the tree walk so the reads batch into a
+        // single layout pass.
+        const measured = blocks.map(block => {
+            const rect = block.el.getBoundingClientRect();
+            return {
+                ...block,
+                top: rect.top - originY,
+                bottom: rect.bottom - originY
+            };
+        });
+
+        measured.sort((a, b) => a.top - b.top);
+        return measured;
+    }
+
+    /**
+     * Whether an element contains any block-level or atomic descendant.
+     * @param {HTMLElement} el
+     * @returns {boolean}
+     */
+    _hasBlockDescendant(el) {
+        for (const child of el.children) {
+            if (this._BLOCK_TAGS.has(child.tagName) || this._ATOMIC_TAGS.has(child.tagName)) {
+                return true;
+            }
+            if (this._hasBlockDescendant(child)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Find the largest safe page break at or before `target`.
+     *
+     * Only the single block straddling the target needs its line boxes
+     * measured, so this costs roughly one Range measurement per page rather
+     * than a full scan of the chapter.
+     *
+     * @param {{el: HTMLElement, atomic: boolean, top: number, bottom: number}[]} blocks
+     * @param {number} target - Ideal break offset (page top + viewport height)
+     * @param {number} pageTop - Offset of the current page's top
+     * @returns {number} Break offset, or a value <= pageTop when none is safe
+     */
+    _findBreakAtOrBefore(blocks, target, pageTop) {
+        const straddling = blocks.find(b => b.top < target - BREAK_EPSILON && b.bottom > target + BREAK_EPSILON);
+
+        // The target falls in a margin between blocks (or past the last one) —
+        // no line box is being cut, so break exactly there.
+        if (!straddling) return target;
+
+        // Never split an image, table or figure: push the whole thing down.
+        if (straddling.atomic) return straddling.top;
+
+        const lineBottoms = this._lineBottomsIn(straddling.el);
+        const candidate = largestAtOrBefore(lineBottoms, target);
+
+        if (candidate !== null && candidate > pageTop + BREAK_EPSILON) return candidate;
+
+        // Every line of this block sits below the page top but none fits — the
+        // block itself starts mid-page, so break just above it.
+        if (straddling.top > pageTop + BREAK_EPSILON) return straddling.top;
+
+        // Block is taller than a whole page (huge <pre>, long unbreakable run).
+        // Signal "no safe break" so the caller falls back to a hard cut.
+        return pageTop;
+    }
+
+    /**
+     * Bottom edge of each visual line inside a text block, in content
+     * coordinates.
+     * @param {HTMLElement} el
+     * @returns {number[]} Ascending
+     */
+    _lineBottomsIn(el) {
+        const rootRect = this._textContent.getBoundingClientRect();
+        const originY = rootRect.top - this._textContent.scrollTop;
+
+        let rects;
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            rects = Array.from(range.getClientRects());
+        } catch {
+            return [];
+        }
+
+        return mergeRectsToLineBottoms(
+            rects.map(r => ({ top: r.top - originY, bottom: r.bottom - originY }))
+        );
+    }
+
     /**
      * Calculate page boundaries based on container height
      */
@@ -779,6 +968,10 @@ export class ReaderView {
             void this._textContent.offsetHeight;
         }
 
+        // Clear any per-page clipping height so the master element measures its
+        // full natural content height rather than the previous page's extent.
+        this._clearSinglePageClip();
+
         // Use page container height as the reference (it's constrained by flexbox)
         // Fall back to text content if page container isn't available
         const referenceContainer = this._pageContainer || this._textContent.parentElement || this._textContent;
@@ -791,7 +984,7 @@ export class ReaderView {
 
         // If container height is 0 or not properly constrained, use a sensible default
         // based on viewport height minus header/footer/padding (~400px for UI elements)
-        if (pageHeight <= 0 || pageHeight >= scrollHeight) {
+        if (pageHeight <= 0) {
             pageHeight = Math.max(300, window.innerHeight - 400);
             console.log(`Using fallback page height: ${pageHeight}px`);
         }
@@ -801,14 +994,27 @@ export class ReaderView {
         this._pageToSentences = new Map();
         this._pageHeight = pageHeight; // Store for use in navigation
 
+        // Collect the leaf blocks once; they drive both the content bottom and
+        // the per-page search for a safe break position.
+        const blocks = this._collectLeafBlocks();
+
+        // Prefer the bottom of the last real block over scrollHeight: trailing
+        // margin and bottom padding are included in scrollHeight and would
+        // otherwise produce a final page containing nothing but whitespace.
+        const lastBlockBottom = blocks.length > 0 ? blocks[blocks.length - 1].bottom : 0;
+        const contentBottom = lastBlockBottom > 0 ? Math.min(lastBlockBottom, scrollHeight) : scrollHeight;
+        this._contentBottom = contentBottom;
+
+        // Build page offsets that always land between lines
+        this._pageOffsets = computePageOffsets(
+            contentBottom,
+            pageHeight,
+            (target, pageTop) => this._findBreakAtOrBefore(blocks, target, pageTop)
+        );
+        this._totalPages = Math.max(1, this._pageOffsets.length);
+
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');
         if (sentenceElements.length === 0) {
-            // Still calculate total pages from scroll height for image-only chapters
-            // Add tolerance: if content is within 20px of page boundary, don't count extra page
-            const pageRatio = scrollHeight / pageHeight;
-            const fractionalPart = pageRatio % 1;
-            this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
-            this._totalPages = Math.max(1, this._totalPages);
             this._contentScrollHeight = scrollHeight;
             // Restore master content width
             if (savedMaxWidth !== null) {
@@ -824,13 +1030,6 @@ export class ReaderView {
             return;
         }
 
-        // Calculate total pages with tolerance for small overflow
-        // If content is within 5% of a page boundary, don't count it as an extra page
-        const pageRatio = scrollHeight / pageHeight;
-        const fractionalPart = pageRatio % 1;
-        this._totalPages = fractionalPart < 0.05 ? Math.floor(pageRatio) : Math.ceil(pageRatio);
-        this._totalPages = Math.max(1, this._totalPages);
-
         // Map each sentence to a page based on its position.
         // A sentence may have multiple spans (when it crosses inline elements);
         // use the first span's position and avoid duplicate index entries.
@@ -838,8 +1037,7 @@ export class ReaderView {
             const index = parseInt(el.dataset.index, 10);
             if (this._sentenceToPage.has(index)) return; // already mapped
 
-            const elementTop = el.offsetTop;
-            const page = Math.floor(elementTop / pageHeight);
+            const page = pageForOffset(this._pageOffsets, el.offsetTop);
 
             this._sentenceToPage.set(index, page);
 
@@ -848,10 +1046,6 @@ export class ReaderView {
             }
             this._pageToSentences.get(page).push(index);
         });
-
-        // Ensure total pages is at least the max page number + 1
-        const maxPage = Math.max(...this._sentenceToPage.values(), 0);
-        this._totalPages = Math.max(this._totalPages, maxPage + 1);
 
         console.log(`Calculated ${this._totalPages} pages for ${sentenceElements.length} sentences (pageHeight=${pageHeight}px)`);
 
@@ -904,6 +1098,29 @@ export class ReaderView {
     }
 
     /**
+     * Show the current page in single-column mode: clip the master element to
+     * the page's own height (so no partial line shows at the bottom) and scroll
+     * it to the page's offset.
+     */
+    _applySinglePageView() {
+        const { top, height } = this._pageRange(this._currentPage);
+
+        // flex: 1 from .text-content would stretch the element back to the full
+        // container height and re-expose the clipped line, so opt out of growing.
+        this._textContent.style.flex = '0 0 auto';
+        this._textContent.style.height = `${height}px`;
+        this._textContent.scrollTop = top;
+    }
+
+    /**
+     * Drop the per-page clipping so the element measures its natural height.
+     */
+    _clearSinglePageClip() {
+        this._textContent.style.flex = '';
+        this._textContent.style.height = '';
+    }
+
+    /**
      * Go to a specific page
      * @param {number} pageNumber - 0-indexed page number
      */
@@ -931,9 +1148,7 @@ export class ReaderView {
             this._updateMultiColumnDisplay();
         } else {
             // Single column mode: scroll to the correct position
-            const pageHeight = this._pageHeight || this._textContent.clientHeight;
-            const scrollTop = targetPage * pageHeight;
-            this._textContent.scrollTop = scrollTop;
+            this._applySinglePageView();
         }
 
         this._updatePageIndicator();
@@ -1138,8 +1353,8 @@ export class ReaderView {
 
         return this._computeVisiblePages().some(p => {
             if (p < 0) return false;
-            const pageTop = p * this._pageHeight;
-            return bottom > pageTop && top < pageTop + this._pageHeight;
+            const range = this._pageRange(p);
+            return bottom > range.top && top < range.top + range.height;
         });
     }
 
@@ -1304,6 +1519,22 @@ export class ReaderView {
     }
 
     /**
+     * Get the line-aligned scroll offset of each page
+     * @returns {number[]}
+     */
+    getPageOffsets() {
+        return this._pageOffsets;
+    }
+
+    /**
+     * Get the offset of the bottom of the last rendered content
+     * @returns {number}
+     */
+    getContentBottom() {
+        return this._contentBottom;
+    }
+
+    /**
      * Get the master text content element (for thumbnail rendering)
      * @returns {HTMLElement}
      */
@@ -1378,9 +1609,8 @@ export class ReaderView {
             if (target) {
                 // Calculate which page this element is on
                 const elementTop = target.offsetTop;
-                const pageHeight = this._pageHeight || this._textContent.clientHeight;
-                if (pageHeight > 0) {
-                    const page = Math.floor(elementTop / pageHeight);
+                if (this._pageHeight > 0) {
+                    const page = pageForOffset(this._pageOffsets, elementTop);
                     this._goToPageInternal(page, false);
                 }
 
