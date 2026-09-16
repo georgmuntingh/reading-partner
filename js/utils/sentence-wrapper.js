@@ -46,28 +46,24 @@ function hasBlockChildren(element) {
  * Collect all text nodes inside `root` in document order,
  * skipping those inside SKIP_TAGS.
  * Includes whitespace-only text nodes so the position map matches textContent.
+ *
+ * Deliberately a plain recursive walk rather than a TreeWalker: happy-dom's
+ * TreeWalker does not descend past the root's direct children, so a version
+ * built on it works in the browser but silently drops all nested inline text
+ * under test -- which is exactly the case this module exists to handle.
  */
 function collectTextNodes(root) {
     const nodes = [];
-    const walker = document.createTreeWalker(
-        root,
-        NodeFilter.SHOW_TEXT,
-        {
-            acceptNode(node) {
-                let parent = node.parentNode;
-                while (parent && parent !== root) {
-                    if (SKIP_TAGS.has(tag(parent))) {
-                        return NodeFilter.FILTER_REJECT;
-                    }
-                    parent = parent.parentNode;
-                }
-                return NodeFilter.FILTER_ACCEPT;
+    const visit = (node) => {
+        for (const child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                nodes.push(child);
+            } else if (child.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS.has(tag(child))) {
+                visit(child);
             }
         }
-    );
-    while (walker.nextNode()) {
-        nodes.push(walker.currentNode);
-    }
+    };
+    visit(root);
     return nodes;
 }
 

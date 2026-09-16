@@ -5,6 +5,7 @@
  */
 
 import { debounce } from '../utils/helpers.js';
+import { renderMathIn } from '../utils/math-renderer.js';
 
 export class ReaderView {
     /**
@@ -686,6 +687,12 @@ export class ReaderView {
 
         // Set the HTML content
         this._textContent.innerHTML = html;
+
+        // Turn the parser's math placeholders into real equations. This has to
+        // happen before pagination measures anything, since rendered maths is
+        // taller than the placeholder word it replaces. Multi-column mode
+        // clones this element, so the columns inherit the rendered output.
+        renderMathIn(this._textContent);
 
         // Find all sentence elements and update their state
         const sentenceElements = this._textContent.querySelectorAll('.sentence[data-index]');

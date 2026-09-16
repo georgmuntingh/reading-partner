@@ -84,6 +84,113 @@ body {
     display: flex;
 }
 
+/* ==========================================================================
+   Prose typography
+
+   The reset above zeroes every margin, which leaves rendered document text --
+   markdown, EPUB, PDF -- with paragraphs sitting flush against one another and
+   headings colliding with body text. These rules restore block spacing for the
+   containers that show document content.
+
+   `.text-content` is the reader (every format goes through it); `.md-prose` is
+   for the other surfaces that render markdown, such as Q&A answers and the
+   paste/generate previews.
+
+   Spacing is in `em` so it tracks the container's font size rather than
+   fighting the reader's font-size control.
+   ========================================================================== */
+.text-content p,
+.md-prose p {
+    margin-bottom: 0.9em;
+}
+
+.text-content h1, .text-content h2, .text-content h3,
+.text-content h4, .text-content h5, .text-content h6,
+.md-prose h1, .md-prose h2, .md-prose h3,
+.md-prose h4, .md-prose h5, .md-prose h6 {
+    margin-top: 1.4em;
+    margin-bottom: 0.6em;
+    line-height: 1.3;
+}
+
+.text-content ul, .text-content ol,
+.md-prose ul, .md-prose ol {
+    margin-bottom: 0.9em;
+    padding-left: 1.6em;
+}
+
+.text-content li,
+.md-prose li {
+    margin-bottom: 0.3em;
+}
+
+/* Nested lists sit inside their parent item's spacing already. */
+.text-content li > ul, .text-content li > ol,
+.md-prose li > ul, .md-prose li > ol {
+    margin-top: 0.3em;
+    margin-bottom: 0.3em;
+}
+
+.text-content blockquote,
+.md-prose blockquote {
+    margin: 0.9em 0;
+    padding-left: 1em;
+    border-left: 3px solid var(--border-color);
+    color: var(--text-secondary);
+}
+
+.text-content pre,
+.md-prose pre {
+    margin-bottom: 0.9em;
+    padding: var(--spacing-sm) var(--spacing-md);
+    background-color: var(--surface-color);
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+}
+
+.text-content table,
+.md-prose table {
+    margin-bottom: 0.9em;
+}
+
+.text-content hr,
+.md-prose hr {
+    margin: 1.4em 0;
+    border: none;
+    border-top: 1px solid var(--border-color);
+}
+
+/* No leading gap above the first thing in a block. Matched at any depth,
+   because the reader wraps chapter content in its own container (and paginates
+   it), so the first heading is never a direct child of `.text-content`. */
+.text-content :first-child,
+.md-prose :first-child {
+    margin-top: 0;
+}
+
+/* Likewise, no trailing gap after the last thing in a block. */
+.text-content :last-child,
+.md-prose :last-child {
+    margin-bottom: 0;
+}
+
+/* Rendered equations (KaTeX). Its own stylesheet is bundled from the npm
+   package; these rules only cover how a formula sits in the surrounding text. */
+.text-content .katex-display,
+.md-prose .katex-display {
+    margin: 1em 0;
+    /* A wide formula scrolls on its own rather than stretching the page. */
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 2px 0;
+}
+
+/* Inline maths should not stretch the line it sits on. */
+.text-content .katex,
+.md-prose .katex {
+    font-size: 1.05em;
+}
+
 /* Utility classes */
 .hidden {
     display: none !important;

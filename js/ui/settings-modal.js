@@ -83,8 +83,10 @@ export class SettingsModal {
             lmstudioEmbeddingModel: DEFAULT_LMSTUDIO_EMBEDDING_MODEL,
             // Lookup settings
             lookupLanguage: 'auto',
+            // Playback
+            stepMode: false,
             // Reading history
-            readingHistorySize: 3,
+            readingHistorySize: 7,
             // Multi-column layout
             columnCount: 1,
             columnAutoCenter: true,
@@ -204,9 +206,9 @@ export class SettingsModal {
                         </summary>
 
                         <div class="form-group">
-                            <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">3</span></label>
-                            <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="3">
-                            <p class="form-hint">Number of recent books shown in "Continue reading" on the start screen</p>
+                            <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">7</span></label>
+                            <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="7">
+                            <p class="form-hint">How many recent books "Continue reading" keeps. The start screen shows the first three, with a "Show all" link for the rest.</p>
                         </div>
 
                         <div class="form-group">
@@ -448,6 +450,14 @@ export class SettingsModal {
                             <label for="settings-prefetch-count">Precache Sentences: <span id="settings-prefetch-count-value">2</span></label>
                             <input type="range" id="settings-prefetch-count" class="form-input" min="1" max="10" step="1" value="2">
                             <p class="form-hint">Number of sentences to buffer ahead during playback. Lower values use less memory; higher values reduce buffering pauses.</p>
+                        </div>
+
+                        <div class="form-group">
+                            <label>
+                                <input type="checkbox" id="settings-step-mode">
+                                Read One Sentence at a Time
+                            </label>
+                            <p class="form-hint">Playback stops after every sentence and the highlight moves to the next one. Press play again to continue.</p>
                         </div>
 
                         <div class="settings-subsection-header">Sentence Splitting</div>
@@ -1184,6 +1194,7 @@ export class SettingsModal {
             customVoiceGroup: this._container.querySelector('#settings-custom-voice-group'),
             speed: this._container.querySelector('#settings-speed'),
             speedValue: this._container.querySelector('#settings-speed-value'),
+            stepMode: this._container.querySelector('#settings-step-mode'),
             prefetchCount: this._container.querySelector('#settings-prefetch-count'),
             prefetchCountValue: this._container.querySelector('#settings-prefetch-count-value'),
             maxSentenceLength: this._container.querySelector('#settings-max-sentence-length'),
@@ -2202,7 +2213,7 @@ export class SettingsModal {
      */
     _save() {
         const settings = {
-            readingHistorySize: parseInt(this._elements.historySize.value) || 3,
+            readingHistorySize: parseInt(this._elements.historySize.value) || 7,
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
             fullChapterContext: this._elements.fullChapterContext.checked,
@@ -2217,6 +2228,7 @@ export class SettingsModal {
             })(),
             speed: parseFloat(this._elements.speed.value),
             prefetchCount: parseInt(this._elements.prefetchCount.value) || 2,
+            stepMode: this._elements.stepMode.checked,
             maxSentenceLength: parseInt(this._elements.maxSentenceLength.value) || 0,
             font: this._elements.font.value,
             fontSize: parseInt(this._elements.fontSize.value),
@@ -2368,6 +2380,7 @@ export class SettingsModal {
         const voiceChanged = settings.voice !== this._settings.voice;
         const speedChanged = settings.speed !== this._settings.speed;
         const prefetchChanged = settings.prefetchCount !== this._settings.prefetchCount;
+        const stepModeChanged = settings.stepMode !== this._settings.stepMode;
         const maxSentenceLengthChanged = settings.maxSentenceLength !== this._settings.maxSentenceLength;
 
         this._settings = settings;
@@ -2387,6 +2400,10 @@ export class SettingsModal {
 
         if (prefetchChanged) {
             this._callbacks.onPrefetchChange?.(settings.prefetchCount);
+        }
+
+        if (stepModeChanged) {
+            this._callbacks.onStepModeChange?.(settings.stepMode);
         }
 
         if (maxSentenceLengthChanged) {
@@ -2486,8 +2503,8 @@ export class SettingsModal {
      */
     _loadCurrentSettings() {
         // General settings
-        this._elements.historySize.value = this._settings.readingHistorySize || 3;
-        this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 3;
+        this._elements.historySize.value = this._settings.readingHistorySize || 7;
+        this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 7;
 
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
@@ -2513,6 +2530,8 @@ export class SettingsModal {
         this._elements.speedValue.textContent = `${(this._settings.speed || 1.0).toFixed(1)}x`;
 
         // Load prefetch count
+        this._elements.stepMode.checked = !!this._settings.stepMode;
+
         const prefetchCount = this._settings.prefetchCount || 2;
         this._elements.prefetchCount.value = prefetchCount;
         this._elements.prefetchCountValue.textContent = prefetchCount;

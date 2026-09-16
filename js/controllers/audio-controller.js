@@ -34,6 +34,9 @@ export class AudioController {
         this._prefetchAhead = 2; // Reduced from 3
         this._bufferBehind = 2;
 
+        // When true, playback stops after each sentence and waits for Play.
+        this._stepMode = false;
+
         // Current playback
         this._currentSource = null;
         this._isPlaying = false;
@@ -187,6 +190,21 @@ export class AudioController {
 
             // Move to next sentence
             this._currentIndex++;
+
+            // One sentence at a time: move the highlight on to the sentence
+            // that Play will read next, then stop and wait. Returning rather
+            // than breaking leaves the chapter-end handling below untouched,
+            // so running off the end of a chapter behaves exactly as it does
+            // in continuous playback.
+            if (this._stepMode && this._currentIndex < this._sentences.length) {
+                this._isPlaying = false;
+                this._onSentenceChange?.(this._currentIndex);
+                this._status = 'paused';
+                this._notifyStateChange();
+                // Keep buffering ahead so the next Play starts without a wait.
+                this._maintainBuffer();
+                return;
+            }
         }
 
         this._isPlaying = false;
@@ -317,6 +335,23 @@ export class AudioController {
     setPrefetchCount(count) {
         this._prefetchAhead = Math.max(1, Math.min(10, count));
         console.log(`Prefetch ahead set to ${this._prefetchAhead}`);
+    }
+
+    /**
+     * Read one sentence at a time, stopping after each.
+     * @param {boolean} enabled
+     */
+    setStepMode(enabled) {
+        this._stepMode = !!enabled;
+        console.log(`Step mode ${this._stepMode ? 'on' : 'off'}`);
+    }
+
+    /**
+     * Whether step mode is on
+     * @returns {boolean}
+     */
+    getStepMode() {
+        return this._stepMode;
     }
 
     /**
