@@ -38,6 +38,7 @@
     "cytoscape": "^3.33.3",
     "cytoscape-fcose": "^2.2.0",
     "epubjs": "^0.3.93",
+    "katex": "^0.18.7",
     "marked": "^17.0.1",
     "pdfjs-dist": "4.9.155"
   }

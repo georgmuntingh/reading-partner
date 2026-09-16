@@ -4,6 +4,7 @@
  */
 
 import { renderContinueReading } from './continue-reading-list.js';
+import { substituteMath, renderMathIn } from '../utils/math-renderer.js';
 import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
 import { marked } from 'marked';
 import { llmClient } from '../services/llm-client.js';
@@ -93,7 +94,7 @@ export class BookLoaderModal {
                             </div>
                             <div class="paste-preview-section hidden" id="paste-preview-section">
                                 <div class="paste-preview-label">Preview</div>
-                                <div class="paste-preview" id="paste-preview"></div>
+                                <div class="paste-preview md-prose" id="paste-preview"></div>
                             </div>
                             <button class="btn btn-primary book-source-btn" id="paste-load-btn" disabled>
                                 Load Pasted Text
@@ -235,7 +236,7 @@ export class BookLoaderModal {
                                     <div class="generate-preview-label">Preview</div>
                                     <div class="generate-preview-title" id="generate-preview-title"></div>
                                 </div>
-                                <div class="generate-preview" id="generate-preview"></div>
+                                <div class="generate-preview md-prose" id="generate-preview"></div>
                                 <div class="generate-preview-actions">
                                     <button class="btn btn-secondary" id="generate-regenerate-btn">Regenerate</button>
                                     <button class="btn btn-primary" id="generate-load-btn">Load Text</button>
@@ -565,6 +566,17 @@ export class BookLoaderModal {
         }
 
         this._elements.pastePreview.innerHTML = previewHtml;
+        this._renderPreviewMath(this._elements.pastePreview);
+    }
+
+    /**
+     * Render any LaTeX in a preview pane. No text-to-speech is involved here,
+     * so both passes can run back to back.
+     * @param {Element} element
+     */
+    _renderPreviewMath(element) {
+        substituteMath(element);
+        renderMathIn(element);
     }
 
     /**
@@ -936,6 +948,7 @@ export class BookLoaderModal {
                 previewHtml = this._sanitizePreviewHtml(marked.parse(result.content));
             }
             this._elements.generatePreview.innerHTML = previewHtml;
+            this._renderPreviewMath(this._elements.generatePreview);
             this._elements.generatePreviewSection.classList.remove('hidden');
         } catch (error) {
             if (error.message !== 'Request aborted') {

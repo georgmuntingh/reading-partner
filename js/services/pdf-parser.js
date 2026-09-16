@@ -7,6 +7,7 @@
 
 import { FormatParser } from './format-parser.js';
 import { wrapSentencesInElement } from '../utils/sentence-wrapper.js';
+import { substituteMath, assignMathToSentences } from '../utils/math-renderer.js';
 import { hashString } from '../utils/helpers.js';
 import { convertPdfToMarkdown } from './converters/pdf-converter.js';
 import { marked } from 'marked';
@@ -131,9 +132,18 @@ export class PDFParser extends FormatParser {
         // Remove dangerous elements
         body.querySelectorAll('script, style').forEach(el => el.remove());
 
+        // Swap LaTeX for placeholder elements before splitting into sentences.
+        // Their text is a single spoken word, so a formula can neither split a
+        // sentence nor end up being read aloud as source.
+        substituteMath(body);
+
         // Wrap sentences
         const sentences = [];
         wrapSentencesInElement(body, sentences);
+
+        // Formulas sit between the sentence spans rather than inside them;
+        // tag them so they highlight along with the sentence they belong to.
+        assignMathToSentences(body);
 
         const wrapper = document.createElement('div');
         wrapper.className = 'pdf-content';

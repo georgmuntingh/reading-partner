@@ -257,6 +257,7 @@ class ReadingPartnerApp {
                 onVoiceChange: (voiceId) => this._onVoiceChange(voiceId),
                 onSpeedChange: (speed) => this._onSpeedChange(speed),
                 onPrefetchChange: (count) => this._onPrefetchChange(count),
+                onStepModeChange: (enabled) => this._onStepModeChange(enabled),
                 onMaxSentenceLengthChange: (maxLen) => this._onMaxSentenceLengthChange(maxLen),
                 onWhisperDownload: (config) => this._downloadWhisperModel(config),
                 onLocalLlmDownload: (config) => this._downloadLocalLlmModel(config),
@@ -1662,6 +1663,11 @@ class ReadingPartnerApp {
             this._audioController.setPrefetchCount(this._savedPrefetchCount);
         }
 
+        // Restore one-sentence-at-a-time mode
+        if (this._savedStepMode !== undefined) {
+            this._audioController.setStepMode(this._savedStepMode);
+        }
+
         // Apply typography settings
         this._applyTypographySettings();
 
@@ -2864,6 +2870,18 @@ class ReadingPartnerApp {
         this._audioController?.setPrefetchCount(count);
         storage.saveSetting('prefetchCount', count).catch(err =>
             console.error('Failed to save prefetch count:', err)
+        );
+    }
+
+    /**
+     * Handle the one-sentence-at-a-time toggle from settings
+     * @param {boolean} enabled
+     */
+    _onStepModeChange(enabled) {
+        this._savedStepMode = !!enabled;
+        this._audioController?.setStepMode(this._savedStepMode);
+        storage.saveSetting('stepMode', this._savedStepMode).catch(err =>
+            console.error('Failed to save step mode:', err)
         );
     }
 
@@ -4604,6 +4622,12 @@ class ReadingPartnerApp {
                 this._savedPrefetchCount = prefetchCount;
             }
 
+            // Load one-sentence-at-a-time mode
+            const stepMode = await storage.getSetting('stepMode');
+            if (stepMode !== null) {
+                this._savedStepMode = stepMode;
+            }
+
             // Load max sentence length
             const maxSentenceLength = await storage.getSetting('maxSentenceLength');
             if (maxSentenceLength !== null) {
@@ -4833,6 +4857,7 @@ class ReadingPartnerApp {
                 verboseLogging: verboseLogging === true,
                 kokoroReinitThreshold: reinitVal,
                 prefetchCount: this._savedPrefetchCount !== undefined ? this._savedPrefetchCount : 2,
+                stepMode: this._savedStepMode === true,
                 maxSentenceLength: maxSentenceLength !== null ? maxSentenceLength : 0,
                 // Knowledge Graph settings
                 kgExtractionBackend: kgExtractionBackend || 'openrouter',
