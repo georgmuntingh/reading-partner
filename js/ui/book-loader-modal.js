@@ -3,7 +3,7 @@
  * Modal for selecting ebooks from local filesystem or Project Gutenberg
  */
 
-import { FORMAT_LABELS } from '../services/parser-factory.js';
+import { renderContinueReading } from './continue-reading-list.js';
 import { detectPastedFormat, getFormatLabel } from '../utils/format-detector.js';
 import { marked } from 'marked';
 import { llmClient } from '../services/llm-client.js';
@@ -22,6 +22,8 @@ export class BookLoaderModal {
      * @param {(file: File, source: Object) => void} callbacks.onFileSelect - File selected from device
      * @param {(bookId: string) => void} callbacks.onGutenbergLoad - Load from Gutenberg
      * @param {(savedState: Object) => void} callbacks.onResumeBook - Resume a previously read book
+     * @param {(bookId: string) => void} callbacks.onRemoveBook - Drop a book from the "Continue reading" list
+     * @param {(bookId: string) => void} callbacks.onDeleteBook - Delete a book from the device (already confirmed)
      * @param {(text: string, format: string, title: string) => void} callbacks.onPasteText - Pasted text submitted
      * @param {(text: string, format: string, title: string, meta: Object) => void} callbacks.onGenerateText - LLM generated text submitted
      * @param {(url: string) => void} callbacks.onURLLoad - Load content from a URL
@@ -969,103 +971,34 @@ export class BookLoaderModal {
     }
 
     /**
-     * Set the reading history to display in the "Continue reading" section
-     * @param {Object[]} history - Array of saved book states
+     * Set the reading history to display in the "Continue reading" section.
+     * Re-renders right away, so a removal made on the start screen shows up
+     * even while the modal is open.
+     * @param {Object[]} history - Array of saved book states, most recent first
      */
     setReadingHistory(history) {
         this._readingHistory = history || [];
+        this._renderContinueReading();
     }
 
     /**
      * Render the "Continue reading" section based on current history
      */
     _renderContinueReading() {
-        const container = this._elements.continueReading;
-        if (!this._readingHistory.length) {
-            container.classList.add('hidden');
-            container.innerHTML = '';
-            return;
-        }
+        const container = this._elements?.continueReading;
+        if (!container) return;
 
-        container.classList.remove('hidden');
-
-        let html = '<div class="modal-continue-reading-title">Continue reading</div>';
-        html += '<div class="modal-continue-reading-list">';
-
-        for (const savedState of this._readingHistory) {
-            if (!savedState.bookId) continue;
-
-            const timeAgo = this._formatTimeAgo(savedState.timestamp);
-            const ft = savedState.fileType || 'epub';
-            const ftLabel = FORMAT_LABELS[ft] || ft.toUpperCase();
-            const formatBadge = `<span class="format-badge format-badge-sm format-${ft}">${ftLabel}</span>`;
-
-            const pasteIcon = savedState.source?.type === 'pasted'
-                ? '<svg class="resume-paste-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> '
-                : savedState.source?.type === 'llm-generated'
-                ? '<svg class="resume-paste-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> '
-                : '';
-
-            let sourceText = '';
-            if (savedState.source?.type === 'gutenberg') {
-                sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
-            } else if (savedState.source?.type === 'pasted') {
-                sourceText = ' <span class="resume-source">pasted</span>';
-            } else if (savedState.source?.type === 'llm-generated') {
-                sourceText = ' <span class="resume-source">AI generated</span>';
-            }
-
-            const stats = [];
-            if (savedState.bookmarkCount > 0) {
-                stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
-            }
-            if (savedState.highlightCount > 0) {
-                stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
-            }
-            const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
-
-            html += `
-                <div class="modal-resume-item" data-book-id="${this._escapeHtml(savedState.bookId)}">
-                    <div class="resume-info">
-                        <div class="resume-detail">${formatBadge} ${pasteIcon}"${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
-                        <div class="resume-time">Last read ${timeAgo}</div>
-                    </div>
-                    <button class="btn btn-primary btn-sm resume-btn">Resume</button>
-                </div>
-            `;
-        }
-
-        html += '</div>';
-        container.innerHTML = html;
-
-        // Attach click handlers
-        container.querySelectorAll('.modal-resume-item .resume-btn').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const bookId = btn.closest('.modal-resume-item').dataset.bookId;
-                const savedState = this._readingHistory.find(s => s.bookId === bookId);
-                if (savedState) {
-                    this._callbacks.onResumeBook?.(savedState);
-                }
-            });
+        const rendered = renderContinueReading(container, {
+            history: this._readingHistory,
+            variant: 'modal',
+            // The modal content already scrolls, so show the whole list here.
+            collapseAfter: 0,
+            onResume: (entry) => this._callbacks.onResumeBook?.(entry),
+            onRemove: (bookId) => this._callbacks.onRemoveBook?.(bookId),
+            onDelete: (bookId) => this._callbacks.onDeleteBook?.(bookId)
         });
-    }
 
-    /**
-     * Format a timestamp as a relative time string
-     * @param {number} timestamp
-     * @returns {string}
-     */
-    _formatTimeAgo(timestamp) {
-        const seconds = Math.floor((Date.now() - timestamp) / 1000);
-        if (seconds < 60) return 'just now';
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-        const days = Math.floor(hours / 24);
-        if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
-        const months = Math.floor(days / 30);
-        return `${months} month${months > 1 ? 's' : ''} ago`;
+        container.classList.toggle('hidden', rendered === 0);
     }
 
     /**

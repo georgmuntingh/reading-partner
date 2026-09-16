@@ -228,6 +228,18 @@ export class ReadingStateController {
         for (const highlight of highlights) {
             await storage.deleteHighlight(highlight.id);
         }
+
+        // Delete all word lookups for this book
+        const lookups = await storage.getLookups(bookId);
+        for (const lookup of lookups) {
+            await storage.deleteLookup(lookup.id);
+        }
+
+        // Delete the knowledge graph and flashcards derived from this book.
+        // Without this they outlive the book they describe and can never be
+        // reached again, since every lookup path keys off the book id.
+        await storage.clearKGForBook(bookId);
+        await storage.deleteFlashcardsForBook(bookId);
     }
 
     /**

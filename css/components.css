@@ -172,8 +172,14 @@
     font-size: var(--font-size-sm);
     color: var(--text-secondary);
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* Wrap to two lines rather than a single ellipsised one: with Resume, the
+       remove button and the overflow menu all sharing the row, one line leaves
+       barely enough width for the title, let alone the chapter and counts. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow-wrap: anywhere;
 }
 
 .resume-time {
@@ -184,6 +190,51 @@
 
 .resume-btn {
     flex-shrink: 0;
+}
+
+/* Per-row actions on a Continue reading row (start screen and load modal) */
+.resume-remove-btn,
+.resume-menu-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    /* Comfortable tap target on touch screens */
+    min-width: 32px;
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    transition: background-color 0.2s ease, color 0.2s ease;
+    flex-shrink: 0;
+}
+
+.resume-menu-btn:hover {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+}
+
+.resume-remove-btn:hover {
+    background-color: #fef2f2;
+    color: var(--error-color);
+}
+
+/* "Show all N" / "Show fewer" toggle under the start-screen list */
+.resume-toggle-btn {
+    align-self: flex-start;
+    background: none;
+    border: none;
+    padding: var(--spacing-xs) 0;
+    margin-top: var(--spacing-xs);
+    color: var(--primary-color);
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+
+.resume-toggle-btn:hover {
+    text-decoration: underline;
 }
 
 /* Error message */

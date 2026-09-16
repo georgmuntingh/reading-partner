@@ -37,6 +37,8 @@ import { KGController, KG_STATE } from './controllers/kg-controller.js';
 import { promptForDomain } from './ui/kg-domain-modal.js';
 import { promptForKGBuild } from './ui/kg-build-modal.js';
 import { confirmAction } from './ui/confirm-modal.js';
+import { loadHistory, recordVisit, removeEntry, trimHistory, DEFAULT_HISTORY_SIZE } from './services/reading-history.js';
+import { renderContinueReading } from './ui/continue-reading-list.js';
 import { ReadingStateController } from './state/reading-state.js';
 import { ReaderView } from './ui/reader-view.js';
 import { PlaybackControls } from './ui/controls.js';
@@ -59,6 +61,11 @@ import { NavigationHistory } from './state/navigation-history.js';
 import { appLogger } from './services/app-logger.js';
 import { setSentenceSplitterConfig } from './utils/sentence-splitter.js';
 
+// How many "Continue reading" rows the start screen shows before the rest go
+// behind a "Show all" toggle. Keeps the drop-a-file area above the fold on a
+// phone now that the list can hold seven entries.
+const RESUME_COLLAPSE_AFTER = 3;
+
 class ReadingPartnerApp {
     constructor() {
         // State
@@ -68,7 +75,7 @@ class ReadingPartnerApp {
         this._savedSpeed = undefined;
         this._savedVoice = undefined;
         this._wasPlayingBeforeQA = false;
-        this._readingHistorySize = 3;
+        this._readingHistorySize = DEFAULT_HISTORY_SIZE;
 
         // STT backend
         this._sttBackend = 'web-speech';
@@ -302,6 +309,8 @@ class ReadingPartnerApp {
                 onFileSelect: (file, source) => this._handleFileSelect(file, source),
                 onGutenbergLoad: (bookId) => this._handleGutenbergLoad(bookId),
                 onResumeBook: (savedState) => this._handleResumeFromModal(savedState),
+                onRemoveBook: (bookId) => this._removeFromReadingHistory(bookId),
+                onDeleteBook: (bookId) => this._deleteBookFromDevice(bookId),
                 onPasteText: (text, format, title) => this._handlePasteText(text, format, title),
                 onGenerateText: (text, format, title, meta) => this._handleGenerateText(text, format, title, meta),
                 onURLLoad: (url) => this._handleURLLoad(url)
@@ -465,13 +474,13 @@ class ReadingPartnerApp {
 
         // Setup load book button (header button in reader)
         this._elements.loadBookBtn?.addEventListener('click', () => {
-            this._bookLoaderModal.setReadingHistory(this._loadCookieState());
+            this._bookLoaderModal.setReadingHistory(loadHistory());
             this._bookLoaderModal.show();
         });
 
         // Setup select ebook button (start screen)
         this._elements.selectEbookBtn?.addEventListener('click', () => {
-            this._bookLoaderModal.setReadingHistory(this._loadCookieState());
+            this._bookLoaderModal.setReadingHistory(loadHistory());
             this._bookLoaderModal.show();
         });
 
@@ -489,8 +498,8 @@ class ReadingPartnerApp {
         // Load saved settings first so we know the preferred backend
         await this._loadSettings();
 
-        // Check for saved reading state via cookie and show resume option
-        this._checkResumeState();
+        // Show the "Continue reading" list if there is anything to resume
+        this._renderResumeSection();
 
         // Show TTS loading status
         this._showTTSStatus('Detecting TTS backends...');
@@ -871,7 +880,7 @@ class ReadingPartnerApp {
             this._loadQuizHistory();
 
             this._showScreen('reader');
-            this._saveCookieState();
+            this._recordReadingVisit();
 
             if (isFromReader) {
                 this._hideTTSStatus();
@@ -973,7 +982,7 @@ class ReadingPartnerApp {
             this._loadQuizHistory();
 
             this._showScreen('reader');
-            this._saveCookieState();
+            this._recordReadingVisit();
 
             if (isFromReader) {
                 this._hideTTSStatus();
@@ -1045,7 +1054,7 @@ class ReadingPartnerApp {
 
     /**
      * Handle resume book from the book loader modal
-     * @param {Object} savedState - Cookie state with bookId, source, etc.
+     * @param {Object} savedState - History entry with bookId, source, etc.
      */
     async _handleResumeFromModal(savedState) {
         const isFromReader = this._elements.readerScreen.classList.contains('active');
@@ -1494,8 +1503,7 @@ class ReadingPartnerApp {
             // Switch to reader screen
             this._showScreen('reader');
 
-            // Save cookie state for resume functionality
-            this._saveCookieState();
+            this._recordReadingVisit();
 
             appLogger.info(`Book loaded: "${this._currentBook.title}" (${this._currentBook.chapters.length} chapters)`);
 
@@ -2958,8 +2966,8 @@ class ReadingPartnerApp {
         // Save general settings
         if (settings.readingHistorySize !== undefined) {
             this._readingHistorySize = settings.readingHistorySize;
-            // Trim existing cookie history if new size is smaller
-            this._trimCookieHistory();
+            // Trim existing history if the new size is smaller
+            trimHistory(this._readingHistorySize);
         }
 
         // Save to storage
@@ -3770,7 +3778,7 @@ class ReadingPartnerApp {
                 color
             );
             this._showToast('Highlight added');
-            this._saveCookieState();
+            this._recordReadingVisit();
         } catch (error) {
             console.error('Failed to add highlight:', error);
             this._showToast('Failed to add highlight');
@@ -3792,7 +3800,7 @@ class ReadingPartnerApp {
                 this._readerView.setHighlights(chapterHighlights);
             }
 
-            this._saveCookieState();
+            this._recordReadingVisit();
         } catch (error) {
             console.error('Failed to delete highlight:', error);
         }
@@ -4438,8 +4446,7 @@ class ReadingPartnerApp {
      * @param {number} sentenceIndex
      */
     _onPositionChange(chapterIndex, sentenceIndex) {
-        // Save position to cookie for quick restoration
-        this._saveCookieState();
+        this._recordReadingVisit();
     }
 
     /**
@@ -4450,7 +4457,7 @@ class ReadingPartnerApp {
         if (this._navigation && this._readingState) {
             this._navigation.setBookmarks(this._readingState.getBookmarks());
         }
-        this._saveCookieState();
+        this._recordReadingVisit();
     }
 
     /**
@@ -4562,7 +4569,19 @@ class ReadingPartnerApp {
     async _loadSettings() {
         try {
             // Load general settings
-            const readingHistorySize = await storage.getSetting('readingHistorySize');
+            let readingHistorySize = await storage.getSetting('readingHistorySize');
+
+            // One-time bump of the old default (3) to the new one (7). The flag
+            // is set on the first run either way, so a reader who later picks 3
+            // on purpose keeps it.
+            if (!(await storage.getSetting('readingHistorySizeMigratedV2'))) {
+                if (readingHistorySize === 3) {
+                    readingHistorySize = DEFAULT_HISTORY_SIZE;
+                    await storage.saveSetting('readingHistorySize', readingHistorySize);
+                }
+                await storage.saveSetting('readingHistorySizeMigratedV2', true);
+            }
+
             if (readingHistorySize !== null) {
                 this._readingHistorySize = readingHistorySize;
             }
@@ -5147,17 +5166,16 @@ class ReadingPartnerApp {
         }
     }
 
-    // ========== Cookie-based State Persistence ==========
+    // ========== Reading History ==========
 
     /**
-     * Save current reading state to cookie history for quick restoration.
-     * Maintains an array of the last N books read, where N = readingHistorySize setting.
+     * Record the current book at the front of the "Continue reading" history.
      */
-    _saveCookieState() {
+    _recordReadingVisit() {
         if (!this._currentBook || !this._readingState) return;
 
         const position = this._readingState.getCurrentPosition();
-        const entry = {
+        recordVisit({
             bookId: this._currentBook.id,
             bookTitle: this._currentBook.title,
             chapterIndex: position.chapterIndex,
@@ -5167,157 +5185,103 @@ class ReadingPartnerApp {
             source: this._currentBook.source || null,
             fileType: this._currentBook.fileType || 'epub',
             timestamp: Date.now()
-        };
-
-        try {
-            // Load existing history
-            let history = this._loadCookieState();
-
-            // Remove any existing entry for this book
-            history = history.filter(h => h.bookId !== entry.bookId);
-
-            // Add current book at the front (most recent)
-            history.unshift(entry);
-
-            // Trim to max history size
-            const maxSize = this._readingHistorySize || 3;
-            history = history.slice(0, maxSize);
-
-            const stateJson = JSON.stringify(history);
-            // Set cookie with 365-day expiry
-            const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
-            document.cookie = `readingPartnerState=${encodeURIComponent(stateJson)};expires=${expires};path=/;SameSite=Lax`;
-        } catch (error) {
-            console.error('Failed to save cookie state:', error);
-        }
+        }, this._readingHistorySize);
     }
 
     /**
-     * Load reading history from cookie
-     * @returns {Object[]} Array of saved book states (most recent first), or empty array
+     * Render the "Continue reading" section on the start screen.
+     * The section is removed entirely when there is nothing left to resume.
      */
-    _loadCookieState() {
-        try {
-            const cookies = document.cookie.split(';');
-            for (const cookie of cookies) {
-                const [name, value] = cookie.trim().split('=');
-                if (name === 'readingPartnerState' && value) {
-                    const parsed = JSON.parse(decodeURIComponent(value));
-                    // Migrate from old single-object format to array
-                    if (parsed && !Array.isArray(parsed)) {
-                        return [parsed];
-                    }
-                    return Array.isArray(parsed) ? parsed : [];
-                }
-            }
-        } catch (error) {
-            console.error('Failed to load cookie state:', error);
-        }
-        return [];
-    }
-
-    /**
-     * Trim cookie history to match current readingHistorySize setting
-     */
-    _trimCookieHistory() {
-        try {
-            let history = this._loadCookieState();
-            const maxSize = this._readingHistorySize || 3;
-            if (history.length > maxSize) {
-                history = history.slice(0, maxSize);
-                const stateJson = JSON.stringify(history);
-                const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
-                document.cookie = `readingPartnerState=${encodeURIComponent(stateJson)};expires=${expires};path=/;SameSite=Lax`;
-            }
-        } catch (error) {
-            console.error('Failed to trim cookie history:', error);
-        }
-    }
-
-    /**
-     * Check if there's a saved reading history and show resume options
-     */
-    _checkResumeState() {
-        const history = this._loadCookieState();
-        if (!history || history.length === 0) return;
-
-        // Show resume section on the upload screen
+    _renderResumeSection() {
         const uploadContainer = this._elements.uploadScreen?.querySelector('.upload-container');
         if (!uploadContainer) return;
 
-        // Remove any existing resume section
-        const existing = uploadContainer.querySelector('.resume-section');
-        if (existing) existing.remove();
+        let section = uploadContainer.querySelector('.resume-section');
+        const history = loadHistory();
 
-        const section = document.createElement('div');
-        section.className = 'resume-section';
-
-        // Section header
-        const header = document.createElement('div');
-        header.className = 'resume-section-title';
-        header.textContent = 'Continue reading';
-        section.appendChild(header);
-
-        // Add a banner for each book in history
-        for (const savedState of history) {
-            if (!savedState.bookId) continue;
-
-            const banner = document.createElement('div');
-            banner.className = 'resume-banner';
-
-            const timeAgo = this._formatTimeAgo(savedState.timestamp);
-            const stats = [];
-            if (savedState.bookmarkCount > 0) {
-                stats.push(`${savedState.bookmarkCount} bookmark${savedState.bookmarkCount > 1 ? 's' : ''}`);
-            }
-            if (savedState.highlightCount > 0) {
-                stats.push(`${savedState.highlightCount} highlight${savedState.highlightCount > 1 ? 's' : ''}`);
-            }
-            const statsText = stats.length > 0 ? ` (${stats.join(', ')})` : '';
-
-            // Show source info
-            let sourceText = '';
-            if (savedState.source?.type === 'gutenberg') {
-                sourceText = ' <span class="resume-source">from Project Gutenberg</span>';
-            }
-
-            // Format badge
-            const ft = savedState.fileType || 'epub';
-            const ftLabel = FORMAT_LABELS[ft] || ft.toUpperCase();
-            const formatBadge = `<span class="format-badge format-badge-sm format-${ft}">${ftLabel}</span>`;
-
-            banner.innerHTML = `
-                <div class="resume-info">
-                    <div class="resume-detail">${formatBadge} "${this._escapeHtml(savedState.bookTitle)}"${sourceText} - Chapter ${savedState.chapterIndex + 1}${statsText}</div>
-                    <div class="resume-time">Last read ${timeAgo}</div>
-                </div>
-                <button class="btn btn-primary btn-sm resume-btn">Resume</button>
-            `;
-
-            const resumeBtn = banner.querySelector('.resume-btn');
-            resumeBtn.addEventListener('click', () => {
-                this._resumeLastBook(savedState);
-            });
-
-            section.appendChild(banner);
+        if (!history.length) {
+            section?.remove();
+            return;
         }
 
-        // Insert before the upload area
-        const uploadArea = uploadContainer.querySelector('.upload-area');
-        if (uploadArea) {
-            uploadContainer.insertBefore(section, uploadArea);
-        } else {
-            uploadContainer.appendChild(section);
+        if (!section) {
+            section = document.createElement('div');
+            section.className = 'resume-section';
+            const uploadArea = uploadContainer.querySelector('.upload-area');
+            if (uploadArea) {
+                uploadContainer.insertBefore(section, uploadArea);
+            } else {
+                uploadContainer.appendChild(section);
+            }
         }
+
+        const rendered = renderContinueReading(section, {
+            history,
+            variant: 'page',
+            collapseAfter: RESUME_COLLAPSE_AFTER,
+            onResume: (entry) => this._resumeLastBook(entry),
+            onRemove: (bookId) => this._removeFromReadingHistory(bookId),
+            onDelete: (bookId) => this._deleteBookFromDevice(bookId)
+        });
+        if (!rendered) section.remove();
+    }
+
+    /**
+     * Drop a book from the "Continue reading" list. Non-destructive: the book
+     * and its position, bookmarks and highlights all stay in storage.
+     * @param {string} bookId
+     */
+    _removeFromReadingHistory(bookId) {
+        removeEntry(bookId);
+        this._refreshReadingHistoryViews();
+    }
+
+    /**
+     * Permanently delete a book and everything derived from it. The caller has
+     * already confirmed with the reader.
+     * @param {string} bookId
+     */
+    async _deleteBookFromDevice(bookId) {
+        // Deleting the book the reader is currently in would leave the reader
+        // pointing at storage that no longer exists, and the next autosave
+        // would put the entry straight back. Ask them to close it first.
+        if (bookId && bookId === this._currentBook?.id) {
+            this._showToast('Close this book before deleting it');
+            return;
+        }
+
+        try {
+            await this._readingState.deleteBook(bookId);
+        } catch (error) {
+            console.error('Failed to delete book:', error);
+            this._showToast('Could not delete the book');
+            return;
+        }
+
+        removeEntry(bookId);
+        this._refreshReadingHistoryViews();
+        this._showToast('Book deleted');
+    }
+
+    /**
+     * Re-render every surface showing the reading history, so the start screen
+     * and the Load-book modal never disagree.
+     */
+    _refreshReadingHistoryViews() {
+        this._renderResumeSection();
+        this._bookLoaderModal?.setReadingHistory(loadHistory());
     }
 
     /**
      * Resume reading the last book from saved state
-     * @param {Object} savedState - Cookie state with bookId, source, etc.
+     * @param {Object} savedState - History entry with bookId, source, etc.
      */
     async _resumeLastBook(savedState) {
         const { loadingIndicator, loadingText } = this._elements;
         const bookId = savedState.bookId;
+        // Set when the book has vanished from storage, so the dead entry can be
+        // pruned from "Continue reading" instead of erroring again next time.
+        let bookMissing = false;
 
         try {
             loadingIndicator.classList.remove('hidden');
@@ -5341,6 +5305,7 @@ class ReadingPartnerApp {
                     await this._loadBook(file, dlSource, bookId);
                     return; // _loadBook handles everything including screen switch
                 }
+                bookMissing = true;
                 throw new Error(openError.message + '. Please load the file again.');
             }
 
@@ -5390,38 +5355,15 @@ class ReadingPartnerApp {
         } catch (error) {
             console.error('Failed to resume book:', error);
             this._showUploadError('Could not resume: ' + error.message);
+            if (bookMissing) {
+                // The book is gone; drop the entry rather than leave a row that
+                // can only ever fail.
+                removeEntry(bookId);
+                this._refreshReadingHistoryViews();
+            }
         } finally {
             loadingIndicator.classList.add('hidden');
         }
-    }
-
-    /**
-     * Format a timestamp as a relative time string
-     * @param {number} timestamp
-     * @returns {string}
-     */
-    _formatTimeAgo(timestamp) {
-        const seconds = Math.floor((Date.now() - timestamp) / 1000);
-        if (seconds < 60) return 'just now';
-        const minutes = Math.floor(seconds / 60);
-        if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-        const hours = Math.floor(minutes / 60);
-        if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-        const days = Math.floor(hours / 24);
-        if (days < 30) return `${days} day${days > 1 ? 's' : ''} ago`;
-        const months = Math.floor(days / 30);
-        return `${months} month${months > 1 ? 's' : ''} ago`;
-    }
-
-    /**
-     * Escape HTML to prevent XSS
-     * @param {string} text
-     * @returns {string}
-     */
-    _escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
     }
 
     /**

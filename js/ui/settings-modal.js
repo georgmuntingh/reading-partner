@@ -84,7 +84,7 @@ export class SettingsModal {
             // Lookup settings
             lookupLanguage: 'auto',
             // Reading history
-            readingHistorySize: 3,
+            readingHistorySize: 7,
             // Multi-column layout
             columnCount: 1,
             columnAutoCenter: true,
@@ -204,9 +204,9 @@ export class SettingsModal {
                         </summary>
 
                         <div class="form-group">
-                            <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">3</span></label>
-                            <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="3">
-                            <p class="form-hint">Number of recent books shown in "Continue reading" on the start screen</p>
+                            <label for="settings-history-size">Reading History Size: <span id="settings-history-size-value">7</span></label>
+                            <input type="range" id="settings-history-size" class="form-input" min="1" max="10" step="1" value="7">
+                            <p class="form-hint">How many recent books "Continue reading" keeps. The start screen shows the first three, with a "Show all" link for the rest.</p>
                         </div>
 
                         <div class="form-group">
@@ -2202,7 +2202,7 @@ export class SettingsModal {
      */
     _save() {
         const settings = {
-            readingHistorySize: parseInt(this._elements.historySize.value) || 3,
+            readingHistorySize: parseInt(this._elements.historySize.value) || 7,
             apiKey: this._elements.apiKey.value.trim(),
             model: this._elements.model.value,
             fullChapterContext: this._elements.fullChapterContext.checked,
@@ -2486,8 +2486,8 @@ export class SettingsModal {
      */
     _loadCurrentSettings() {
         // General settings
-        this._elements.historySize.value = this._settings.readingHistorySize || 3;
-        this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 3;
+        this._elements.historySize.value = this._settings.readingHistorySize || 7;
+        this._elements.historySizeValue.textContent = this._settings.readingHistorySize || 7;
 
         this._elements.apiKey.value = this._settings.apiKey || '';
         this._elements.model.value = this._settings.model || DEFAULT_MODEL;
